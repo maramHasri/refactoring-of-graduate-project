@@ -1,0 +1,409 @@
+swagger: "2.0"
+info:
+  title: edu_forms API
+  description: Multi-tenant educational assessment platform
+  version: "1.0.0"
+host: "127.0.0.1:5000"
+basePath: /
+schemes:
+  - http
+consumes:
+  - application/json
+produces:
+  - application/json
+securityDefinitions:
+  Bearer:
+    type: apiKey
+    name: Authorization
+    in: header
+    description: "JWT access token. Example: Bearer eyJhbG..."
+  WorkspaceId:
+    type: apiKey
+    name: X-Workspace-Id
+    in: header
+    description: Active workspace context (not in JWT)
+paths:
+  /:
+    get:
+      tags: [Meta]
+      summary: API entry — links to Swagger and health
+      responses:
+        200:
+          description: Welcome JSON
+  /health:
+    get:
+      tags: [Meta]
+      summary: Health check
+      responses:
+        200:
+          description: OK
+  /health/db:
+    get:
+      tags: [Meta]
+      summary: Database health
+      responses:
+        200:
+          description: Connected
+  /api/enums:
+    get:
+      tags: [Meta]
+      summary: List enum values
+      responses:
+        200:
+          description: Enum reference
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register workspace owner
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [email, password, full_name, workspace_name, workspace_kind]
+            properties:
+              email: { type: string, example: owner@school.com }
+              password: { type: string, example: "Password123!" }
+              full_name: { type: string, example: "Jane Owner" }
+              workspace_name: { type: string, example: "My Academy" }
+              workspace_kind: { type: string, enum: [SOLO, INSTITUTION] }
+              slug: { type: string }
+              phone_number: { type: string }
+      responses:
+        201:
+          description: Registered
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: User login
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [email, password]
+            properties:
+              email: { type: string, example: user@example.com }
+              password: { type: string, example: "Password123!" }
+      responses:
+        200:
+          description: Tokens + user + memberships
+  /auth/superadmin/login:
+    post:
+      tags: [Auth]
+      summary: Super admin login (POST only — not GET)
+      description: Use Try it out in Swagger. Browser address bar sends GET and returns 405.
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [email, password]
+            properties:
+              email: { type: string, example: superadmin@eduforms.local }
+              password: { type: string, example: "SuperAdmin@123" }
+      responses:
+        200:
+          description: Tokens + is_superadmin true
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current session
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Logged out
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      summary: Logout all sessions
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: All sessions revoked
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [refresh_token]
+            properties:
+              refresh_token: { type: string }
+      responses:
+        200:
+          description: New tokens
+  /auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify email with token from activation link
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [token]
+            properties:
+              token: { type: string, description: Token from email link }
+      responses:
+        200:
+          description: Email verified
+  /auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Resend activation / verification email (Gmail)
+      description: |
+        Creates a new verification token and sends activation link via Gmail.
+        Does not require login. Use the same email used at registration.
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [email]
+            properties:
+              email:
+                type: string
+                format: email
+                example: user@example.com
+      responses:
+        200:
+          description: Activation email sent (email_sent true) or generic message if unknown email
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              email_sent: { type: boolean }
+              dev_verification_token:
+                type: string
+                description: Only in development if Gmail fails
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Start password reset
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              email: { type: string }
+      responses:
+        200:
+          description: Email sent if account exists
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Complete password reset
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              token: { type: string }
+              new_password: { type: string }
+      responses:
+        200:
+          description: Password reset
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change password (authenticated)
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              current_password: { type: string }
+              new_password: { type: string }
+      responses:
+        200:
+          description: Changed
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      summary: List accessible workspaces
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Workspace list
+    post:
+      tags: [Workspaces]
+      summary: Create workspace
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name: { type: string }
+              kind: { type: string, enum: [SOLO, INSTITUTION] }
+              slug: { type: string }
+      responses:
+        201:
+          description: Created
+  /workspaces/{workspace_id}:
+    get:
+      tags: [Workspaces]
+      summary: Get workspace
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: workspace_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Workspace detail
+    patch:
+      tags: [Workspaces]
+      summary: Update workspace
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: workspace_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Updated
+    delete:
+      tags: [Workspaces]
+      summary: Delete workspace (owner only)
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: workspace_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Deleted
+  /join-codes/register-student:
+    post:
+      tags: [Join codes]
+      summary: Register new student with join code
+      description: Creates user account and STUDENT membership. No Bearer token required.
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [email, password, full_name, join_code]
+            properties:
+              email: { type: string }
+              password: { type: string }
+              full_name: { type: string }
+              join_code: { type: string, example: "O388NXTZ" }
+      responses:
+        201:
+          description: Student registered and joined workspace
+  /join-codes/join:
+    post:
+      tags: [Join codes]
+      summary: Existing user joins as STUDENT
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              join_code: { type: string }
+      responses:
+        201:
+          description: Joined
+  /invites:
+    post:
+      tags: [Invites]
+      summary: Create invitation
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              email: { type: string }
+              assigned_role: { type: string, enum: [ADMIN, TEACHER, STUDENT] }
+      responses:
+        201:
+          description: Invite created
+  /invites/{token}:
+    get:
+      tags: [Invites]
+      summary: Preview invite (read-only, no auth)
+      description: Does not mutate database state. Works for guests and logged-in users.
+      parameters:
+        - name: token
+          in: path
+          type: string
+          required: true
+      responses:
+        200:
+          description: Invite preview (invited_email, role, workspace, status)
+  /invites/{token}/register:
+    post:
+      tags: [Invites]
+      summary: Register new user through invitation
+      description: Email comes from invitation only. Not under /auth. For users without an account.
+      parameters:
+        - name: token
+          in: path
+          type: string
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [full_name, password]
+            properties:
+              full_name: { type: string, example: "Ali Ahmad" }
+              password: { type: string, example: "StrongPassword123" }
+      responses:
+        201:
+          description: User and membership created, invitation accepted
+        409:
+          description: Account already exists — use POST /invites/{token}/accept after login
+  /invites/{token}/accept:
+    post:
+      tags: [Invites]
+      summary: Accept invite (existing user only)
+      description: Requires access_token. Email must match invitation invited_email.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: token
+          in: path
+          type: string
+          required: true
+      responses:
+        200:
+          description: Membership created
+  /invites/{token}/reject:
+    post:
+      tags: [Invites]
+      summary: Reject invite (no auth)
+      description: Marks invitation as REJECTED. Does not create user or membership.
+      parameters:
+        - name: token
+          in: path
+          type: string
+          required: true
+      responses:
+        200:
+          description: Rejected
