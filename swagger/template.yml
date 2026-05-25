@@ -292,6 +292,410 @@ paths:
       responses:
         200:
           description: Deleted
+  /subjects:
+    get:
+      tags: [Subjects]
+      summary: List workspace subjects
+      description: Admin/owner see all. Teachers/students see assigned subjects only. Requires X-Workspace-Id.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Subject list
+    post:
+      tags: [Subjects]
+      summary: Create subject (owner or admin)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, example: "Mathematics" }
+              code: { type: string, example: "MATH101" }
+              description: { type: string }
+      responses:
+        201:
+          description: Subject created
+  /subjects/{subject_id}:
+    get:
+      tags: [Subjects]
+      summary: Get subject details
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Subject detail
+    patch:
+      tags: [Subjects]
+      summary: Update subject (owner or admin)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name: { type: string }
+              code: { type: string }
+              description: { type: string }
+              is_archived: { type: boolean }
+      responses:
+        200:
+          description: Updated
+    delete:
+      tags: [Subjects]
+      summary: Archive subject (soft delete)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Archived
+  /subjects/{subject_id}/teachers:
+    get:
+      tags: [Subjects]
+      summary: List teachers assigned to subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Teacher assignments
+    post:
+      tags: [Subjects]
+      summary: Assign teacher to subject
+      description: Creates subject_memberships row with subject_role=TEACHER
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [membership_id]
+            properties:
+              membership_id: { type: integer, example: 6 }
+      responses:
+        201:
+          description: Assigned
+  /subjects/{subject_id}/teachers/{membership_id}:
+    delete:
+      tags: [Subjects]
+      summary: Remove teacher from subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Removed
+  /subjects/{subject_id}/students:
+    get:
+      tags: [Subjects]
+      summary: List students enrolled in subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Student enrollments
+    post:
+      tags: [Subjects]
+      summary: Enroll student in subject
+      description: Admin/owner or teacher assigned to this subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [membership_id]
+            properties:
+              membership_id: { type: integer }
+      responses:
+        201:
+          description: Enrolled
+  /subjects/{subject_id}/students/{membership_id}:
+    delete:
+      tags: [Subjects]
+      summary: Remove student from subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Removed
+  /subjects/{subject_id}/topics:
+    get:
+      tags: [Subjects]
+      summary: List topics for subject
+      description: |
+        Requires active subject assignment (TEACHER or STUDENT) or workspace admin/owner.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Topics in subject
+    post:
+      tags: [Subjects]
+      summary: Create topic under subject
+      description: |
+        Workspace admin/owner or teacher with subject_role=TEACHER on subject_memberships.
+        Topics are global per subject (not per question bank).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, example: "Algebra basics" }
+              code: { type: string, example: "ALG-01" }
+      responses:
+        201:
+          description: Topic created
+  /subjects/{subject_id}/topics/{topic_id}:
+    get:
+      tags: [Subjects]
+      summary: Get topic by id
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - name: topic_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Topic details
+    patch:
+      tags: [Subjects]
+      summary: Update topic
+      description: Admin/owner or subject-assigned TEACHER only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - name: topic_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name: { type: string }
+              code: { type: string }
+      responses:
+        200:
+          description: Topic updated
+    delete:
+      tags: [Subjects]
+      summary: Delete topic
+      description: Admin/owner or subject-assigned TEACHER only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - name: topic_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Topic deleted
+  /subjects/{subject_id}/question-banks:
+    get:
+      tags: [Subjects]
+      summary: List question banks for subject
+      description: Visibility rules applied (PRIVATE, WORKSPACE, COMMUNITY)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Question banks
+  /question-banks:
+    post:
+      tags: [Question banks]
+      summary: Create question bank
+      description: Admin or teacher with subject_role=TEACHER on subject
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [title, subject_id]
+            properties:
+              title: { type: string, example: "Algebra Bank" }
+              subject_id: { type: integer, example: 1 }
+              description: { type: string }
+              visibility: { type: string, enum: [PRIVATE, WORKSPACE, COMMUNITY], example: "WORKSPACE" }
+      responses:
+        201:
+          description: Created
+  /question-banks/my:
+    get:
+      tags: [Question banks]
+      summary: My question banks (current membership)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Banks created by you
+  /question-banks/{bank_id}/questions:
+    post:
+      tags: [Question banks]
+      summary: Add question to bank (unified by type_code)
+      description: |
+        Creates a question and optional choices in one transaction.
+        Supported type_code values: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
+        Requires TEACHER assignment on the bank's subject (or workspace admin/owner).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [type_code, body]
+            properties:
+              type_code:
+                type: string
+                enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
+                example: MCQ
+              body: { type: string, example: "What is the capital of France?" }
+              explanation: { type: string }
+              points: { type: number, example: 2 }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              topic_id:
+                type: integer
+                description: Optional. When set, must belong to the bank's subject.
+              choices:
+                type: array
+                items:
+                  type: object
+                  required: [body, is_correct]
+                  properties:
+                    body: { type: string }
+                    is_correct: { type: boolean }
+                    order_index: { type: integer }
+      responses:
+        201:
+          description: Question created
+    get:
+      tags: [Question banks]
+      summary: List questions in bank
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Questions in bank
+  /question-banks/{bank_id}:
+    patch:
+      tags: [Question banks]
+      summary: Update question bank
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              title: { type: string }
+              description: { type: string }
+              visibility: { type: string, enum: [PRIVATE, WORKSPACE, COMMUNITY] }
+      responses:
+        200:
+          description: Updated
+    delete:
+      tags: [Question banks]
+      summary: Archive question bank (soft delete)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Archived
   /join-codes/register-student:
     post:
       tags: [Join codes]

@@ -1,7 +1,7 @@
 """
 Session management: ties JWT access jti to user_sessions rows.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from flask import current_app
 
@@ -76,9 +76,7 @@ class SessionService:
         user = UserRepository().get_by_id(user_id)
         is_superadmin = bool(user and user.is_superadmin)
 
-        access_token, jti = create_access_token(
-            user_id, is_superadmin=is_superadmin
-        )
+        access_token, jti = create_access_token(user_id, is_superadmin=is_superadmin)
         session.access_token_id = jti
         session.expires_at = datetime.now(timezone.utc) + current_app.config[
             "JWT_ACCESS_TOKEN_EXPIRES"

@@ -10,7 +10,7 @@ from models.workspace import (
     WorkspaceInvite,
     WorkspaceProfile,
 )
-from models.subject import MembershipSubject, Subject
+from models.subject import MembershipSubject, Subject, SubjectMembership
 from models.test import Test, TestAttempt
 from models.topic import Topic
 from models.question import (
@@ -41,6 +41,7 @@ __all__ = [
     "WorkspaceProfile",
     "Subject",
     "MembershipSubject",
+    "SubjectMembership",
     "Topic",
     "Test",
     "TestAttempt",

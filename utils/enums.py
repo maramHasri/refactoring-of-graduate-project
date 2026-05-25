@@ -31,6 +31,24 @@ class MembershipRole(str, enum.Enum):
     STUDENT = "STUDENT"
 
 
+class SubjectRole(str, enum.Enum):
+    """Role on a specific subject (subject_memberships), not workspace membership."""
+
+    TEACHER = "TEACHER"
+    STUDENT = "STUDENT"
+
+
+class SubjectMembershipStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    REMOVED = "REMOVED"
+
+
+class QuestionBankVisibility(str, enum.Enum):
+    PRIVATE = "PRIVATE"
+    WORKSPACE = "WORKSPACE"
+    COMMUNITY = "COMMUNITY"
+
+
 class InviteStatus(str, enum.Enum):
     PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"

@@ -65,12 +65,6 @@ class User(db.Model, TimestampMixin):
         back_populates="owner",
         lazy="dynamic",
     )
-    owned_question_choices = relationship(
-        "QuestionChoice",
-        back_populates="owner",
-        lazy="dynamic",
-    )
-
     __table_args__ = (Index("ix_users_user_status", "user_status"),)
 
     @validates("email")

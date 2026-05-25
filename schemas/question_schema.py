@@ -1,44 +1,63 @@
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, fields, pre_load, validate
 
-from utils.enums import QuestionStatus
+from utils.enums import Difficulty, QuestionStatus
+
+
+class QuestionChoiceInputSchema(Schema):
+    body = fields.Str(required=True, validate=validate.Length(min=1))
+    is_correct = fields.Bool(required=True)
+    order_index = fields.Int(allow_none=True)
+
+
+class CreateQuestionInBankSchema(Schema):
+    """
+    POST /question-banks/{bankId}/questions — domain-driven payload (not table-driven).
+    """
+
+    type_code = fields.Str(required=True, validate=validate.Length(min=2, max=50))
+    body = fields.Str(required=True, validate=validate.Length(min=1))
+    explanation = fields.Str(allow_none=True)
+    points = fields.Float(allow_none=True, validate=validate.Range(min=0))
+    difficulty = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf([d.value for d in Difficulty]),
+    )
+    topic_id = fields.Int(allow_none=True, load_default=None)
+    choices = fields.List(
+        fields.Nested(QuestionChoiceInputSchema),
+        load_default=list,
+    )
+
+    @pre_load
+    def normalize_optional_topic_id(self, data, **kwargs):
+        """Treat absent, null, or non-positive topic_id as no topic assignment."""
+        if not isinstance(data, dict):
+            return data
+        if "topic_id" not in data or data["topic_id"] is None:
+            data.pop("topic_id", None)
+            return data
+        try:
+            if int(data["topic_id"]) <= 0:
+                data.pop("topic_id", None)
+        except (TypeError, ValueError):
+            pass
+        return data
 
 
 class QuestionSchema(Schema):
     id = fields.Int(dump_only=True)
     bank_id = fields.Int(allow_none=True)
-    name = fields.Str(required=True)
-    slug = fields.Str(required=True)
-    question_type_id = fields.Int(required=True)
-    owner_user_id = fields.Int(required=True)
-    status = fields.Str()
-    question_choices_id = fields.Int(allow_none=True)
+    type_code = fields.Str()
+    body = fields.Str()
+    explanation = fields.Str(allow_none=True)
+    points = fields.Float(allow_none=True)
+    difficulty = fields.Str(allow_none=True)
     topic_id = fields.Int(allow_none=True)
+    status = fields.Str()
+    owner_user_id = fields.Int()
+    choices = fields.List(fields.Dict())
     created_at = fields.DateTime(dump_only=True)
     updated_at = fields.DateTime(dump_only=True)
-
-
-class CreateQuestionSchema(Schema):
-    name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
-    slug = fields.Str(required=True, validate=validate.Length(min=1, max=255))
-    question_type_id = fields.Int(required=True)
-    owner_user_id = fields.Int(required=True)
-    bank_id = fields.Int(allow_none=True)
-    question_choices_id = fields.Int(allow_none=True)
-    topic_id = fields.Int(allow_none=True)
-    status = fields.Str(
-        load_default=QuestionStatus.ACTIVE.value,
-        validate=validate.OneOf([s.value for s in QuestionStatus]),
-    )
-
-
-class UpdateQuestionSchema(Schema):
-    name = fields.Str(validate=validate.Length(min=1, max=255))
-    slug = fields.Str(validate=validate.Length(min=1, max=255))
-    question_type_id = fields.Int()
-    bank_id = fields.Int(allow_none=True)
-    question_choices_id = fields.Int(allow_none=True)
-    topic_id = fields.Int(allow_none=True)
-    status = fields.Str(validate=validate.OneOf([s.value for s in QuestionStatus]))
 
 
 class TestQuestionSchema(Schema):

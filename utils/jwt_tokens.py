@@ -5,7 +5,7 @@ JWT strategy:
 - Workspace selection is a frontend concern; JWT is global per user.
 """
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import jwt
 from flask import current_app

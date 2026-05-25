@@ -1,37 +1,46 @@
 from marshmallow import Schema, fields, validate
 
-
-class SubjectSchema(Schema):
-    id = fields.Int(dump_only=True)
-    name = fields.Str(required=True)
-    workspace_id = fields.Int(required=True)
-    code = fields.Str(allow_none=True)
-    description = fields.Str(allow_none=True)
-    created_by_membership_id = fields.Int(allow_none=True)
-    created_at = fields.DateTime(dump_only=True)
+from utils.enums import QuestionBankVisibility
 
 
 class CreateSubjectSchema(Schema):
+    """POST /subjects — workspace from X-Workspace-Id."""
+
     name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
-    workspace_id = fields.Int(required=True)
     code = fields.Str(allow_none=True, validate=validate.Length(max=50))
     description = fields.Str(allow_none=True)
-    created_by_membership_id = fields.Int(allow_none=True)
 
 
 class UpdateSubjectSchema(Schema):
     name = fields.Str(validate=validate.Length(min=1, max=255))
     code = fields.Str(allow_none=True, validate=validate.Length(max=50))
     description = fields.Str(allow_none=True)
+    is_archived = fields.Bool()
 
 
-class MembershipSubjectSchema(Schema):
-    id = fields.Int(dump_only=True)
+class AssignMembershipToSubjectSchema(Schema):
     membership_id = fields.Int(required=True)
-    subject_id = fields.Int(required=True)
-    created_at = fields.DateTime(dump_only=True)
 
 
-class CreateMembershipSubjectSchema(Schema):
-    membership_id = fields.Int(required=True)
+# Legacy aliases
+SubjectSchema = CreateSubjectSchema
+MembershipSubjectSchema = AssignMembershipToSubjectSchema
+CreateMembershipSubjectSchema = AssignMembershipToSubjectSchema
+
+
+class CreateQuestionBankSchema(Schema):
+    title = fields.Str(required=True, validate=validate.Length(min=1, max=255))
     subject_id = fields.Int(required=True)
+    description = fields.Str(allow_none=True)
+    visibility = fields.Str(
+        load_default=QuestionBankVisibility.WORKSPACE.value,
+        validate=validate.OneOf([v.value for v in QuestionBankVisibility]),
+    )
+
+
+class UpdateQuestionBankSchema(Schema):
+    title = fields.Str(validate=validate.Length(min=1, max=255))
+    description = fields.Str(allow_none=True)
+    visibility = fields.Str(
+        validate=validate.OneOf([v.value for v in QuestionBankVisibility])
+    )

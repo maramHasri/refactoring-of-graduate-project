@@ -45,11 +45,10 @@ from schemas.test_schema import (
     UpdateTestSchema,
 )
 from schemas.question_schema import (
-    CreateQuestionSchema,
+    CreateQuestionInBankSchema,
     CreateTestQuestionSchema,
     QuestionSchema,
     TestQuestionSchema,
-    UpdateQuestionSchema,
     UpdateTestQuestionSchema,
 )
 from schemas.topic_schema import (

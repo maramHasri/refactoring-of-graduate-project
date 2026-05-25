@@ -150,9 +150,10 @@ class Membership(db.Model):
         foreign_keys="Subject.created_by_membership_id",
         lazy="dynamic",
     )
-    subject_links = relationship(
-        "MembershipSubject",
+    subject_memberships = relationship(
+        "SubjectMembership",
         back_populates="membership",
+        foreign_keys="SubjectMembership.membership_id",
         cascade="all, delete-orphan",
         lazy="dynamic",
     )

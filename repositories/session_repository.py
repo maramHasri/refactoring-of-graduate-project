@@ -21,14 +21,18 @@ class SessionRepository(BaseRepository):
         session.is_active = False
 
     def deactivate_all_for_user(self, user_id: int) -> int:
-        sessions = db.session.execute(
-            db.select(UserSession).where(
-                UserSession.user_id == user_id,
-                UserSession.is_active.is_(True),
+        sessions = (
+            db.session.execute(
+                db.select(UserSession).where(
+                    UserSession.user_id == user_id,
+                    UserSession.is_active.is_(True),
+                )
             )
-        ).scalars().all()
-        for s in sessions:
-            s.is_active = False
+            .scalars()
+            .all()
+        )
+        for session in sessions:
+            session.is_active = False
         return len(sessions)
 
     def touch(self, session: UserSession) -> None:
