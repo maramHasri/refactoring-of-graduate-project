@@ -324,6 +324,7 @@ class SubjectService:
         return {
             "id": subject.id,
             "name": subject.name,
+            "title": subject.name,
             "code": subject.code,
             "description": subject.description,
             "workspace_id": subject.workspace_id,

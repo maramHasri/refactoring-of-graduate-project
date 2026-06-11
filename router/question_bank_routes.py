@@ -4,7 +4,7 @@ Question bank APIs — subject-centered content with visibility rules.
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
-from schemas.question_schema import CreateQuestionInBankSchema
+from schemas.question_schema import CreateQuestionsInBankSchema
 from schemas.subject_schema import CreateQuestionBankSchema, UpdateQuestionBankSchema
 from service.question_bank_service import QuestionBankService
 from service.question_service import QuestionService
@@ -50,19 +50,22 @@ def list_my_question_banks():
 @handle_service_errors
 def create_question_in_bank(bank_id):
     """
-    POST /question-banks/{bankId}/questions — unified create by type_code (MCQ, TRUE_FALSE, ...).
+    POST /question-banks/{bankId}/questions — save one or many questions in one request.
+    Body must always be { "questions": [ ... ] }.
     """
-    data = CreateQuestionInBankSchema().load(request.get_json() or {})
-    question = QuestionService().create_question_in_bank(
+    data = CreateQuestionsInBankSchema().load(request.get_json() or {})
+    svc = QuestionService()
+    rows = svc.create_questions_in_bank(
         bank_id=bank_id,
         workspace_id=g.workspace_id,
         owner_user_id=g.current_user.id,
         actor_membership=g.membership,
-        payload=data,
+        questions=data["questions"],
     )
     return {
-        "message": "Question created",
-        "question": QuestionService().serialize_question(question),
+        "message": "Questions created",
+        "questions": [svc.serialize_question(q) for q in rows],
+        "count": len(rows),
     }, 201
 
 

@@ -3,7 +3,7 @@ Create questions inside question banks (single endpoint, multiple type_code valu
 """
 from decimal import Decimal
 
-from models import Question, QuestionChoice
+from models import Question, QuestionBank, QuestionChoice
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.topic_repository import TopicRepository
 from service.exceptions import NotFoundError, ValidationError
@@ -20,23 +20,59 @@ class QuestionService:
         self.topics = TopicRepository()
         self.bank_service = QuestionBankService()
 
-    def create_question_in_bank(
+    def create_questions_in_bank(
         self,
         *,
         bank_id: int,
         workspace_id: int,
         owner_user_id: int,
         actor_membership,
-        payload: dict,
-    ) -> Question:
+        questions: list[dict],
+    ) -> list[Question]:
         """
-        POST /question-banks/{bankId}/questions — transactional question + choices.
+        POST /question-banks/{bankId}/questions — transactional create for all items.
+        Rolls back entirely if any question fails validation or persistence.
         """
         bank = self.bank_service.resolve_bank_for_question_write(
             bank_id=bank_id,
             workspace_id=workspace_id,
             actor_membership=actor_membership,
         )
+
+        if not questions:
+            raise ValidationError("questions must contain at least one item")
+
+        created: list[Question] = []
+        try:
+            for index, payload in enumerate(questions):
+                created.append(
+                    self._persist_question_in_bank(
+                        bank=bank,
+                        workspace_id=workspace_id,
+                        owner_user_id=owner_user_id,
+                        payload=payload,
+                        item_index=index,
+                    )
+                )
+            db.session.commit()
+            for question in created:
+                db.session.refresh(question)
+            return created
+        except Exception:
+            db.session.rollback()
+            raise
+
+    def _persist_question_in_bank(
+        self,
+        *,
+        bank: QuestionBank,
+        workspace_id: int,
+        owner_user_id: int,
+        payload: dict,
+        item_index: int,
+    ) -> Question:
+        """Validate and stage one question + choices (no commit)."""
+        prefix = f"questions[{item_index}]"
 
         type_code = validate_question_create_payload(
             type_code=payload["type_code"],
@@ -45,57 +81,52 @@ class QuestionService:
         question_type = self.question_types.find_by_code(type_code)
         if not question_type:
             raise ValidationError(
-                f"Question type '{type_code}' is not configured. Run flask seed."
+                f"{prefix}: question type '{type_code}' is not configured. Run flask seed."
             )
 
         topic_id = self._resolve_optional_topic_id(
             payload.get("topic_id"),
             subject_id=bank.subject_id,
             workspace_id=workspace_id,
+            field_prefix=prefix,
         )
 
         difficulty = payload.get("difficulty")
         if difficulty is not None:
             difficulty = difficulty.strip().upper()
             if difficulty not in [d.value for d in Difficulty]:
-                raise ValidationError("Invalid difficulty value")
+                raise ValidationError(f"{prefix}: invalid difficulty value")
 
         points = payload.get("points")
         if points is not None:
             points = Decimal(str(points))
             if points < 0:
-                raise ValidationError("points must be non-negative")
+                raise ValidationError(f"{prefix}: points must be non-negative")
 
-        try:
-            question = Question(
-                bank_id=bank.id,
-                question_text=payload["body"].strip(),
-                explanation=(payload.get("explanation") or "").strip() or None,
-                question_type_id=question_type.id,
-                owner_user_id=owner_user_id,
-                status=QuestionStatus.ACTIVE.value,
-                topic_id=topic_id,
-                points=points,
-                difficulty=difficulty,
+        question = Question(
+            bank_id=bank.id,
+            question_text=payload["body"].strip(),
+            explanation=(payload.get("explanation") or "").strip() or None,
+            question_type_id=question_type.id,
+            owner_user_id=owner_user_id,
+            status=QuestionStatus.ACTIVE.value,
+            topic_id=topic_id,
+            points=points,
+            difficulty=difficulty,
+        )
+        self.questions.add(question)
+        db.session.flush()
+
+        for choice_index, choice_data in enumerate(payload.get("choices") or []):
+            choice = QuestionChoice(
+                question_id=question.id,
+                body=choice_data["body"].strip(),
+                is_correct=bool(choice_data["is_correct"]),
+                order_index=choice_data.get("order_index", choice_index),
             )
-            self.questions.add(question)
-            db.session.flush()
+            self.questions.add(choice)
 
-            for index, choice_data in enumerate(payload.get("choices") or []):
-                choice = QuestionChoice(
-                    question_id=question.id,
-                    body=choice_data["body"].strip(),
-                    is_correct=bool(choice_data["is_correct"]),
-                    order_index=choice_data.get("order_index", index),
-                )
-                self.questions.add(choice)
-
-            db.session.commit()
-            db.session.refresh(question)
-            return question
-        except Exception:
-            db.session.rollback()
-            raise
+        return question
 
     def list_questions_in_bank(
         self, *, bank_id: int, workspace_id: int, actor_membership
@@ -114,17 +145,14 @@ class QuestionService:
         *,
         subject_id: int,
         workspace_id: int,
+        field_prefix: str = "question",
     ) -> int | None:
-        """
-        Topic assignment is optional. When topic_id is omitted or empty, returns None.
-        When provided, ensures the topic exists under the bank's subject in the workspace.
-        """
         if topic_id is None:
             return None
         try:
             topic_id = int(topic_id)
         except (TypeError, ValueError):
-            raise ValidationError("topic_id must be a valid integer")
+            raise ValidationError(f"{field_prefix}: topic_id must be a valid integer")
         if topic_id <= 0:
             return None
 
@@ -133,7 +161,8 @@ class QuestionService:
         )
         if not topic:
             raise ValidationError(
-                "topic_id must reference an existing topic in the bank's subject"
+                f"{field_prefix}: topic_id must reference an existing topic "
+                "in the bank's subject"
             )
         return topic.id
 

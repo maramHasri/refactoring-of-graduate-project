@@ -11,9 +11,9 @@ from schemas.auth_schema import (
     RegisterOwnerSchema,
     ResetPasswordSchema,
     SuperAdminLoginSchema,
-    VerifyEmailSchema,
+    VerifyOtpSchema,
 )
-from schemas.user_schema import LoginSchema, ResendVerificationSchema
+from schemas.user_schema import LoginSchema, ResendOtpSchema
 from service.auth_service import AuthService
 
 auth_bp = Blueprint("auth", __name__)
@@ -30,25 +30,24 @@ def _client_meta():
 @handle_service_errors
 def register_owner():
     """
-    POST /auth/register — workspace owner onboarding.
+    POST /auth/register — submit owner registration; OTP sent by email.
+    User and workspace are created after POST /auth/verify-otp.
     """
     data = RegisterOwnerSchema().load(request.get_json() or {})
     result = AuthService().register_workspace_owner(**data)
     response = {
-        "message": "Registration successful. Check your email for the verification link.",
+        "message": "Registration started. Check your email for the verification code.",
         **result,
     }
-    if not result.get("email_sent") and result.get("dev_verification_token"):
-        response["message"] += " (dev: email not sent — use dev_verification_token)"
+    if result.get("dev_otp"):
+        response["message"] += " (development: use dev_otp from response or server console)"
     return response, 201
 
 
 @auth_bp.route("/login", methods=["POST"])
 @handle_service_errors
 def login():
-    """
-    POST /auth/login — standard user login.
-    """
+    """POST /auth/login — standard user login."""
     data = LoginSchema().load(request.get_json() or {})
     result = AuthService().login(**data, **_client_meta())
     return result, 200
@@ -57,9 +56,7 @@ def login():
 @auth_bp.route("/superadmin/login", methods=["POST"])
 @handle_service_errors
 def superadmin_login():
-    """
-    POST /auth/superadmin/login — super admin only.
-    """
+    """POST /auth/superadmin/login — super admin only."""
     data = SuperAdminLoginSchema().load(request.get_json() or {})
     result = AuthService().login_superadmin(
         email=data["email"],
@@ -73,9 +70,7 @@ def superadmin_login():
 @require_auth
 @handle_service_errors
 def logout():
-    """
-    POST /auth/logout — revoke current session.
-    """
+    """POST /auth/logout — revoke current session."""
     AuthService().logout(g.access_jti)
     return {"message": "Logged out"}, 200
 
@@ -84,9 +79,7 @@ def logout():
 @require_auth
 @handle_service_errors
 def logout_all():
-    """
-    POST /auth/logout-all — revoke all sessions for user.
-    """
+    """POST /auth/logout-all — revoke all sessions for user."""
     count = AuthService().logout_all(g.current_user.id)
     return {"message": "All sessions revoked", "count": count}, 200
 
@@ -94,63 +87,34 @@ def logout_all():
 @auth_bp.route("/refresh", methods=["POST"])
 @handle_service_errors
 def refresh():
-    """
-    POST /auth/refresh — issue new access token from refresh token.
-    """
+    """POST /auth/refresh — issue new access token from refresh token."""
     data = RefreshTokenSchema().load(request.get_json() or {})
     result = AuthService().refresh_tokens(data["refresh_token"])
     return result, 200
 
 
-@auth_bp.route("/verify/<token>", methods=["GET"])
+@auth_bp.route("/verify-otp", methods=["POST"])
 @handle_service_errors
-def verify_email_legacy_link(token):
-    """
-    Legacy/wrong link handler — email verification is POST /auth/verify-email.
-    Workspace invites use GET /invites/{token}, not /auth/verify/...
-    """
-    return {
-        "error": "Unsupported link format",
-        "hint": (
-            "Email verification: POST /auth/verify-email with JSON "
-            '{"token": "<token from registration email>"}. '
-            "Workspace invite: GET /invites/{token} then POST /invites/{token}/accept."
-        ),
-        "received_token_prefix": token[:20] + "..." if len(token) > 20 else token,
-    }, 400
+def verify_otp():
+    """POST /auth/verify-otp — verify email OTP and complete registration if pending."""
+    data = VerifyOtpSchema().load(request.get_json() or {})
+    result = AuthService().verify_otp(email=data["email"], otp=data["otp"])
+    return result, 200
 
 
-@auth_bp.route("/verify-email", methods=["POST"])
+@auth_bp.route("/resend-otp", methods=["POST"])
 @handle_service_errors
-def verify_email():
-    """
-    POST /auth/verify-email — mark email verified (read token, write user).
-    """
-    data = VerifyEmailSchema().load(request.get_json() or {})
-    user = AuthService().verify_email(data["token"])
-    return {
-        "message": "Email verified",
-        "user": {"id": user.id, "email": user.email, "email_verified": True},
-    }, 200
-
-
-@auth_bp.route("/resend-verification", methods=["POST"])
-@handle_service_errors
-def resend_verification():
-    """
-    POST /auth/resend-verification — create new verification token.
-    """
-    data = ResendVerificationSchema().load(request.get_json() or {})
-    result = AuthService().resend_verification(data["email"])
+def resend_otp():
+    """POST /auth/resend-otp — invalidate previous OTP and send a new one."""
+    data = ResendOtpSchema().load(request.get_json() or {})
+    result = AuthService().resend_otp(data["email"])
     return result, 200
 
 
 @auth_bp.route("/forgot-password", methods=["POST"])
 @handle_service_errors
 def forgot_password():
-    """
-    POST /auth/forgot-password — start reset flow (must NOT change password).
-    """
+    """POST /auth/forgot-password — start reset flow (link-based, unchanged)."""
     data = ForgotPasswordSchema().load(request.get_json() or {})
     raw = AuthService().forgot_password(data["email"])
     response = {"message": "If the account exists, reset instructions were sent"}
@@ -162,9 +126,7 @@ def forgot_password():
 @auth_bp.route("/reset-password", methods=["POST"])
 @handle_service_errors
 def reset_password():
-    """
-    POST /auth/reset-password — complete reset + revoke sessions.
-    """
+    """POST /auth/reset-password — complete reset + revoke sessions."""
     data = ResetPasswordSchema().load(request.get_json() or {})
     AuthService().reset_password(data["token"], data["new_password"])
     return {"message": "Password reset successful"}, 200
@@ -174,9 +136,7 @@ def reset_password():
 @require_auth
 @handle_service_errors
 def change_password():
-    """
-    POST /auth/change-password — authenticated password change.
-    """
+    """POST /auth/change-password — authenticated password change."""
     data = ChangePasswordSchema().load(request.get_json() or {})
     AuthService().change_password(
         g.current_user.id,

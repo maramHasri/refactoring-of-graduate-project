@@ -14,7 +14,7 @@ from schemas.auth_schema import (
     RegisterStudentSchema,
     ResetPasswordSchema,
     SuperAdminLoginSchema,
-    VerifyEmailSchema,
+    VerifyOtpSchema,
 )
 from schemas.workspace_schema import (
     CreateInviteSchema,
@@ -45,7 +45,8 @@ from schemas.test_schema import (
     UpdateTestSchema,
 )
 from schemas.question_schema import (
-    CreateQuestionInBankSchema,
+    CreateQuestionInBankItemSchema,
+    CreateQuestionsInBankSchema,
     CreateTestQuestionSchema,
     QuestionSchema,
     TestQuestionSchema,

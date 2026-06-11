@@ -34,6 +34,7 @@ class Workspace(db.Model, TimestampMixin):
     )
     subject_assignment_mode = db.Column(String(30), nullable=True)
     is_verified_by_superadmin = db.Column(Boolean, nullable=False, default=False)
+    rejection_reason = db.Column(Text, nullable=True)
 
     owner = relationship(
         "User",

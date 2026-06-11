@@ -31,8 +31,8 @@ class User(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
-    email_verification_tokens = relationship(
-        "EmailVerificationToken",
+    email_otps = relationship(
+        "EmailOtp",
         back_populates="user",
         cascade="all, delete-orphan",
         lazy="dynamic",
@@ -48,6 +48,12 @@ class User(db.Model, TimestampMixin):
         back_populates="owner",
         foreign_keys="Workspace.owner_user_id",
         lazy="dynamic",
+    )
+    institution_registration = relationship(
+        "RegistrationIntent",
+        back_populates="user",
+        uselist=False,
+        foreign_keys="RegistrationIntent.user_id",
     )
     memberships = relationship(
         "Membership",

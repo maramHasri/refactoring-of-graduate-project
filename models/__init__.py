@@ -1,7 +1,8 @@
 from models.user import User
 from models.auth import (
-    EmailVerificationToken,
+    EmailOtp,
     PasswordResetCode,
+    RegistrationIntent,
     UserSession,
 )
 from models.workspace import (
@@ -33,7 +34,8 @@ from models.billing import (
 __all__ = [
     "User",
     "PasswordResetCode",
-    "EmailVerificationToken",
+    "EmailOtp",
+    "RegistrationIntent",
     "UserSession",
     "Workspace",
     "Membership",

@@ -1,12 +1,8 @@
 """
 Authentication business logic.
 
-Onboarding flows:
-1. Owner registration: user + workspace + ADMIN membership + owner_membership_id
-2. Student + join code: user + STUDENT membership (no workspace creation)
-3. Existing user join: membership only (invite or join code)
-
-Super admin: platform operator, no workspace required, is_superadmin=True.
+Owner registration: intent + OTP → verify → create user/workspace.
+Student/invite: user pending → OTP → activate account.
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -14,12 +10,14 @@ from datetime import datetime, timedelta, timezone
 from flask import current_app
 
 from models import (
-    EmailVerificationToken,
     Membership,
     PasswordResetCode,
+    RegistrationIntent,
     User,
     Workspace,
+    WorkspaceProfile,
 )
+from repositories.otp_repository import RegistrationIntentRepository
 from repositories.user_repository import UserRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import (
@@ -30,11 +28,25 @@ from service.exceptions import (
     ValidationError,
 )
 from service.email_delivery_service import EmailDeliveryError, EmailDeliveryService
+from service.otp_service import OtpService
 from service.session_service import SessionService
 from utils.db import db
-from utils.enums import InviteStatus, MembershipRole, UserStatus, WorkspaceKind
+from utils.enums import (
+    EmailOtpPurpose,
+    InstitutionApprovalStatus,
+    MembershipRole,
+    UserStatus,
+    WorkspaceKind,
+    WorkspaceStatus,
+)
+from utils.dev_otp import attach_dev_otp
 from utils.join_code import generate_workspace_join_code
-from utils.security import generate_invite_token, hash_password, hash_token, verify_password
+from utils.security import (
+    generate_invite_token,
+    hash_password,
+    hash_token,
+    verify_password,
+)
 
 
 def _slugify(name: str) -> str:
@@ -48,6 +60,8 @@ class AuthService:
         self.workspaces = WorkspaceRepository()
         self.memberships = MembershipRepository()
         self.sessions = SessionService()
+        self.otps = OtpService()
+        self.registration_intents = RegistrationIntentRepository()
 
     # ── Registration ─────────────────────────────────────────────
 
@@ -61,14 +75,35 @@ class AuthService:
         workspace_kind: str,
         slug: str | None = None,
         phone_number: str | None = None,
+        country: str | None = None,
+        city: str | None = None,
+        website_url: str | None = None,
+        description: str | None = None,
     ) -> dict:
         """
-        Purpose: Institution/SOLO owner onboarding.
-        Side effects: user, workspace, membership, join_code, optional verification token.
+        Step 1–2: Store registration intent and send email OTP.
+        User/workspace are created only after POST /auth/verify-otp succeeds.
         """
         email = email.lower().strip()
-        if self.users.find_by_email(email):
-            raise ConflictError("Email is already registered")
+        existing_user = self.users.find_by_email(email)
+        if existing_user:
+            if existing_user.email_verified:
+                raise ConflictError("Email is already registered")
+            # Legacy or incomplete signup — resend OTP instead of blocking with 409
+            plain_otp = self.otps.issue_otp(
+                email=email,
+                purpose=EmailOtpPurpose.VERIFY_ACCOUNT.value,
+                user_id=existing_user.id,
+            )
+            db.session.commit()
+            email_sent = self._send_otp_email(email, existing_user.full_name, plain_otp)
+            result = {
+                "requires_otp_verification": True,
+                "email_sent": email_sent,
+                "workspace_kind": workspace_kind,
+                "resent_otp_for_existing_user": True,
+            }
+            return attach_dev_otp(result, plain_otp, email=email)
 
         if workspace_kind not in (WorkspaceKind.SOLO.value, WorkspaceKind.INSTITUTION.value):
             raise ValidationError("Invalid workspace kind")
@@ -77,53 +112,41 @@ class AuthService:
         if self.workspaces.find_by_slug(slug):
             raise ConflictError("Workspace slug already exists")
 
-        user = User(
+        existing_intent = self.registration_intents.find_by_email(email)
+        if existing_intent:
+            db.session.delete(existing_intent)
+            db.session.flush()
+
+        intent = RegistrationIntent(
             email=email,
             password_hash=hash_password(password),
-            full_name=full_name,
+            full_name=full_name.strip(),
             phone_number=phone_number,
-            user_status=UserStatus.PENDING_VERIFICATION.value,
-            email_verified=False,
-        )
-        self.users.add(user)
-        db.session.flush()
-
-        workspace = Workspace(
-            name=workspace_name,
+            workspace_name=workspace_name.strip(),
             slug=slug,
-            kind=workspace_kind,
-            owner_user_id=user.id,
-            join_code=self._unique_join_code(),
+            workspace_kind=workspace_kind,
+            country=country,
+            city=city,
+            website_url=website_url,
+            description=description,
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(hours=current_app.config.get("REGISTRATION_INTENT_EXPIRES_HOURS", 48)),
         )
-        self.workspaces.add(workspace)
-        db.session.flush()
+        self.registration_intents.add(intent)
 
-        membership = Membership(
-            user_id=user.id,
-            workspace_id=workspace.id,
-            role=MembershipRole.ADMIN.value,
-            status="ACTIVE",
+        plain_otp = self.otps.issue_otp(
+            email=email,
+            purpose=EmailOtpPurpose.REGISTER_OWNER.value,
         )
-        self.memberships.add(membership)
-        db.session.flush()
-
-        workspace.owner_membership_id = membership.id
-
-        raw_token, _ = self.create_email_verification_token(user)
         db.session.commit()
 
-        email_sent = self._send_verification_email(user, raw_token)
-
+        email_sent = self._send_otp_email(email, full_name, plain_otp)
         result = {
-            "user_id": user.id,
-            "workspace_id": workspace.id,
-            "membership_id": membership.id,
-            "requires_email_verification": True,
+            "requires_otp_verification": True,
             "email_sent": email_sent,
+            "workspace_kind": workspace_kind,
         }
-        if not email_sent and current_app.config.get("DEBUG"):
-            result["dev_verification_token"] = raw_token
-        return result
+        return attach_dev_otp(result, plain_otp, email=email)
 
     def register_student_with_join_code(
         self,
@@ -134,13 +157,10 @@ class AuthService:
         join_code: str,
         phone_number: str | None = None,
     ) -> dict:
-        """
-        Purpose: New student account + STUDENT membership via permanent workspace join code.
-        Must NOT: create a workspace.
-        """
         workspace = self.workspaces.find_by_join_code(join_code)
         if not workspace:
             raise NotFoundError("Invalid join code")
+        self._ensure_workspace_allows_member_join(workspace)
 
         email = email.lower().strip()
         if self.users.find_by_email(email):
@@ -165,21 +185,190 @@ class AuthService:
         )
         self.memberships.add(membership)
 
-        raw_token, _ = self.create_email_verification_token(user)
+        plain_otp = self.otps.issue_otp(
+            email=email,
+            purpose=EmailOtpPurpose.VERIFY_ACCOUNT.value,
+            user_id=user.id,
+        )
         db.session.commit()
 
-        email_sent = self._send_verification_email(user, raw_token)
-
+        email_sent = self._send_otp_email(email, full_name, plain_otp)
         result = {
             "user_id": user.id,
             "workspace_id": workspace.id,
             "membership_id": membership.id,
-            "requires_email_verification": True,
+            "requires_otp_verification": True,
             "email_sent": email_sent,
         }
-        if not email_sent and current_app.config.get("DEBUG"):
-            result["dev_verification_token"] = raw_token
-        return result
+        return attach_dev_otp(result, plain_otp, email=email)
+
+    def send_account_verification_otp(self, user: User) -> tuple[str, bool]:
+        """Issue OTP for an existing pending user (invite / resend flows)."""
+        plain_otp = self.otps.issue_otp(
+            email=user.email,
+            purpose=EmailOtpPurpose.VERIFY_ACCOUNT.value,
+            user_id=user.id,
+        )
+        email_sent = self._send_otp_email(user.email, user.full_name, plain_otp)
+        return plain_otp, email_sent
+
+    # ── OTP verification ─────────────────────────────────────────
+
+    def verify_otp(self, *, email: str, otp: str) -> dict:
+        email = email.lower().strip()
+        self.otps.verify_otp(email=email, otp=otp)
+
+        intent = self.registration_intents.find_active_by_email(email)
+        if intent:
+            return self._complete_owner_registration(intent)
+
+        user = self.users.find_by_email(email)
+        if not user:
+            raise ValidationError("No registration found for this email")
+
+        user.email_verified = True
+        if user.user_status == UserStatus.PENDING_VERIFICATION.value:
+            user.user_status = UserStatus.ACTIVE.value
+        db.session.commit()
+        return {"success": True, "email_verified": True}
+
+    def resend_otp(self, email: str) -> dict:
+        email = email.lower().strip()
+        intent = self.registration_intents.find_active_by_email(email)
+        if intent:
+            plain = self.otps.issue_otp(
+                email=email,
+                purpose=EmailOtpPurpose.REGISTER_OWNER.value,
+            )
+            db.session.commit()
+            email_sent = self._send_otp_email(email, intent.full_name, plain)
+            out = {"success": True, "email_sent": email_sent}
+            return attach_dev_otp(out, plain, email=email)
+
+        user = self.users.find_by_email(email)
+        if not user:
+            raise ValidationError(
+                "No account or pending registration found for this email. "
+                "Use POST /auth/register first."
+            )
+        if user.email_verified:
+            raise ValidationError("Email is already verified")
+
+        plain, email_sent = self.send_account_verification_otp(user)
+        db.session.commit()
+        out = {"success": True, "email_sent": email_sent}
+        return attach_dev_otp(out, plain, email=email)
+
+    def _complete_owner_registration(self, intent: RegistrationIntent) -> dict:
+        if intent.workspace_kind == WorkspaceKind.INSTITUTION.value:
+            return self._complete_institution_pending_registration(intent)
+        return self._complete_solo_owner_registration(intent)
+
+    def _complete_institution_pending_registration(
+        self, intent: RegistrationIntent
+    ) -> dict:
+        """
+        INSTITUTION: create user only; workspace is created on super admin approve.
+        """
+        if self.users.find_by_email(intent.email):
+            raise ConflictError("Email is already registered")
+
+        user = User(
+            email=intent.email,
+            password_hash=intent.password_hash,
+            full_name=intent.full_name,
+            phone_number=intent.phone_number,
+            user_status=UserStatus.PENDING_APPROVAL.value,
+            email_verified=True,
+        )
+        self.users.add(user)
+        db.session.flush()
+
+        intent.user_id = user.id
+        intent.approval_status = InstitutionApprovalStatus.PENDING.value
+        db.session.commit()
+
+        self._send_institution_pending_review_email(user, intent.workspace_name)
+
+        return {
+            "success": True,
+            "user_id": user.id,
+            "user_status": user.user_status,
+            "workspace_kind": intent.workspace_kind,
+            "requires_admin_approval": True,
+            "message": (
+                "Institution registration submitted. "
+                "Your request is under review by platform administration."
+            ),
+        }
+
+    def _complete_solo_owner_registration(self, intent: RegistrationIntent) -> dict:
+        if self.users.find_by_email(intent.email):
+            raise ConflictError("Email is already registered")
+        if self.workspaces.find_by_slug(intent.slug):
+            raise ConflictError("Workspace slug already exists")
+
+        user = User(
+            email=intent.email,
+            password_hash=intent.password_hash,
+            full_name=intent.full_name,
+            phone_number=intent.phone_number,
+            user_status=UserStatus.ACTIVE.value,
+            email_verified=True,
+        )
+        self.users.add(user)
+        db.session.flush()
+
+        workspace = Workspace(
+            name=intent.workspace_name,
+            slug=intent.slug,
+            kind=intent.workspace_kind,
+            owner_user_id=user.id,
+            status=WorkspaceStatus.ACTIVE.value,
+            join_code=self._unique_join_code(),
+        )
+        self.workspaces.add(workspace)
+        db.session.flush()
+
+        membership = Membership(
+            user_id=user.id,
+            workspace_id=workspace.id,
+            role=MembershipRole.ADMIN.value,
+            status="ACTIVE",
+        )
+        self.memberships.add(membership)
+        db.session.flush()
+        workspace.owner_membership_id = membership.id
+
+        if any(
+            [
+                intent.country,
+                intent.city,
+                intent.website_url,
+                intent.description,
+            ]
+        ):
+            profile = WorkspaceProfile(
+                workspace_id=workspace.id,
+                country=intent.country,
+                city=intent.city,
+                website_url=intent.website_url,
+                description=intent.description,
+            )
+            self.workspaces.add(profile)
+
+        intent.consumed_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        return {
+            "success": True,
+            "user_id": user.id,
+            "workspace_id": workspace.id,
+            "membership_id": membership.id,
+            "workspace_kind": workspace.kind,
+            "workspace_status": workspace.status,
+            "requires_admin_approval": False,
+        }
 
     # ── Login / logout ───────────────────────────────────────────
 
@@ -191,10 +380,6 @@ class AuthService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict:
-        """
-        Purpose: Authenticate any user (including super admin).
-        Must NOT: create memberships or modify workspace context in JWT.
-        """
         email = email.lower().strip()
         user = self.users.find_by_email(email)
         if not user or not verify_password(password, user.password_hash):
@@ -204,6 +389,12 @@ class AuthService:
             raise ForbiddenError("Account is disabled")
         if user.user_status == UserStatus.SUSPENDED.value:
             raise ForbiddenError("Account is suspended")
+        if not user.email_verified:
+            raise ForbiddenError(
+                "Email not verified. Enter the OTP sent to your email via POST /auth/verify-otp"
+            )
+
+        self._enforce_institution_login_rules(user)
 
         return self._issue_auth_response(user, ip_address=ip_address, user_agent=user_agent)
 
@@ -215,9 +406,6 @@ class AuthService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict:
-        """
-        Purpose: Dedicated super-admin login (must have is_superadmin=True).
-        """
         email = email.lower().strip()
         user = self.users.find_superadmin_by_email(email)
         if not user or not verify_password(password, user.password_hash):
@@ -226,7 +414,6 @@ class AuthService:
         return self._issue_auth_response(user, ip_address=ip_address, user_agent=user_agent)
 
     def logout(self, jti: str) -> None:
-        """Deactivate single session by access token jti."""
         session = self.sessions.repo.find_active_by_jti(jti)
         if session:
             self.sessions.repo.deactivate(session)
@@ -240,6 +427,10 @@ class AuthService:
     def refresh_tokens(self, refresh_token: str) -> dict:
         access, refresh, session = self.sessions.refresh_session(refresh_token)
         user = self.users.get_by_id(session.user_id)
+        if not user.is_superadmin:
+            if not user.email_verified:
+                raise ForbiddenError("Email not verified")
+            self._enforce_institution_login_rules(user)
         db.session.commit()
         return {
             "access_token": access,
@@ -248,68 +439,9 @@ class AuthService:
             "user": self._serialize_user(user),
         }
 
-    # ── Email verification ─────────────────────────────────────
-
-    def create_email_verification_token(self, user: User) -> tuple[str, EmailVerificationToken]:
-        raw = generate_invite_token()
-        token = EmailVerificationToken(
-            user_id=user.id,
-            token_hash=hash_token(raw),
-            email=user.email,
-            expires_at=datetime.now(timezone.utc)
-            + timedelta(hours=current_app.config.get("EMAIL_VERIFICATION_EXPIRES_HOURS", 48)),
-        )
-        self.users.add(token)
-        return raw, token
-
-    def verify_email(self, raw_token: str) -> User:
-        """
-        Purpose: Mark email verified.
-        Must NOT: create sessions automatically.
-        """
-        token_row = db.session.execute(
-            db.select(EmailVerificationToken).where(
-                EmailVerificationToken.token_hash == hash_token(raw_token)
-            )
-        ).scalar_one_or_none()
-        if not token_row or token_row.is_used:
-            raise ValidationError("Invalid verification token")
-        if token_row.expires_at < datetime.now(timezone.utc):
-            raise ValidationError("Verification token has expired")
-
-        user = self.users.get_by_id(token_row.user_id)
-        if not user:
-            raise NotFoundError("User not found")
-
-        user.email_verified = True
-        if user.user_status == UserStatus.PENDING_VERIFICATION.value:
-            user.user_status = UserStatus.ACTIVE.value
-        token_row.is_used = True
-        token_row.used_at = datetime.now(timezone.utc)
-        db.session.commit()
-        return user
-
-    def resend_verification(self, email: str) -> dict:
-        user = self.users.find_by_email(email)
-        if not user:
-            return {"message": "If the account exists, a verification email was sent", "email_sent": False}
-        if user.email_verified:
-            raise ValidationError("Email is already verified")
-        raw, _ = self.create_email_verification_token(user)
-        db.session.commit()
-        email_sent = self._send_verification_email(user, raw)
-        out = {"message": "If the account exists, a verification email was sent", "email_sent": email_sent}
-        if not email_sent and current_app.config.get("DEBUG"):
-            out["dev_verification_token"] = raw
-        return out
-
     # ── Password reset ─────────────────────────────────────────
 
     def forgot_password(self, email: str) -> str | None:
-        """
-        Purpose: Start password reset.
-        Must NOT: change password or create sessions.
-        """
         user = self.users.find_by_email(email.lower().strip())
         if not user:
             return None
@@ -334,10 +466,6 @@ class AuthService:
         return raw
 
     def reset_password(self, raw_token: str, new_password: str) -> None:
-        """
-        Purpose: Complete password reset.
-        Side effects: password update, revoke all sessions, invalidate token.
-        """
         row = db.session.execute(
             db.select(PasswordResetCode).where(
                 PasswordResetCode.reset_code_hash == hash_token(raw_token),
@@ -364,6 +492,52 @@ class AuthService:
         db.session.commit()
 
     # ── Helpers ──────────────────────────────────────────────────
+
+    def _enforce_institution_login_rules(self, user: User) -> None:
+        if user.user_status == UserStatus.PENDING_APPROVAL.value:
+            raise ForbiddenError(
+                "Your institution registration request is currently under review. "
+                "You will receive an email once it has been approved."
+            )
+        if user.user_status == UserStatus.REGISTRATION_REJECTED.value:
+            intent = self.registration_intents.find_institution_by_user_id(user.id)
+            reason = (
+                intent.rejection_reason if intent and intent.rejection_reason
+                else "No reason provided."
+            )
+            raise ForbiddenError(
+                f"Your institution registration was rejected. Reason: {reason}"
+            )
+
+        # Legacy rows: institution workspace created before user-based approval flow
+        owned = db.session.execute(
+            db.select(Workspace).where(
+                Workspace.owner_user_id == user.id,
+                Workspace.kind == WorkspaceKind.INSTITUTION.value,
+            )
+        ).scalars().all()
+        for workspace in owned:
+            if workspace.status == WorkspaceStatus.PENDING_APPROVAL.value:
+                raise ForbiddenError(
+                    "Your institution registration request is currently under review. "
+                    "You will receive an email once it has been approved."
+                )
+            if workspace.status == WorkspaceStatus.REJECTED.value:
+                reason = workspace.rejection_reason or "No reason provided."
+                raise ForbiddenError(
+                    f"Your institution registration was rejected. Reason: {reason}"
+                )
+
+    def _ensure_workspace_allows_member_join(self, workspace: Workspace) -> None:
+        if workspace.status == WorkspaceStatus.PENDING_APPROVAL.value:
+            raise ForbiddenError("This institution is not yet approved for members")
+        if workspace.status == WorkspaceStatus.REJECTED.value:
+            raise ForbiddenError("This institution registration was rejected")
+        if workspace.status in (
+            WorkspaceStatus.SUSPENDED.value,
+            WorkspaceStatus.ARCHIVED.value,
+        ):
+            raise ForbiddenError("This workspace is not accepting new members")
 
     def _issue_auth_response(
         self,
@@ -427,22 +601,40 @@ class AuthService:
                         "name": workspace.name,
                         "slug": workspace.slug,
                         "kind": workspace.kind,
+                        "status": workspace.status,
                     },
                 }
             )
         return result
 
-    def _send_verification_email(self, user: User, raw_token: str) -> bool:
+    def _send_otp_email(self, email: str, full_name: str, plain_otp: str) -> bool:
         try:
-            EmailDeliveryService().send_verification_email(
-                to_email=user.email,
-                full_name=user.full_name,
-                raw_token=raw_token,
+            EmailDeliveryService().send_otp_email(
+                to_email=email,
+                full_name=full_name,
+                otp_code=plain_otp,
             )
+            current_app.logger.info("OTP email sent to %s", email)
             return True
         except EmailDeliveryError as exc:
-            current_app.logger.error("Failed to send verification email: %s", exc)
+            current_app.logger.error(
+                "Failed to send OTP email to %s: %s (use dev_otp in DEBUG response)",
+                email,
+                exc,
+            )
             return False
+
+    def _send_institution_pending_review_email(
+        self, user: User, institution_name: str
+    ) -> None:
+        try:
+            EmailDeliveryService().send_institution_pending_review_email(
+                to_email=user.email,
+                full_name=user.full_name,
+                institution_name=institution_name,
+            )
+        except EmailDeliveryError as exc:
+            current_app.logger.error("Failed to send institution pending email: %s", exc)
 
     def _unique_join_code(self) -> str:
         for _ in range(10):

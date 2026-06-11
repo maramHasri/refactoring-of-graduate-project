@@ -9,10 +9,8 @@ class QuestionChoiceInputSchema(Schema):
     order_index = fields.Int(allow_none=True)
 
 
-class CreateQuestionInBankSchema(Schema):
-    """
-    POST /question-banks/{bankId}/questions — domain-driven payload (not table-driven).
-    """
+class CreateQuestionInBankItemSchema(Schema):
+    """Single question inside POST /question-banks/{bankId}/questions questions[]."""
 
     type_code = fields.Str(required=True, validate=validate.Length(min=2, max=50))
     body = fields.Str(required=True, validate=validate.Length(min=1))
@@ -42,6 +40,23 @@ class CreateQuestionInBankSchema(Schema):
         except (TypeError, ValueError):
             pass
         return data
+
+
+class CreateQuestionsInBankSchema(Schema):
+    """
+    POST /question-banks/{bankId}/questions — always { "questions": [...] }.
+    Use a one-element array for a single question (Google Forms–style save).
+    """
+
+    questions = fields.List(
+        fields.Nested(CreateQuestionInBankItemSchema),
+        required=True,
+        validate=validate.Length(min=1),
+    )
+
+
+# Backward-compatible alias for imports that referenced the item schema name
+CreateQuestionInBankSchema = CreateQuestionsInBankSchema
 
 
 class QuestionSchema(Schema):

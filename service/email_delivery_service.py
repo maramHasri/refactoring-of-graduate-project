@@ -1,9 +1,5 @@
 """
 Send transactional emails via Gmail SMTP (Google App Password).
-
-Requires in .env:
-  GMAIL_USER=your@gmail.com
-  GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx   (spaces are stripped automatically)
 """
 import logging
 import smtplib
@@ -20,20 +16,79 @@ class EmailDeliveryError(Exception):
 
 
 class EmailDeliveryService:
-    def send_verification_email(self, *, to_email: str, full_name: str, raw_token: str) -> None:
-        verify_url = self._verification_link(raw_token)
-        subject = "Verify your edu_forms account"
+    def send_otp_email(self, *, to_email: str, full_name: str, otp_code: str) -> None:
+        expires = current_app.config.get("OTP_EXPIRES_MINUTES", 10)
+        subject = "Your edu_forms verification code"
         html = f"""
-        <p>Hello {full_name},</p>
-        <p>Please verify your email address by clicking the link below:</p>
-        <p><a href="{verify_url}">{verify_url}</a></p>
-        <p>This link expires in {current_app.config.get('EMAIL_VERIFICATION_EXPIRES_HOURS', 48)} hours.</p>
-        <p>If you did not create an account, ignore this email.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto;">
+          <h2 style="color: #1a365d;">Verify your email</h2>
+          <p>Hello {full_name},</p>
+          <p>Use the one-time code below to continue registration:</p>
+          <p style="font-size: 28px; letter-spacing: 6px; font-weight: bold; color: #2b6cb0;
+             background: #ebf8ff; padding: 16px; text-align: center; border-radius: 8px;">
+            {otp_code}
+          </p>
+          <p>This code expires in <strong>{expires} minutes</strong> and can only be used once.</p>
+          <p>If you did not request this, you can safely ignore this email.</p>
+          <p style="color: #718096; font-size: 12px;">edu_forms — Exam &amp; Proctoring Platform</p>
+        </div>
         """
         text = (
             f"Hello {full_name},\n\n"
-            f"Verify your email: {verify_url}\n\n"
-            f"This link expires in {current_app.config.get('EMAIL_VERIFICATION_EXPIRES_HOURS', 48)} hours."
+            f"Your edu_forms verification code: {otp_code}\n\n"
+            f"Expires in {expires} minutes. One-time use only.\n"
+        )
+        self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
+
+    def send_institution_pending_review_email(
+        self, *, to_email: str, full_name: str, institution_name: str
+    ) -> None:
+        subject = "Institution registration received — under review"
+        html = f"""
+        <p>Hello {full_name},</p>
+        <p>Thank you for registering <strong>{institution_name}</strong> on edu_forms.</p>
+        <p>The registration request has been received and is currently under review
+        by the platform administration.</p>
+        <p>You will receive an email once it has been approved. You cannot sign in until
+        approval is complete.</p>
+        """
+        text = (
+            f"Hello {full_name},\n\n"
+            f"Registration for {institution_name} is under review.\n"
+            f"You will be notified by email when approved.\n"
+        )
+        self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
+
+    def send_institution_approved_email(
+        self, *, to_email: str, full_name: str, institution_name: str
+    ) -> None:
+        subject = f"{institution_name} — registration approved"
+        html = f"""
+        <p>Hello {full_name},</p>
+        <p>Your institution <strong>{institution_name}</strong> has been approved.</p>
+        <p>You may now sign in and start using edu_forms.</p>
+        """
+        text = (
+            f"Hello {full_name},\n\n"
+            f"{institution_name} has been approved. You can sign in now.\n"
+        )
+        self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
+
+    def send_institution_rejected_email(
+        self, *, to_email: str, full_name: str, institution_name: str, reason: str
+    ) -> None:
+        subject = f"{institution_name} — registration not approved"
+        html = f"""
+        <p>Hello {full_name},</p>
+        <p>Your institution registration for <strong>{institution_name}</strong>
+        was not approved.</p>
+        <p><strong>Reason:</strong> {reason}</p>
+        <p>If you have questions, contact platform support.</p>
+        """
+        text = (
+            f"Hello {full_name},\n\n"
+            f"Registration for {institution_name} was rejected.\n"
+            f"Reason: {reason}\n"
         )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
 
@@ -79,11 +134,6 @@ class EmailDeliveryService:
         """
         text = f"Hello {full_name},\n\nReset your password: {reset_url}"
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
-
-    def _verification_link(self, raw_token: str) -> str:
-        base = current_app.config.get("APP_URL", "http://localhost:3000").rstrip("/")
-        path = current_app.config.get("EMAIL_VERIFICATION_PATH", "/verify-email")
-        return f"{base}{path}?token={raw_token}"
 
     def _password_reset_link(self, raw_token: str) -> str:
         base = current_app.config.get("APP_URL", "http://localhost:3000").rstrip("/")

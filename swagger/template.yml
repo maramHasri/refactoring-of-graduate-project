@@ -70,9 +70,13 @@ paths:
               workspace_kind: { type: string, enum: [SOLO, INSTITUTION] }
               slug: { type: string }
               phone_number: { type: string }
+              country: { type: string, description: Institution registration }
+              city: { type: string }
+              website_url: { type: string }
+              description: { type: string }
       responses:
         201:
-          description: Registered
+          description: OTP sent; complete registration via POST /auth/verify-otp
   /auth/login:
     post:
       tags: [Auth]
@@ -92,7 +96,7 @@ paths:
           description: Tokens + user + memberships
   /auth/superadmin/login:
     post:
-      tags: [Auth]
+      tags: [Super Admin]
       summary: Super admin login (POST only — not GET)
       description: Use Try it out in Swagger. Browser address bar sends GET and returns 405.
       parameters:
@@ -140,29 +144,39 @@ paths:
       responses:
         200:
           description: New tokens
-  /auth/verify-email:
+  /auth/verify-otp:
     post:
       tags: [Auth]
-      summary: Verify email with token from activation link
+      summary: Verify email OTP and complete registration
+      description: |
+        6-digit OTP from email. Expires in 10 minutes (configurable). One-time use.
+        For owner registration, creates user/workspace after success.
+        INSTITUTION: user is created with PENDING_APPROVAL; workspace is created when super admin approves.
       parameters:
         - in: body
           name: body
           required: true
           schema:
             type: object
-            required: [token]
+            required: [email, otp]
             properties:
-              token: { type: string, description: Token from email link }
+              email: { type: string, format: email, example: owner@school.com }
+              otp: { type: string, example: "123456", pattern: "^[0-9]{6}$" }
       responses:
         200:
-          description: Email verified
-  /auth/resend-verification:
+          description: Verified
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              workspace_status: { type: string }
+              requires_admin_approval: { type: boolean }
+  /auth/resend-otp:
     post:
       tags: [Auth]
-      summary: Resend activation / verification email (Gmail)
+      summary: Resend email OTP
       description: |
-        Creates a new verification token and sends activation link via Gmail.
-        Does not require login. Use the same email used at registration.
+        Invalidates previous OTP and sends a new code. Rate limited (resend interval + hourly cap).
       parameters:
         - in: body
           name: body
@@ -177,13 +191,13 @@ paths:
                 example: user@example.com
       responses:
         200:
-          description: Activation email sent (email_sent true) or generic message if unknown email
+          description: OTP sent
           schema:
             type: object
             properties:
-              message: { type: string }
+              success: { type: boolean }
               email_sent: { type: boolean }
-              dev_verification_token:
+              dev_otp:
                 type: string
                 description: Only in development if Gmail fails
   /auth/forgot-password:
@@ -610,9 +624,11 @@ paths:
   /question-banks/{bank_id}/questions:
     post:
       tags: [Question banks]
-      summary: Add question to bank (unified by type_code)
+      summary: Add questions to bank (add questions bulk)
       description: |
-        Creates a question and optional choices in one transaction.
+        Always send `{ "questions": [ ... ] }` — use one element for a single question
+        or many for a full editing session. All questions are created in one transaction;
+        if any item fails, nothing is saved.
         Supported type_code values: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
         Requires TEACHER assignment on the bank's subject (or workspace admin/owner).
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -626,31 +642,56 @@ paths:
           required: true
           schema:
             type: object
-            required: [type_code, body]
+            required: [questions]
             properties:
-              type_code:
-                type: string
-                enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
-                example: MCQ
-              body: { type: string, example: "What is the capital of France?" }
-              explanation: { type: string }
-              points: { type: number, example: 2 }
-              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
-              topic_id:
-                type: integer
-                description: Optional. When set, must belong to the bank's subject.
-              choices:
+              questions:
                 type: array
+                minItems: 1
                 items:
                   type: object
-                  required: [body, is_correct]
+                  required: [type_code, body]
                   properties:
+                    type_code:
+                      type: string
+                      enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
                     body: { type: string }
-                    is_correct: { type: boolean }
-                    order_index: { type: integer }
+                    explanation: { type: string }
+                    points: { type: number }
+                    difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+                    topic_id:
+                      type: integer
+                      description: Optional. Must belong to the bank's subject when set.
+                    choices:
+                      type: array
+                      items:
+                        type: object
+                        required: [body, is_correct]
+                        properties:
+                          body: { type: string }
+                          is_correct: { type: boolean }
+                          order_index: { type: integer }
+            example:
+              questions:
+                - type_code: MCQ
+                  body: "What is 2 + 2?"
+                  points: 2
+                  difficulty: EASY
+                  choices:
+                    - { body: "4", is_correct: true }
+                    - { body: "5", is_correct: false }
+                - type_code: ESSAY
+                  body: "Explain photosynthesis."
+                  points: 5
+                  difficulty: MEDIUM
       responses:
         201:
-          description: Question created
+          description: Questions created
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              count: { type: integer }
+              questions: { type: array, items: { type: object } }
     get:
       tags: [Question banks]
       summary: List questions in bank
@@ -811,3 +852,84 @@ paths:
       responses:
         200:
           description: Rejected
+  /admin/institutions/pending:
+    get:
+      tags: [Super Admin]
+      summary: List pending institution registrations
+      description: |
+        Returns owner users with PENDING_APPROVAL and registration_intents (no workspace yet).
+        Requires super admin access_token from POST /auth/superadmin/login.
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Pending institution requests with full registration form data
+  /admin/institutions/{user_id}:
+    get:
+      tags: [Super Admin]
+      summary: Get institution registration by owner user_id
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+          description: Institution owner user id (not workspace id)
+      responses:
+        200:
+          description: Registration details (pending, approved, or rejected)
+  /admin/institutions/{user_id}/approve:
+    post:
+      tags: [Super Admin]
+      summary: Approve institution registration
+      description: |
+        Creates INSTITUTION workspace, membership, and profile from stored registration_intent.
+        Sets owner user status to ACTIVE.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+          description: Institution owner user id
+      responses:
+        200:
+          description: Approved — workspace created
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              workspace:
+                type: object
+                properties:
+                  id: { type: integer }
+                  kind: { type: string, example: INSTITUTION }
+                  owner_user_id: { type: integer }
+  /admin/institutions/{user_id}/reject:
+    post:
+      tags: [Super Admin]
+      summary: Reject institution registration
+      description: |
+        Marks registration REJECTED, stores rejection reason, sets user REGISTRATION_REJECTED.
+        No workspace is created.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+          description: Institution owner user id
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason: { type: string, example: "Incomplete documentation" }
+      responses:
+        200:
+          description: Rejected
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }

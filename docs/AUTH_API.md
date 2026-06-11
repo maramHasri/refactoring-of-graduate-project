@@ -1,89 +1,45 @@
-# Authentication & Workspace API
+# Auth API (OTP-based)
 
-## Super admin (pinned in DB)
+## Owner registration
 
-1. Add to `.env`:
+1. `POST /auth/register` — stores intent, sends 6-digit OTP (10 min expiry)
+2. `POST /auth/verify-otp` — `{ "email", "otp" }` → creates user + workspace
+   - **SOLO**: `workspace.status = ACTIVE`, login allowed
+   - **INSTITUTION**: `user.status = PENDING_APPROVAL`, no workspace until super admin approves via `POST /admin/institutions/{user_id}/approve`
+3. `POST /auth/resend-otp` — new OTP (rate limited)
 
-```
-SUPER_ADMIN_EMAIL=superadmin@eduforms.local
-SUPER_ADMIN_PASSWORD=SuperAdmin@123
-SUPER_ADMIN_FULL_NAME=Platform Super Admin
-```
+## Student / invite
 
-2. Run seeds:
+- Same OTP flow via `POST /auth/verify-otp` after register
 
-```bash
-flask db upgrade
-flask seed
-```
+## Super admin
 
-3. Login:
+- `POST /auth/superadmin/login`
+- `GET /admin/institutions/pending`
+- `GET /admin/institutions/{user_id}`
+- `POST /admin/institutions/{user_id}/approve` — creates workspace
+- `POST /admin/institutions/{user_id}/reject` — `{ "reason": "..." }`
 
-```http
-POST /auth/superadmin/login
-Content-Type: application/json
+## Testing without reading the database
 
-{
-  "email": "superadmin@eduforms.local",
-  "password": "SuperAdmin@123"
-}
-```
+OTP is stored hashed in `email_otps`. In **development** (`FLASK_ENV=development`, default):
 
-Response includes `access_token`, `refresh_token`, `user.is_superadmin: true`, empty `memberships`.
+1. API responses include **`dev_otp`** (6-digit code) on register / resend / invite register.
+2. The same code is printed in the **terminal** running `python run.py`:
+   ```
+   [DEV OTP] you@example.com -> 123456
+   ```
 
-## Standard login
+Optional `.env`:
 
-```http
-POST /auth/login
-```
-
-Returns `requires_onboarding: true` when user has zero memberships.
-
-## Auth endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/auth/register` | Owner registration (user + workspace + ADMIN membership) |
-| POST | `/join-codes/register-student` | New student + join code (see Join codes in Swagger) |
-| POST | `/auth/login` | Login |
-| POST | `/auth/superadmin/login` | Super admin login only |
-| POST | `/auth/logout` | Revoke current session (Bearer) |
-| POST | `/auth/logout-all` | Revoke all sessions (Bearer) |
-| POST | `/auth/refresh` | Refresh tokens |
-| POST | `/auth/verify-email` | Verify email |
-| POST | `/auth/resend-verification` | Resend verification |
-| POST | `/auth/forgot-password` | Start reset |
-| POST | `/auth/reset-password` | Complete reset |
-| POST | `/auth/change-password` | Change password (Bearer) |
-
-## Workspace endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/workspaces` | List accessible workspaces (Bearer) |
-| POST | `/workspaces` | Create workspace (Bearer) |
-| GET | `/workspaces/{id}` | Workspace detail |
-| PATCH | `/workspaces/{id}` | Update (admin) |
-| DELETE | `/workspaces/{id}` | Delete (owner only) |
-
-Workspace context: send `X-Workspace-Id` header (not in JWT).
-
-## Join codes (students only)
-
-```http
-POST /join-codes/join
-Authorization: Bearer <token>
-
-{ "join_code": "ABCD1234" }
+```env
+EXPOSE_OTP_IN_DEV_RESPONSE=true   # default in development
 ```
 
-## Invitations
+Set to `false` to test email-only (production-like). **Never enable in production** (`ProductionConfig` defaults to off).
 
-| Method | Path | Read/Write |
-|--------|------|------------|
-| POST | `/invites` | Write (requires X-Workspace-Id) |
-| GET | `/invites/{token}` | Read only |
-| POST | `/invites/{token}/accept` | Write |
-| POST | `/invites/{token}/reject` | Write |
+## Removed (breaking)
 
-SOLO workspaces: invites limited to STUDENT role only.
+- `GET /auth/verify/{token}`
+- `POST /auth/verify-email`
+- `POST /auth/resend-verification`

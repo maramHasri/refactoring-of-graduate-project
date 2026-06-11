@@ -27,15 +27,25 @@ class Config:
     # Email (Gmail App Password only) + frontend/API links
     APP_URL = os.getenv("APP_URL", "http://localhost:3000")
     API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
-    EMAIL_VERIFICATION_PATH = os.getenv("EMAIL_VERIFICATION_PATH", "/verify-email")
     PASSWORD_RESET_PATH = os.getenv("PASSWORD_RESET_PATH", "/reset-password")
-    INVITE_ACCEPT_PATH = os.getenv("INVITE_ACCEPT_PATH", "/accept-invite")
 
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=30)
     INVITE_TOKEN_EXPIRES_DAYS = 7
     PASSWORD_RESET_EXPIRES_HOURS = 24
-    EMAIL_VERIFICATION_EXPIRES_HOURS = 48
+    REGISTRATION_INTENT_EXPIRES_HOURS = int(
+        os.getenv("REGISTRATION_INTENT_EXPIRES_HOURS", "48")
+    )
+
+    OTP_EXPIRES_MINUTES = int(os.getenv("OTP_EXPIRES_MINUTES", "10"))
+    OTP_RESEND_INTERVAL_SECONDS = int(os.getenv("OTP_RESEND_INTERVAL_SECONDS", "60"))
+    OTP_MAX_VERIFY_ATTEMPTS = int(os.getenv("OTP_MAX_VERIFY_ATTEMPTS", "5"))
+    OTP_MAX_RESEND_PER_HOUR = int(os.getenv("OTP_MAX_RESEND_PER_HOUR", "5"))
+
+    # Development only: include plain OTP in API JSON + server console (never True in production)
+    EXPOSE_OTP_IN_DEV_RESPONSE = os.getenv(
+        "EXPOSE_OTP_IN_DEV_RESPONSE", "false"
+    ).lower() in ("1", "true", "yes")
 
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@eduforms.local")
     SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "SuperAdmin@123")
@@ -44,6 +54,9 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    EXPOSE_OTP_IN_DEV_RESPONSE = os.getenv(
+        "EXPOSE_OTP_IN_DEV_RESPONSE", "true"
+    ).lower() in ("1", "true", "yes")
 
 
 class ProductionConfig(Config):

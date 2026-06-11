@@ -1,4 +1,4 @@
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, fields, pre_load, validate
 
 from utils.enums import WorkspaceKind
 
@@ -14,6 +14,10 @@ class RegisterOwnerSchema(Schema):
     )
     slug = fields.Str(allow_none=True)
     phone_number = fields.Str(allow_none=True, validate=validate.Length(max=20))
+    country = fields.Str(allow_none=True, validate=validate.Length(max=120))
+    city = fields.Str(allow_none=True, validate=validate.Length(max=120))
+    website_url = fields.Str(allow_none=True, validate=validate.Length(max=255))
+    description = fields.Str(allow_none=True)
 
 
 class RegisterStudentSchema(Schema):
@@ -33,8 +37,19 @@ class RefreshTokenSchema(Schema):
     refresh_token = fields.Str(required=True)
 
 
-class VerifyEmailSchema(Schema):
-    token = fields.Str(required=True)
+class VerifyOtpSchema(Schema):
+    email = fields.Email(required=True)
+    otp = fields.Str(required=True, validate=validate.Regexp(r"^\d{6}$"))
+
+    @pre_load
+    def normalize_otp(self, data, **kwargs):
+        if isinstance(data, dict) and "otp" in data:
+            raw = data["otp"]
+            if isinstance(raw, int):
+                data["otp"] = f"{raw:06d}"
+            else:
+                data["otp"] = str(raw).strip()
+        return data
 
 
 class ForgotPasswordSchema(Schema):

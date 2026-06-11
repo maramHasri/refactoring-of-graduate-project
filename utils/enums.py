@@ -3,9 +3,17 @@ import enum
 
 class UserStatus(str, enum.Enum):
     PENDING_VERIFICATION = "PENDING_VERIFICATION"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    REGISTRATION_REJECTED = "REGISTRATION_REJECTED"
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
     DISABLED = "DISABLED"
+
+
+class InstitutionApprovalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class WorkspaceKind(str, enum.Enum):
@@ -15,8 +23,15 @@ class WorkspaceKind(str, enum.Enum):
 
 class WorkspaceStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    REJECTED = "REJECTED"
     SUSPENDED = "SUSPENDED"
     ARCHIVED = "ARCHIVED"
+
+
+class EmailOtpPurpose(str, enum.Enum):
+    REGISTER_OWNER = "REGISTER_OWNER"
+    VERIFY_ACCOUNT = "VERIFY_ACCOUNT"
 
 
 class MembershipStatus(str, enum.Enum):

@@ -29,8 +29,12 @@ class LoginSchema(Schema):
     password = fields.Str(required=True, load_only=True)
 
 
-class ResendVerificationSchema(Schema):
+class ResendOtpSchema(Schema):
     email = fields.Email(required=True)
+
+
+# Legacy alias
+ResendVerificationSchema = ResendOtpSchema
 
 
 class UpdateUserSchema(Schema):

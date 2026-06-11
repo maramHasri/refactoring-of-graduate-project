@@ -16,7 +16,10 @@ def register_student():
     """
     data = RegisterStudentSchema().load(request.get_json() or {})
     result = AuthService().register_student_with_join_code(**data)
-    return {"message": "Student registered", **result}, 201
+    return {
+        "message": "Student registered. Check your email for the verification code.",
+        **result,
+    }, 201
 
 
 @join_bp.route("/join", methods=["POST"])
