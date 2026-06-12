@@ -40,6 +40,21 @@ def list_workspaces():
     return {"workspaces": items, "count": len(items)}, 200
 
 
+@workspace_bp.route("/teachers", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_institution_workspace_teachers():
+    """
+    GET /workspaces/teachers — teachers in the active institution workspace.
+    Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
+    """
+    items = WorkspaceService().list_institution_workspace_teachers(
+        g.workspace_id,
+        g.membership,
+    )
+    return {"success": True, "data": items, "count": len(items)}, 200
+
+
 @workspace_bp.route("/<int:workspace_id>", methods=["GET"])
 @require_auth
 @handle_service_errors

@@ -269,6 +269,35 @@ paths:
       responses:
         201:
           description: Created
+  /workspaces/teachers:
+    get:
+      tags: [Workspaces]
+      summary: List institution workspace teachers
+      description: |
+        Returns active members with role TEACHER in the workspace selected via X-Workspace-Id.
+        Institution workspaces only. Caller must be workspace owner or ADMIN.
+        Teachers and students receive 403.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Teacher list
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              count: { type: integer }
+              data:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id: { type: integer }
+                    full_name: { type: string, example: "Ahmed Ali" }
+                    email: { type: string, example: "ahmed@example.com" }
+                    membership_role: { type: string, example: TEACHER }
+                    created_at: { type: string, format: date-time }
+        403:
+          description: Forbidden (not owner/admin, or not an institution workspace)
   /workspaces/{workspace_id}:
     get:
       tags: [Workspaces]
@@ -328,7 +357,6 @@ paths:
             required: [name]
             properties:
               name: { type: string, example: "Mathematics" }
-              code: { type: string, example: "MATH101" }
               description: { type: string }
       responses:
         201:
@@ -361,7 +389,6 @@ paths:
             type: object
             properties:
               name: { type: string }
-              code: { type: string }
               description: { type: string }
               is_archived: { type: boolean }
       responses:
@@ -392,6 +419,22 @@ paths:
       responses:
         200:
           description: Teacher assignments
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              teachers:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    assignment_id: { type: integer }
+                    membership_id: { type: integer }
+                    subject_id: { type: integer }
+                    subject_role: { type: string, example: TEACHER }
+                    membership_role: { type: string, example: TEACHER }
+                    full_name: { type: string, example: "Ahmed Ali" }
+                    assigned_at: { type: string, format: date-time }
     post:
       tags: [Subjects]
       summary: Assign teacher to subject
@@ -621,6 +664,26 @@ paths:
       responses:
         200:
           description: Banks created by you
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              question_banks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    title: { type: string }
+                    description: { type: string }
+                    workspace_id: { type: integer }
+                    subject_id: { type: integer }
+                    subject_name: { type: string, example: "Cyber Security" }
+                    visibility: { type: string }
+                    is_archived: { type: boolean }
+                    created_by_membership_id: { type: integer }
+                    created_at: { type: string, format: date-time }
+                    updated_at: { type: string, format: date-time }
   /question-banks/{bank_id}/questions:
     post:
       tags: [Question banks]

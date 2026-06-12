@@ -1,6 +1,7 @@
-from models import Membership, Workspace
+from models import Membership, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
+from utils.enums import MembershipRole
 
 
 class WorkspaceRepository(BaseRepository):
@@ -54,3 +55,19 @@ class MembershipRepository(BaseRepository):
                 Membership.status == "ACTIVE",
             )
         ).scalar() or 0
+
+    def list_active_members_by_role(
+        self, workspace_id: int, role: str
+    ) -> list[tuple[Membership, User]]:
+        return list(
+            db.session.execute(
+                db.select(Membership, User)
+                .join(User, User.id == Membership.user_id)
+                .where(
+                    Membership.workspace_id == workspace_id,
+                    Membership.role == role,
+                    Membership.status == "ACTIVE",
+                )
+                .order_by(User.full_name, User.id)
+            ).all()
+        )

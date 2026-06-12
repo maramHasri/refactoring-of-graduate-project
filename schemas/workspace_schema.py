@@ -42,6 +42,16 @@ class UpdateWorkspaceSchema(Schema):
     is_verified_by_superadmin = fields.Bool()
 
 
+class WorkspaceTeacherSchema(Schema):
+    """Teacher member in the active institution workspace."""
+
+    user_id = fields.Int(dump_only=True)
+    full_name = fields.Str()
+    email = fields.Email()
+    membership_role = fields.Str()
+    created_at = fields.DateTime(dump_only=True)
+
+
 class MembershipSchema(Schema):
     id = fields.Int(dump_only=True)
     user_id = fields.Int(required=True)

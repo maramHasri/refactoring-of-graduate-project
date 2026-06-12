@@ -7,13 +7,11 @@ class CreateSubjectSchema(Schema):
     """POST /subjects — workspace from X-Workspace-Id."""
 
     name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
-    code = fields.Str(allow_none=True, validate=validate.Length(max=50))
     description = fields.Str(allow_none=True)
 
 
 class UpdateSubjectSchema(Schema):
     name = fields.Str(validate=validate.Length(min=1, max=255))
-    code = fields.Str(allow_none=True, validate=validate.Length(max=50))
     description = fields.Str(allow_none=True)
     is_archived = fields.Bool()
 

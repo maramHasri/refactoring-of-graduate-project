@@ -33,7 +33,6 @@ class SubjectService:
         workspace_id: int,
         name: str,
         actor_membership,
-        code: str | None = None,
         description: str | None = None,
     ) -> Subject:
         workspace = self.workspaces.get_by_id(workspace_id)
@@ -49,7 +48,6 @@ class SubjectService:
         subject = Subject(
             name=name,
             workspace_id=workspace_id,
-            code=code.strip() if code else None,
             description=description,
             created_by_membership_id=actor_membership.id,
         )
@@ -101,8 +99,6 @@ class SubjectService:
             if existing and existing.id != subject.id:
                 raise ConflictError("A subject with this name already exists")
             subject.name = name
-        if "code" in data:
-            subject.code = data["code"]
         if "description" in data:
             subject.description = data["description"]
         if "is_archived" in data and data["is_archived"] is not None:
@@ -325,7 +321,6 @@ class SubjectService:
             "id": subject.id,
             "name": subject.name,
             "title": subject.name,
-            "code": subject.code,
             "description": subject.description,
             "workspace_id": subject.workspace_id,
             "is_archived": subject.is_archived,
@@ -336,11 +331,13 @@ class SubjectService:
 
     def _serialize_assignment(self, link: SubjectMembership) -> dict:
         membership = self.memberships.get_by_id(link.membership_id)
+        user = membership.user if membership else None
         return {
             "assignment_id": link.id,
             "membership_id": link.membership_id,
             "subject_id": link.subject_id,
             "subject_role": link.subject_role,
             "membership_role": membership.role if membership else None,
+            "full_name": user.full_name if user else None,
             "assigned_at": link.created_at.isoformat() if link.created_at else None,
         }

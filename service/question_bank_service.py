@@ -216,12 +216,16 @@ class QuestionBankService:
         )
 
     def _serialize_bank(self, bank: QuestionBank) -> dict:
+        subject = bank.subject
+        if subject is None and bank.subject_id:
+            subject = self.subjects.get_active_by_id(bank.subject_id, bank.workspace_id)
         return {
             "id": bank.id,
             "title": bank.title,
             "description": bank.description,
             "workspace_id": bank.workspace_id,
             "subject_id": bank.subject_id,
+            "subject_name": subject.name if subject else None,
             "visibility": bank.visibility,
             "is_archived": bank.is_archived,
             "created_by_membership_id": bank.created_by_membership_id,

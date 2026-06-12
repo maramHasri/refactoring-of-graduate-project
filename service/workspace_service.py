@@ -13,6 +13,7 @@ from repositories.workspace_repository import MembershipRepository, WorkspaceRep
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.db import db
 from utils.enums import MembershipRole, WorkspaceKind
+from utils.rbac import can_list_institution_workspace_teachers
 from utils.join_code import generate_workspace_join_code
 
 
@@ -72,6 +73,32 @@ class WorkspaceService:
             "membership_id": membership.id,
             "join_code": workspace.join_code,
         }
+
+    def list_institution_workspace_teachers(
+        self, workspace_id: int, actor_membership: Membership
+    ) -> list[dict]:
+        """
+        GET /workspaces/teachers — active TEACHER memberships in the institution workspace.
+        Caller must be institution owner or workspace ADMIN (X-Workspace-Id context).
+        """
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not workspace:
+            raise NotFoundError("Workspace not found")
+
+        if workspace.kind != WorkspaceKind.INSTITUTION.value:
+            raise ForbiddenError(
+                "This endpoint is only available for institution workspaces"
+            )
+
+        if not can_list_institution_workspace_teachers(workspace, actor_membership):
+            raise ForbiddenError(
+                "Only the institution owner or workspace admin can list teachers"
+            )
+
+        rows = self.memberships.list_active_members_by_role(
+            workspace_id, MembershipRole.TEACHER.value
+        )
+        return [self._serialize_workspace_teacher(m, user) for m, user in rows]
 
     def list_accessible_workspaces(self, user_id: int, *, is_superadmin: bool) -> list[dict]:
         """
@@ -167,6 +194,17 @@ class WorkspaceService:
             if not self.workspaces.find_by_join_code(code):
                 return code
         raise ConflictError("Could not generate unique join code")
+
+    def _serialize_workspace_teacher(self, membership: Membership, user) -> dict:
+        return {
+            "user_id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "membership_role": membership.role,
+            "created_at": membership.created_at.isoformat()
+            if membership.created_at
+            else None,
+        }
 
     def _serialize_workspace(
         self, workspace: Workspace, *, role: str | None, membership_id: int | None

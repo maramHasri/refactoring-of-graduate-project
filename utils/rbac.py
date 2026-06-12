@@ -3,7 +3,7 @@ RBAC helpers — roles are fixed: ADMIN, TEACHER, STUDENT.
 Owner is NOT a role; use workspace.owner_membership_id.
 """
 from models import Membership, Workspace
-from utils.enums import MembershipRole
+from utils.enums import MembershipRole, WorkspaceKind
 
 
 def is_workspace_owner(workspace: Workspace, membership: Membership | None) -> bool:
@@ -27,6 +27,15 @@ def has_teacher_or_admin_role(membership: Membership | None) -> bool:
 
 def can_manage_workspace_settings(workspace: Workspace, membership: Membership | None) -> bool:
     return has_admin_role(membership) or is_workspace_owner(workspace, membership)
+
+
+def can_list_institution_workspace_teachers(
+    workspace: Workspace, membership: Membership | None
+) -> bool:
+    """Institution owner or workspace ADMIN may list workspace teachers."""
+    if workspace.kind != WorkspaceKind.INSTITUTION.value:
+        return False
+    return can_manage_workspace_settings(workspace, membership)
 
 
 def can_invite_with_role(

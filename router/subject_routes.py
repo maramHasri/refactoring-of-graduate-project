@@ -31,7 +31,6 @@ def create_subject():
     subject = _svc().create_subject(
         workspace_id=g.workspace_id,
         name=data["name"],
-        code=data.get("code"),
         description=data.get("description"),
         actor_membership=g.membership,
     )

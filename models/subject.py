@@ -23,7 +23,6 @@ class Subject(db.Model, TimestampMixin):
         nullable=False,
         index=True,
     )
-    code = db.Column(String(50), nullable=True)
     description = db.Column(Text, nullable=True)
     created_by_membership_id = db.Column(
         db.Integer,
@@ -60,7 +59,6 @@ class Subject(db.Model, TimestampMixin):
 
     __table_args__ = (
         Index("ix_subjects_workspace_name", "workspace_id", "name"),
-        Index("ix_subjects_workspace_code", "workspace_id", "code"),
     )
 
     @property
