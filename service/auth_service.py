@@ -11,7 +11,6 @@ from flask import current_app
 
 from models import (
     Membership,
-    PasswordResetCode,
     RegistrationIntent,
     User,
     Workspace,
@@ -41,12 +40,7 @@ from utils.enums import (
 )
 from utils.dev_otp import attach_dev_otp
 from utils.join_code import generate_workspace_join_code
-from utils.security import (
-    generate_invite_token,
-    hash_password,
-    hash_token,
-    verify_password,
-)
+from utils.security import hash_password, verify_password
 
 
 def _slugify(name: str) -> str:
@@ -216,7 +210,34 @@ class AuthService:
 
     def verify_otp(self, *, email: str, otp: str) -> dict:
         email = email.lower().strip()
-        self.otps.verify_otp(email=email, otp=otp)
+
+        reset_row = self.otps.otps.find_active_for_email(
+            email, purpose=EmailOtpPurpose.RESET_PASSWORD.value
+        )
+        if reset_row:
+            verified_row = self.otps.verify_otp(
+                email=email,
+                otp=otp,
+                purpose=EmailOtpPurpose.RESET_PASSWORD.value,
+                consume=False,
+            )
+            verified_row.verified_at = datetime.now(timezone.utc)
+            db.session.commit()
+            return {
+                "success": True,
+                "otp_verified": True,
+                "purpose": EmailOtpPurpose.RESET_PASSWORD.value,
+                "message": "OTP verified. Set your new password via POST /auth/reset-password.",
+            }
+
+        self.otps.verify_otp(
+            email=email,
+            otp=otp,
+            purposes=[
+                EmailOtpPurpose.REGISTER_OWNER.value,
+                EmailOtpPurpose.VERIFY_ACCOUNT.value,
+            ],
+        )
 
         intent = self.registration_intents.find_active_by_email(email)
         if intent:
@@ -441,46 +462,42 @@ class AuthService:
 
     # ── Password reset ─────────────────────────────────────────
 
-    def forgot_password(self, email: str) -> str | None:
+    def forgot_password(self, email: str) -> dict | None:
         user = self.users.find_by_email(email.lower().strip())
         if not user:
             return None
-        raw = generate_invite_token()
-        row = PasswordResetCode(
+        plain_otp = self.otps.issue_otp(
+            email=user.email,
+            purpose=EmailOtpPurpose.RESET_PASSWORD.value,
             user_id=user.id,
-            reset_code_hash=hash_token(raw),
-            expires_at=datetime.now(timezone.utc)
-            + timedelta(hours=current_app.config.get("PASSWORD_RESET_EXPIRES_HOURS", 24)),
         )
-        self.users.add(row)
         db.session.commit()
-        try:
-            EmailDeliveryService().send_password_reset_email(
-                to_email=user.email,
-                full_name=user.full_name,
-                raw_token=raw,
-            )
-        except EmailDeliveryError:
-            if current_app.config.get("DEBUG"):
-                return raw
-        return raw
+        email_sent = self._send_password_reset_otp_email(
+            user.email, user.full_name, plain_otp
+        )
+        result = {"email_sent": email_sent}
+        return attach_dev_otp(
+            result,
+            plain_otp,
+            email=user.email,
+            hint="POST /auth/verify-otp then POST /auth/reset-password",
+        )
 
-    def reset_password(self, raw_token: str, new_password: str) -> None:
-        row = db.session.execute(
-            db.select(PasswordResetCode).where(
-                PasswordResetCode.reset_code_hash == hash_token(raw_token),
-                PasswordResetCode.is_used.is_(False),
+    def reset_password(self, email: str, new_password: str) -> None:
+        email = email.lower().strip()
+        row = self.otps.otps.find_verified_password_reset_otp(email)
+        if not row:
+            raise ValidationError(
+                "Password reset OTP not verified. Call POST /auth/verify-otp first."
             )
-        ).scalar_one_or_none()
-        if not row or row.expires_at < datetime.now(timezone.utc):
-            raise ValidationError("Invalid or expired reset token")
 
-        user = self.users.get_by_id(row.user_id)
+        user = self.users.find_by_email(email)
         if not user:
             raise NotFoundError("User not found")
 
         user.password_hash = hash_password(new_password)
         row.is_used = True
+        row.used_at = datetime.now(timezone.utc)
         self.sessions.repo.deactivate_all_for_user(user.id)
         db.session.commit()
 
@@ -619,6 +636,25 @@ class AuthService:
         except EmailDeliveryError as exc:
             current_app.logger.error(
                 "Failed to send OTP email to %s: %s (use dev_otp in DEBUG response)",
+                email,
+                exc,
+            )
+            return False
+
+    def _send_password_reset_otp_email(
+        self, email: str, full_name: str, plain_otp: str
+    ) -> bool:
+        try:
+            EmailDeliveryService().send_password_reset_otp_email(
+                to_email=email,
+                full_name=full_name,
+                otp_code=plain_otp,
+            )
+            current_app.logger.info("Password reset OTP email sent to %s", email)
+            return True
+        except EmailDeliveryError as exc:
+            current_app.logger.error(
+                "Failed to send password reset OTP to %s: %s (use dev_otp in DEBUG response)",
                 email,
                 exc,
             )

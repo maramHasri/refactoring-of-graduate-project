@@ -139,6 +139,120 @@ class QuestionService:
         rows = self.questions.list_by_bank(bank.id)
         return [self.serialize_question(q) for q in rows]
 
+    def update_question_in_bank(
+        self,
+        *,
+        bank_id: int,
+        question_id: int,
+        workspace_id: int,
+        actor_membership,
+        data: dict,
+    ) -> Question:
+        bank = self.bank_service.resolve_bank_for_question_write(
+            bank_id=bank_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        question = self.questions.get_active_in_bank(question_id, bank.id)
+        if not question:
+            raise NotFoundError("Question not found in this bank")
+
+        if "type_code" in data or "choices" in data:
+            type_code = (
+                validate_question_create_payload(
+                    type_code=data.get("type_code")
+                    or (
+                        question.question_type.code.upper()
+                        if question.question_type and question.question_type.code
+                        else ""
+                    ),
+                    choices=data.get("choices")
+                    if "choices" in data
+                    else [
+                        {
+                            "body": choice.body,
+                            "is_correct": choice.is_correct,
+                            "order_index": choice.order_index,
+                        }
+                        for choice in question.choices
+                    ],
+                )
+            )
+            if "type_code" in data:
+                question_type = self.question_types.find_by_code(type_code)
+                if not question_type:
+                    raise ValidationError(
+                        f"Question type '{type_code}' is not configured. Run flask seed."
+                    )
+                question.question_type_id = question_type.id
+
+        if "body" in data and data["body"]:
+            question.question_text = data["body"].strip()
+        if "explanation" in data:
+            question.explanation = (data.get("explanation") or "").strip() or None
+        if "topic_id" in data:
+            question.topic_id = self._resolve_optional_topic_id(
+                data.get("topic_id"),
+                subject_id=bank.subject_id,
+                workspace_id=workspace_id,
+            )
+        if "difficulty" in data:
+            difficulty = data.get("difficulty")
+            if difficulty is None:
+                question.difficulty = None
+            else:
+                difficulty = difficulty.strip().upper()
+                if difficulty not in [d.value for d in Difficulty]:
+                    raise ValidationError("invalid difficulty value")
+                question.difficulty = difficulty
+        if "points" in data:
+            points = data.get("points")
+            if points is None:
+                question.points = None
+            else:
+                points = Decimal(str(points))
+                if points < 0:
+                    raise ValidationError("points must be non-negative")
+                question.points = points
+
+        if "choices" in data:
+            for choice in list(question.choices):
+                db.session.delete(choice)
+            db.session.flush()
+            for choice_index, choice_data in enumerate(data.get("choices") or []):
+                choice = QuestionChoice(
+                    question_id=question.id,
+                    body=choice_data["body"].strip(),
+                    is_correct=bool(choice_data["is_correct"]),
+                    order_index=choice_data.get("order_index", choice_index),
+                )
+                self.questions.add(choice)
+
+        db.session.commit()
+        db.session.refresh(question)
+        return question
+
+    def delete_question_in_bank(
+        self,
+        *,
+        bank_id: int,
+        question_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> Question:
+        bank = self.bank_service.resolve_bank_for_question_write(
+            bank_id=bank_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        question = self.questions.get_active_in_bank(question_id, bank.id)
+        if not question:
+            raise NotFoundError("Question not found in this bank")
+
+        question.status = QuestionStatus.ARCHIVED.value
+        db.session.commit()
+        return question
+
     def _resolve_optional_topic_id(
         self,
         topic_id,

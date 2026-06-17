@@ -16,6 +16,7 @@ from utils.academic_rbac import (
 )
 from utils.db import db
 from utils.enums import QuestionBankVisibility
+from utils.pagination import build_pagination_meta, normalize_pagination
 
 
 class QuestionBankService:
@@ -64,6 +65,62 @@ class QuestionBankService:
     ) -> list[dict]:
         rows = self.banks.list_by_creator(actor_membership.id, workspace_id)
         return [self._serialize_bank(b) for b in rows]
+
+    def list_workspace_question_banks(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        page: int | None = None,
+        per_page: int | None = None,
+    ) -> dict:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not workspace:
+            raise NotFoundError("Workspace not found")
+
+        if can_manage_subjects(workspace, actor_membership):
+            subject_ids = [
+                subject.id
+                for subject in self.subjects.list_active_by_workspace(workspace_id)
+            ]
+        else:
+            subject_ids = self.subject_memberships.list_teacher_subject_ids(
+                actor_membership.id, workspace_id
+            )
+
+        page, per_page, offset = normalize_pagination(page, per_page)
+        total = self.banks.count_workspace_discoverable(
+            workspace_id=workspace_id,
+            exclude_membership_id=actor_membership.id,
+            subject_ids=subject_ids,
+        )
+        rows = self.banks.list_workspace_discoverable(
+            workspace_id=workspace_id,
+            exclude_membership_id=actor_membership.id,
+            subject_ids=subject_ids,
+            offset=offset,
+            limit=per_page,
+        )
+        return {
+            "question_banks": [self._serialize_bank(bank) for bank in rows],
+            "count": len(rows),
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
+        }
+
+    def list_community_question_banks(
+        self,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+    ) -> dict:
+        page, per_page, offset = normalize_pagination(page, per_page)
+        total = self.banks.count_community()
+        rows = self.banks.list_community(offset=offset, limit=per_page)
+        return {
+            "question_banks": [self._serialize_bank(bank) for bank in rows],
+            "count": len(rows),
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
+        }
 
     def list_subject_question_banks(
         self,

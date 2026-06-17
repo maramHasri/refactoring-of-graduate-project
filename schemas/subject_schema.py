@@ -42,3 +42,8 @@ class UpdateQuestionBankSchema(Schema):
     visibility = fields.Str(
         validate=validate.OneOf([v.value for v in QuestionBankVisibility])
     )
+
+
+class QuestionBankListQuerySchema(Schema):
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))

@@ -114,21 +114,24 @@ def resend_otp():
 @auth_bp.route("/forgot-password", methods=["POST"])
 @handle_service_errors
 def forgot_password():
-    """POST /auth/forgot-password — start reset flow (link-based, unchanged)."""
+    """POST /auth/forgot-password — send a 6-digit OTP to reset password."""
     data = ForgotPasswordSchema().load(request.get_json() or {})
-    raw = AuthService().forgot_password(data["email"])
-    response = {"message": "If the account exists, reset instructions were sent"}
-    if raw and request.environ.get("FLASK_ENV") == "development":
-        response["dev_token"] = raw
+    result = AuthService().forgot_password(data["email"])
+    response = {"message": "If the account exists, a reset code was sent"}
+    if result:
+        if "email_sent" in result:
+            response["email_sent"] = result["email_sent"]
+        if "dev_otp" in result:
+            response["dev_otp"] = result["dev_otp"]
     return response, 200
 
 
 @auth_bp.route("/reset-password", methods=["POST"])
 @handle_service_errors
 def reset_password():
-    """POST /auth/reset-password — complete reset + revoke sessions."""
+    """POST /auth/reset-password — set new password after OTP verified via /auth/verify-otp."""
     data = ResetPasswordSchema().load(request.get_json() or {})
-    AuthService().reset_password(data["token"], data["new_password"])
+    AuthService().reset_password(data["email"], data["new_password"])
     return {"message": "Password reset successful"}, 200
 
 

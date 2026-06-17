@@ -37,7 +37,7 @@ class Config:
         os.getenv("REGISTRATION_INTENT_EXPIRES_HOURS", "48")
     )
 
-    OTP_EXPIRES_MINUTES = int(os.getenv("OTP_EXPIRES_MINUTES", "10"))
+    OTP_EXPIRES_MINUTES = int(os.getenv("OTP_EXPIRES_MINUTES", "15"))
     OTP_RESEND_INTERVAL_SECONDS = int(os.getenv("OTP_RESEND_INTERVAL_SECONDS", "60"))
     OTP_MAX_VERIFY_ATTEMPTS = int(os.getenv("OTP_MAX_VERIFY_ATTEMPTS", "5"))
     OTP_MAX_RESEND_PER_HOUR = int(os.getenv("OTP_MAX_RESEND_PER_HOUR", "5"))
@@ -45,6 +45,9 @@ class Config:
     # Development only: include plain OTP in API JSON + server console (never True in production)
     EXPOSE_OTP_IN_DEV_RESPONSE = os.getenv(
         "EXPOSE_OTP_IN_DEV_RESPONSE", "false"
+    ).lower() in ("1", "true", "yes")
+    EXPOSE_INVITE_IN_DEV_RESPONSE = os.getenv(
+        "EXPOSE_INVITE_IN_DEV_RESPONSE", "false"
     ).lower() in ("1", "true", "yes")
 
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@eduforms.local")
@@ -56,6 +59,9 @@ class DevelopmentConfig(Config):
     DEBUG = True
     EXPOSE_OTP_IN_DEV_RESPONSE = os.getenv(
         "EXPOSE_OTP_IN_DEV_RESPONSE", "true"
+    ).lower() in ("1", "true", "yes")
+    EXPOSE_INVITE_IN_DEV_RESPONSE = os.getenv(
+        "EXPOSE_INVITE_IN_DEV_RESPONSE", "true"
     ).lower() in ("1", "true", "yes")
 
 

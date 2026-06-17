@@ -57,7 +57,7 @@ class ForgotPasswordSchema(Schema):
 
 
 class ResetPasswordSchema(Schema):
-    token = fields.Str(required=True)
+    email = fields.Email(required=True)
     new_password = fields.Str(required=True, validate=validate.Length(min=8), load_only=True)
 
 

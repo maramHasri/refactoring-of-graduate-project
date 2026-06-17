@@ -32,6 +32,7 @@ class WorkspaceStatus(str, enum.Enum):
 class EmailOtpPurpose(str, enum.Enum):
     REGISTER_OWNER = "REGISTER_OWNER"
     VERIFY_ACCOUNT = "VERIFY_ACCOUNT"
+    RESET_PASSWORD = "RESET_PASSWORD"
 
 
 class MembershipStatus(str, enum.Enum):
@@ -72,8 +73,10 @@ class InviteStatus(str, enum.Enum):
 
 
 class TestStatus(str, enum.Enum):
-    ACTIVE = "ACTIVE"
     DRAFT = "DRAFT"
+    SCHEDULED = "SCHEDULED"
+    PUBLISHED = "PUBLISHED"
+    CLOSED = "CLOSED"
     ARCHIVED = "ARCHIVED"
 
 
@@ -112,6 +115,14 @@ class Difficulty(str, enum.Enum):
     EASY = "EASY"
     MEDIUM = "MEDIUM"
     HARD = "HARD"
+
+
+class TestQuestionSourceType(str, enum.Enum):
+    AI = "AI"
+    QUESTION_BANK = "QUESTION_BANK"
+    RANDOM_FROM_BANK = "RANDOM_FROM_BANK"
+    MANUAL = "MANUAL"
+    IMPORT = "IMPORT"
 
 
 class ExamStatus(str, enum.Enum):

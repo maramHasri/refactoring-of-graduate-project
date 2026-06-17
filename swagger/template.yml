@@ -147,11 +147,12 @@ paths:
   /auth/verify-otp:
     post:
       tags: [Auth]
-      summary: Verify email OTP and complete registration
+      summary: Verify email OTP (registration or password reset)
       description: |
-        6-digit OTP from email. Expires in 10 minutes (configurable). One-time use.
-        For owner registration, creates user/workspace after success.
-        INSTITUTION: user is created with PENDING_APPROVAL; workspace is created when super admin approves.
+        6-digit OTP from email. Expires in 15 minutes (configurable). Max 5 wrong attempts.
+        - Registration / account verification: completes signup or marks email verified.
+        - Password reset (after POST /auth/forgot-password): validates OTP; then call
+          POST /auth/reset-password with email and new_password only.
       parameters:
         - in: body
           name: body
@@ -169,6 +170,10 @@ paths:
             type: object
             properties:
               success: { type: boolean, example: true }
+              email_verified: { type: boolean }
+              otp_verified: { type: boolean }
+              purpose: { type: string, enum: [REGISTER_OWNER, VERIFY_ACCOUNT, RESET_PASSWORD] }
+              message: { type: string }
               workspace_status: { type: string }
               requires_admin_approval: { type: boolean }
   /auth/resend-otp:
@@ -203,29 +208,42 @@ paths:
   /auth/forgot-password:
     post:
       tags: [Auth]
-      summary: Start password reset
+      summary: Start password reset (6-digit OTP)
       parameters:
         - in: body
           name: body
           schema:
             type: object
+            required: [email]
             properties:
-              email: { type: string }
+              email: { type: string, format: email }
       responses:
         200:
-          description: Email sent if account exists
+          description: OTP sent if account exists
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              email_sent: { type: boolean }
+              dev_otp:
+                type: string
+                description: Only in development when EXPOSE_OTP_IN_DEV_RESPONSE is enabled
   /auth/reset-password:
     post:
       tags: [Auth]
-      summary: Complete password reset
+      summary: Complete password reset (after OTP verified)
+      description: |
+        Requires a prior successful POST /auth/verify-otp for the same email
+        (password-reset OTP from POST /auth/forgot-password).
       parameters:
         - in: body
           name: body
           schema:
             type: object
+            required: [email, new_password]
             properties:
-              token: { type: string }
-              new_password: { type: string }
+              email: { type: string, format: email }
+              new_password: { type: string, minLength: 8 }
       responses:
         200:
           description: Password reset
@@ -684,6 +702,66 @@ paths:
                     created_by_membership_id: { type: integer }
                     created_at: { type: string, format: date-time }
                     updated_at: { type: string, format: date-time }
+  /question-banks/workspace:
+    get:
+      tags: [Question banks]
+      summary: Discover workspace question banks (other teachers)
+      description: |
+        Returns active WORKSPACE visibility banks created by other members in the
+        current workspace. Excludes banks created by the current user.
+        Teachers see banks only for subjects they teach; workspace owner/admin see
+        banks across all workspace subjects.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+      responses:
+        200:
+          description: Paginated workspace banks
+          schema:
+            type: object
+            properties:
+              question_banks: { type: array, items: { type: object } }
+              count: { type: integer }
+              total: { type: integer }
+              page: { type: integer }
+              per_page: { type: integer }
+              pages: { type: integer }
+  /question-banks/community:
+    get:
+      tags: [Question banks]
+      summary: Discover community question banks
+      description: |
+        Returns active COMMUNITY visibility banks available platform-wide.
+        No workspace context required.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+      responses:
+        200:
+          description: Paginated community banks
+          schema:
+            type: object
+            properties:
+              question_banks: { type: array, items: { type: object } }
+              count: { type: integer }
+              total: { type: integer }
+              page: { type: integer }
+              per_page: { type: integer }
+              pages: { type: integer }
   /question-banks/{bank_id}/questions:
     post:
       tags: [Question banks]
@@ -767,6 +845,69 @@ paths:
       responses:
         200:
           description: Questions in bank
+  /question-banks/{bank_id}/questions/{question_id}:
+    patch:
+      tags: [Question banks]
+      summary: Update question in bank
+      description: |
+        Partial update for one question. Requires TEACHER assignment on the bank's subject
+        (or workspace admin/owner). Supported type_code values: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+        - name: question_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              type_code:
+                type: string
+                enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
+              body: { type: string }
+              explanation: { type: string }
+              points: { type: number }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              topic_id: { type: integer }
+              choices:
+                type: array
+                items:
+                  type: object
+                  required: [body, is_correct]
+                  properties:
+                    body: { type: string }
+                    is_correct: { type: boolean }
+                    order_index: { type: integer }
+      responses:
+        200:
+          description: Question updated
+        404:
+          description: Question not found in bank
+    delete:
+      tags: [Question banks]
+      summary: Delete question from bank
+      description: Soft-deletes the question by setting status to ARCHIVED.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+        - name: question_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Question archived
+        404:
+          description: Question not found in bank
   /question-banks/{bank_id}:
     patch:
       tags: [Question banks]
@@ -800,6 +941,294 @@ paths:
       responses:
         200:
           description: Archived
+  /tests:
+    post:
+      tags: [Tests]
+      summary: Create test (exam)
+      description: |
+        Step 1 exam creation payload from UI.
+        Scheduling, publish timing, and advanced settings are configured in later steps.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [name, duration_minutes, subject_id, passing_score, total_score]
+            properties:
+              name: { type: string, example: "Midterm Exam" }
+              description: { type: string }
+              duration_minutes: { type: integer, example: 60 }
+              subject_id: { type: integer, example: 1 }
+              passing_score: { type: number, example: 50 }
+              total_score: { type: number, example: 100 }
+              auto_distribute_scores: { type: boolean, example: true }
+      responses:
+        201:
+          description: Test created
+  /tests/my:
+    get:
+      tags: [Tests]
+      summary: My tests (current membership)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: List created tests
+  /tests/{test_id}:
+    get:
+      tags: [Tests]
+      summary: Get test details with snapshot questions
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test detail
+    patch:
+      tags: [Tests]
+      summary: Update test (DRAFT only)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name: { type: string }
+              slug: { type: string }
+              description: { type: string }
+              grading_mode: { type: string }
+              total_score: { type: number }
+              passing_score: { type: number }
+              scoring_config: { type: object }
+              settings_config: { type: object }
+              availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+              starts_at: { type: string, format: date-time }
+              duration_minutes: { type: integer }
+              entry_window_minutes: { type: integer }
+      responses:
+        200:
+          description: Test updated
+  /tests/{test_id}/questions:
+    post:
+      tags: [Tests]
+      summary: Add bank questions to test as snapshots
+      description: Snapshot is created immediately when questions are added to test.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [question_ids]
+            properties:
+              question_ids:
+                type: array
+                items: { type: integer }
+              source_type:
+                type: string
+                enum: [AI, QUESTION_BANK, RANDOM_FROM_BANK, MANUAL, IMPORT]
+                default: QUESTION_BANK
+      responses:
+        201:
+          description: Questions added
+  /tests/{test_id}/questions/manual:
+    post:
+      tags: [Tests]
+      summary: Add manual questions to exam
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [questions]
+            properties:
+              questions:
+                type: array
+                items:
+                  type: object
+                  required: [type_code, body]
+                  properties:
+                    type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
+                    body: { type: string }
+                    explanation: { type: string }
+                    points: { type: number }
+                    difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+                    topic_id: { type: integer }
+                    choices: { type: array, items: { type: object } }
+      responses:
+        201:
+          description: Manual questions added
+  /tests/{test_id}/questions/import-csv:
+    post:
+      tags: [Tests]
+      summary: Import exam questions from CSV
+      consumes: [multipart/form-data]
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: csv_file
+          in: formData
+          type: file
+          required: true
+      responses:
+        201:
+          description: CSV questions imported
+  /tests/{test_id}/questions/from-bank:
+    post:
+      tags: [Tests]
+      summary: Add selected questions from a question bank
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [bank_id, question_ids]
+            properties:
+              bank_id: { type: integer }
+              question_ids: { type: array, items: { type: integer } }
+      responses:
+        201:
+          description: Question bank selection added
+  /tests/{test_id}/questions/random-from-banks:
+    post:
+      tags: [Tests]
+      summary: Add random questions from one or more banks
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [bank_ids, count]
+            properties:
+              bank_ids: { type: array, items: { type: integer } }
+              count: { type: integer, example: 20 }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
+              topic_id: { type: integer }
+      responses:
+        201:
+          description: Random questions added
+  /tests/{test_id}/questions/ai-generate:
+    post:
+      tags: [Tests]
+      summary: Generate and add AI questions to exam
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [count]
+            properties:
+              count: { type: integer, example: 10 }
+              type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY], default: MCQ }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              topics: { type: array, items: { type: string } }
+              learning_objectives: { type: array, items: { type: string } }
+              additional_instructions: { type: string }
+      responses:
+        201:
+          description: AI questions added
+  /tests/{test_id}/publish-now:
+    post:
+      tags: [Tests]
+      summary: Publish test immediately
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test published
+  /tests/{test_id}/schedule-publication:
+    post:
+      tags: [Tests]
+      summary: Schedule test publication
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [publish_at]
+            properties:
+              publish_at: { type: string, format: date-time }
+      responses:
+        200:
+          description: Test scheduled
+  /tests/{test_id}/close:
+    post:
+      tags: [Tests]
+      summary: Close test
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test closed
+  /tests/{test_id}/archive:
+    post:
+      tags: [Tests]
+      summary: Archive test
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test archived
   /join-codes/register-student:
     post:
       tags: [Join codes]

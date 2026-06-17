@@ -102,3 +102,22 @@ class SubjectMembershipRepository(BaseRepository):
         link.deleted_at = now
         link.status = SubjectMembershipStatus.REMOVED.value
         link.updated_at = now
+
+    def list_teacher_subject_ids(
+        self, membership_id: int, workspace_id: int
+    ) -> list[int]:
+        return list(
+            db.session.execute(
+                db.select(SubjectMembership.subject_id)
+                .join(Subject, Subject.id == SubjectMembership.subject_id)
+                .where(
+                    SubjectMembership.membership_id == membership_id,
+                    SubjectMembership.subject_role == SubjectRole.TEACHER.value,
+                    SubjectMembership.deleted_at.is_(None),
+                    SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                    Subject.workspace_id == workspace_id,
+                    Subject.deleted_at.is_(None),
+                )
+                .order_by(SubjectMembership.subject_id)
+            ).scalars().all()
+        )

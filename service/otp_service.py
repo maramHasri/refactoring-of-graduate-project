@@ -33,7 +33,7 @@ class OtpService:
         self.otps.invalidate_active_for_email(email)
 
         plain = generate_numeric_otp()
-        expires_minutes = current_app.config.get("OTP_EXPIRES_MINUTES", 10)
+        expires_minutes = current_app.config.get("OTP_EXPIRES_MINUTES", 15)
         row = EmailOtp(
             email=email,
             user_id=user_id,
@@ -45,9 +45,19 @@ class OtpService:
         self.otps.add(row)
         return plain
 
-    def verify_otp(self, *, email: str, otp: str) -> EmailOtp:
+    def verify_otp(
+        self,
+        *,
+        email: str,
+        otp: str,
+        purpose: str | None = None,
+        purposes: list[str] | None = None,
+        consume: bool = True,
+    ) -> EmailOtp:
         email = email.lower().strip()
-        row = self.otps.find_active_for_email(email)
+        row = self.otps.find_active_for_email(
+            email, purpose=purpose, purposes=purposes
+        )
         if not row:
             raise ValidationError("Invalid or expired OTP")
 
@@ -70,8 +80,9 @@ class OtpService:
                 )
             raise ValidationError(f"Invalid OTP. {remaining} attempt(s) remaining.")
 
-        row.is_used = True
-        row.used_at = datetime.now(timezone.utc)
+        if consume:
+            row.is_used = True
+            row.used_at = datetime.now(timezone.utc)
         return row
 
     def _enforce_resend_limits(self, email: str) -> None:

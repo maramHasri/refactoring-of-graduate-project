@@ -1,4 +1,4 @@
-from sqlalchemy import Float, ForeignKey, Index, Integer, String
+from sqlalchemy import Float, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 
 from utils.db import db
@@ -13,6 +13,23 @@ class Test(db.Model, TimestampMixin):
     name = db.Column(String(255), nullable=False)
     slug = db.Column(String(255), nullable=False, unique=True)
     grading_mode = db.Column(String(50), nullable=True)
+    description = db.Column(Text, nullable=True)
+    subject_id = db.Column(
+        db.Integer,
+        ForeignKey("subjects.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    total_score = db.Column(Numeric(8, 2), nullable=True)
+    passing_score = db.Column(Numeric(8, 2), nullable=True)
+    auto_distribute_scores = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    scoring_config = db.Column(Text, nullable=True)
+    settings_config = db.Column(Text, nullable=True)
     created_by_membership_id = db.Column(
         db.Integer,
         ForeignKey("memberships.id", ondelete="SET NULL"),
@@ -22,13 +39,17 @@ class Test(db.Model, TimestampMixin):
     status = db.Column(
         String(30),
         nullable=False,
-        default=TestStatus.ACTIVE.value,
-        server_default=TestStatus.ACTIVE.value,
+        default=TestStatus.DRAFT.value,
+        server_default=TestStatus.DRAFT.value,
     )
     availability_time_mode = db.Column(String(30), nullable=True)
     starts_at = db.Column(db.DateTime(timezone=True), nullable=True)
     duration_minutes = db.Column(Integer, nullable=True)
     entry_window_minutes = db.Column(Integer, nullable=True)
+    published_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    scheduled_publish_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    closed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    archived_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     created_by = relationship(
         "Membership",
@@ -47,6 +68,7 @@ class Test(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
+    subject = relationship("Subject")
 
     __table_args__ = (
         Index("ix_tests_status", "status"),

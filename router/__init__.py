@@ -7,6 +7,7 @@ from router.join_code_routes import join_bp
 from router.subject_routes import subject_bp
 from router.question_bank_routes import question_bank_bp
 from router.admin_routes import admin_bp
+from router.test_routes import test_bp
 
 
 def register_blueprints(app):
@@ -18,4 +19,5 @@ def register_blueprints(app):
     app.register_blueprint(join_bp, url_prefix="/join-codes")
     app.register_blueprint(subject_bp, url_prefix="/subjects")
     app.register_blueprint(question_bank_bp, url_prefix="/question-banks")
+    app.register_blueprint(test_bp, url_prefix="/tests")
     app.register_blueprint(admin_bp, url_prefix="/admin")

@@ -3,11 +3,17 @@ from datetime import datetime, timezone
 from models import EmailOtp, RegistrationIntent
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import InstitutionApprovalStatus, WorkspaceKind
+from utils.enums import EmailOtpPurpose, InstitutionApprovalStatus, WorkspaceKind
 
 
 class EmailOtpRepository(BaseRepository):
-    def find_active_for_email(self, email: str, *, purpose: str | None = None) -> EmailOtp | None:
+    def find_active_for_email(
+        self,
+        email: str,
+        *,
+        purpose: str | None = None,
+        purposes: list[str] | None = None,
+    ) -> EmailOtp | None:
         query = db.select(EmailOtp).where(
             EmailOtp.email == email.lower().strip(),
             EmailOtp.is_used.is_(False),
@@ -15,8 +21,21 @@ class EmailOtpRepository(BaseRepository):
         )
         if purpose:
             query = query.where(EmailOtp.purpose == purpose)
+        elif purposes:
+            query = query.where(EmailOtp.purpose.in_(purposes))
         return db.session.execute(
             query.order_by(EmailOtp.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+
+    def find_verified_password_reset_otp(self, email: str) -> EmailOtp | None:
+        return db.session.execute(
+            db.select(EmailOtp).where(
+                EmailOtp.email == email.lower().strip(),
+                EmailOtp.purpose == EmailOtpPurpose.RESET_PASSWORD.value,
+                EmailOtp.is_used.is_(False),
+                EmailOtp.verified_at.isnot(None),
+                EmailOtp.expires_at > datetime.now(timezone.utc),
+            ).order_by(EmailOtp.verified_at.desc()).limit(1)
         ).scalar_one_or_none()
 
     def invalidate_active_for_email(self, email: str) -> None:

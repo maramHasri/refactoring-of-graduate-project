@@ -47,6 +47,7 @@ class EmailOtp(db.Model, CreatedAtMixin):
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     is_used = db.Column(Boolean, nullable=False, default=False)
     used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     verify_attempts = db.Column(db.Integer, nullable=False, default=0)
 
     user = relationship("User", back_populates="email_otps")

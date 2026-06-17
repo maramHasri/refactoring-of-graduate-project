@@ -42,6 +42,35 @@ class CreateQuestionInBankItemSchema(Schema):
         return data
 
 
+class UpdateQuestionInBankSchema(Schema):
+    """PATCH /question-banks/{bankId}/questions/{questionId} — partial update."""
+
+    type_code = fields.Str(validate=validate.Length(min=2, max=50))
+    body = fields.Str(validate=validate.Length(min=1))
+    explanation = fields.Str(allow_none=True)
+    points = fields.Float(allow_none=True, validate=validate.Range(min=0))
+    difficulty = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf([d.value for d in Difficulty]),
+    )
+    topic_id = fields.Int(allow_none=True)
+    choices = fields.List(fields.Nested(QuestionChoiceInputSchema))
+
+    @pre_load
+    def normalize_optional_topic_id(self, data, **kwargs):
+        if not isinstance(data, dict):
+            return data
+        if "topic_id" not in data or data["topic_id"] is None:
+            data.pop("topic_id", None)
+            return data
+        try:
+            if int(data["topic_id"]) <= 0:
+                data.pop("topic_id", None)
+        except (TypeError, ValueError):
+            pass
+        return data
+
+
 class CreateQuestionsInBankSchema(Schema):
     """
     POST /question-banks/{bankId}/questions — always { "questions": [...] }.

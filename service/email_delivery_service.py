@@ -17,7 +17,7 @@ class EmailDeliveryError(Exception):
 
 class EmailDeliveryService:
     def send_otp_email(self, *, to_email: str, full_name: str, otp_code: str) -> None:
-        expires = current_app.config.get("OTP_EXPIRES_MINUTES", 10)
+        expires = current_app.config.get("OTP_EXPIRES_MINUTES", 15)
         subject = "Your edu_forms verification code"
         html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto;">
@@ -123,22 +123,31 @@ class EmailDeliveryService:
         )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
 
-    def send_password_reset_email(self, *, to_email: str, full_name: str, raw_token: str) -> None:
-        reset_url = self._password_reset_link(raw_token)
-        subject = "Reset your edu_forms password"
+    def send_password_reset_otp_email(
+        self, *, to_email: str, full_name: str, otp_code: str
+    ) -> None:
+        expires = current_app.config.get("OTP_EXPIRES_MINUTES", 15)
+        subject = "Your edu_forms password reset code"
         html = f"""
-        <p>Hello {full_name},</p>
-        <p>Reset your password using this link:</p>
-        <p><a href="{reset_url}">{reset_url}</a></p>
-        <p>If you did not request a reset, ignore this email.</p>
+        <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto;">
+          <h2 style="color: #1a365d;">Reset your password</h2>
+          <p>Hello {full_name},</p>
+          <p>Use the one-time code below to reset your password:</p>
+          <p style="font-size: 28px; letter-spacing: 6px; font-weight: bold; color: #2b6cb0;
+             background: #ebf8ff; padding: 16px; text-align: center; border-radius: 8px;">
+            {otp_code}
+          </p>
+          <p>This code expires in <strong>{expires} minutes</strong> and can only be used once.</p>
+          <p>If you did not request a password reset, you can safely ignore this email.</p>
+          <p style="color: #718096; font-size: 12px;">edu_forms — Exam &amp; Proctoring Platform</p>
+        </div>
         """
-        text = f"Hello {full_name},\n\nReset your password: {reset_url}"
+        text = (
+            f"Hello {full_name},\n\n"
+            f"Your edu_forms password reset code: {otp_code}\n\n"
+            f"Expires in {expires} minutes. One-time use only.\n"
+        )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
-
-    def _password_reset_link(self, raw_token: str) -> str:
-        base = current_app.config.get("APP_URL", "http://localhost:3000").rstrip("/")
-        path = current_app.config.get("PASSWORD_RESET_PATH", "/reset-password")
-        return f"{base}{path}?token={raw_token}"
 
     def _invite_preview_link(self, raw_token: str) -> str:
         base = current_app.config.get("API_URL", "http://127.0.0.1:5000").rstrip("/")

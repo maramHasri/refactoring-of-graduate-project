@@ -71,7 +71,23 @@ class InviteService:
             raise ValidationError("Invalid role for invitation")
 
         email = email.lower().strip()
-        if self.invites.find_pending_by_email(workspace_id, email):
+        existing = self.invites.find_pending_by_email(workspace_id, email)
+        if existing:
+            if current_app.config.get("DEBUG"):
+                raw = generate_invite_token()
+                existing.token_hash = hash_token(raw)
+                existing.assigned_role = assigned_role
+                existing.invited_by_membership_id = invited_by_membership_id
+                existing.expires_at = datetime.now(timezone.utc) + timedelta(
+                    days=current_app.config.get("INVITE_TOKEN_EXPIRES_DAYS", 7)
+                )
+                db.session.commit()
+                from utils.dev_invite import log_dev_invite_token
+
+                log_dev_invite_token(
+                    email=email, raw_token=raw, workspace_id=workspace_id
+                )
+                return existing, raw
             raise ConflictError("Pending invite already exists for this email")
 
         raw = generate_invite_token()
@@ -87,6 +103,10 @@ class InviteService:
         )
         self.invites.add(invite)
         db.session.commit()
+
+        from utils.dev_invite import log_dev_invite_token
+
+        log_dev_invite_token(email=email, raw_token=raw, workspace_id=workspace_id)
 
         try:
             EmailDeliveryService().send_workspace_invite_email(

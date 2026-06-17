@@ -197,6 +197,7 @@ class WorkspaceService:
 
     def _serialize_workspace_teacher(self, membership: Membership, user) -> dict:
         return {
+            "membership_id": membership.id,
             "user_id": user.id,
             "full_name": user.full_name,
             "email": user.email,

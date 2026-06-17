@@ -7,7 +7,7 @@ from sqlalchemy import Boolean, ForeignKey, Index, Numeric, String, Text, Unique
 from sqlalchemy.orm import relationship
 
 from utils.db import db
-from utils.enums import QuestionStatus
+from utils.enums import QuestionStatus, TestQuestionSourceType
 from utils.mixins import TimestampMixin
 
 
@@ -193,11 +193,26 @@ class TestQuestion(db.Model, TimestampMixin):
     question_id = db.Column(
         db.Integer,
         ForeignKey("questions.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     kind = db.Column(String(50), nullable=False)
+    source_type = db.Column(
+        String(30),
+        nullable=False,
+        default=TestQuestionSourceType.QUESTION_BANK.value,
+        server_default=TestQuestionSourceType.QUESTION_BANK.value,
+    )
+    source_bank_id = db.Column(db.Integer, nullable=True)
     points = db.Column(Numeric(6, 2), nullable=False)
+    snapshot_question_text = db.Column(Text, nullable=False)
+    snapshot_explanation = db.Column(Text, nullable=True)
+    snapshot_type_code = db.Column(String(50), nullable=False)
+    snapshot_topic_id = db.Column(db.Integer, nullable=True)
+    snapshot_topic_name = db.Column(String(255), nullable=True)
+    snapshot_difficulty = db.Column(String(30), nullable=True)
+    snapshot_points = db.Column(Numeric(6, 2), nullable=True)
+    snapshot_choices_json = db.Column(Text, nullable=True)
     status = db.Column(
         String(30),
         nullable=False,
@@ -210,6 +225,7 @@ class TestQuestion(db.Model, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("test_id", "question_id", name="unique_test_question"),
+        Index("ix_test_questions_test_source_type", "test_id", "source_type"),
         Index("ix_test_questions_test_status", "test_id", "status"),
     )
 
