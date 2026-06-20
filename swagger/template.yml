@@ -1147,6 +1147,10 @@ paths:
     post:
       tags: [Tests]
       summary: Generate and add AI questions to exam
+      description: |
+        Subject name is taken from the exam's linked subject and included in the AI prompt.
+        When GEMINI_API_KEY is set, uses Google Gemini (default model gemini-2.0-flash).
+        Without an API key, returns local placeholder draft questions.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1169,6 +1173,14 @@ paths:
       responses:
         201:
           description: AI questions added
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              count: { type: integer }
+              subject_name: { type: string }
+              ai_model: { type: string, example: gemini-2.0-flash }
+              questions: { type: array, items: { type: object } }
   /tests/{test_id}/publish-now:
     post:
       tags: [Tests]

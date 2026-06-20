@@ -10,6 +10,7 @@ from repositories.question_repository import QuestionRepository, QuestionTypeRep
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
 from repositories.test_repository import TestQuestionRepository, TestRepository
 from repositories.workspace_repository import WorkspaceRepository
+from service.ai_question_service import AIQuestionService
 from service.question_bank_service import QuestionBankService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import can_manage_subjects, verify_subject_teacher_access
@@ -28,6 +29,7 @@ class TestService:
         self.subject_memberships = SubjectMembershipRepository()
         self.workspaces = WorkspaceRepository()
         self.bank_service = QuestionBankService()
+        self.ai_questions = AIQuestionService()
 
     def create_test(self, *, workspace_id: int, actor_membership, data: dict) -> Test:
         workspace = self.workspaces.get_by_id(workspace_id)
@@ -344,31 +346,31 @@ class TestService:
         topics: list[str] | None = None,
         learning_objectives: list[str] | None = None,
         additional_instructions: str | None = None,
-    ) -> list[dict]:
-        """
-        AI integration placeholder:
-        Reuses validation/snapshot pipeline and generates deterministic draft content
-        until a dedicated provider-backed AI service is introduced.
-        """
+    ) -> tuple[list[dict], str, str]:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
+        if not test.subject:
+            raise ValidationError("Test must have a subject for AI question generation")
+
+        subject_name = test.subject.name
         topics = topics or []
         learning_objectives = learning_objectives or []
+
+        ai_request = self.ai_questions.build_request_body(
+            subject_name=subject_name,
+            exam_name=test.name,
+            count=count,
+            type_code=type_code,
+            difficulty=difficulty,
+            topics=topics,
+            learning_objectives=learning_objectives,
+            additional_instructions=additional_instructions,
+        )
+        payloads, model_name = self.ai_questions.generate_questions(
+            request_body=ai_request
+        )
+
         created = []
-        for idx in range(count):
-            topic_label = topics[idx % len(topics)] if topics else test.subject.name if test.subject else "General"
-            objective_label = (
-                learning_objectives[idx % len(learning_objectives)]
-                if learning_objectives
-                else "core concept"
-            )
-            payload = {
-                "type_code": type_code,
-                "body": f"[AI] {topic_label}: {objective_label} #{idx + 1}",
-                "explanation": additional_instructions,
-                "points": 1,
-                "difficulty": difficulty,
-                "choices": self._default_choices_for_type(type_code),
-            }
+        for payload in payloads:
             created.append(
                 self._create_snapshot_row_from_payload(
                     test_id=test.id,
@@ -377,7 +379,7 @@ class TestService:
                 )
             )
         db.session.commit()
-        return [self.serialize_test_question(row) for row in created]
+        return [self.serialize_test_question(row) for row in created], model_name, subject_name
 
     def publish_now(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)

@@ -142,7 +142,7 @@ def add_random_questions_to_test(test_id):
 @handle_service_errors
 def add_ai_questions_to_test(test_id):
     data = AIGenerateQuestionsSchema().load(request.get_json() or {})
-    items = _svc().add_ai_generated_questions(
+    items, ai_model, subject_name = _svc().add_ai_generated_questions(
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
@@ -153,7 +153,13 @@ def add_ai_questions_to_test(test_id):
         learning_objectives=data.get("learning_objectives"),
         additional_instructions=data.get("additional_instructions"),
     )
-    return {"message": "AI questions added", "questions": items, "count": len(items)}, 201
+    return {
+        "message": "AI questions added",
+        "questions": items,
+        "count": len(items),
+        "ai_model": ai_model,
+        "subject_name": subject_name,
+    }, 201
 
 
 @test_bp.route("/<int:test_id>/publish-now", methods=["POST"])
