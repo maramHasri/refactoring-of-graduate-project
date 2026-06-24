@@ -8,6 +8,8 @@ from email.mime.text import MIMEText
 
 from flask import current_app
 
+from utils.invite_links import invite_accept_url, invite_preview_url, invite_register_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,26 +102,61 @@ class EmailDeliveryService:
         assigned_role: str,
         raw_token: str,
     ) -> None:
-        preview_url = self._invite_preview_link(raw_token)
-        register_hint = self._invite_register_link(raw_token)
-        accept_hint = self._invite_accept_link(raw_token)
-        api_base = current_app.config.get("API_URL", "http://127.0.0.1:5000").rstrip("/")
-        subject = f"Invitation to join {workspace_name} on edu_forms"
+        preview_url = invite_preview_url(raw_token)
+        register_url = invite_register_url(raw_token)
+        accept_url = invite_accept_url(raw_token)
+        subject = f"دعوة للانضمام إلى {workspace_name} | Invitation to {workspace_name}"
         html = f"""
-        <p>You have been invited to join <strong>{workspace_name}</strong> as <strong>{assigned_role}</strong>.</p>
-        <p>Preview: <a href="{preview_url}">{preview_url}</a></p>
-        <p><strong>New account?</strong> Register with POST <code>{register_hint}</code><br>
-        Body: <code>{{"full_name": "...", "password": "..."}}</code><br>
-        (email is fixed to <strong>{to_email}</strong> from this invitation)</p>
-        <p><strong>Already have an account?</strong> Log in as {to_email}, then POST <code>{accept_hint}</code>
-        with Bearer access_token.</p>
-        <p>Swagger: <a href="{api_base}/apidocs/">{api_base}/apidocs/</a></p>
+        <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1a202c;">
+          <h2 style="color: #1a365d; margin-bottom: 8px;">دعوة للانضمام إلى edu_forms</h2>
+          <p style="margin-top: 0;">تمت دعوتك للانضمام إلى <strong>{workspace_name}</strong>
+             بدور <strong>{assigned_role}</strong>.</p>
+          <p style="color: #4a5568; font-size: 14px;">
+            البريد المدعو: <strong>{to_email}</strong>
+          </p>
+          <p style="color: #4a5568; font-size: 14px; margin-bottom: 24px;">
+            You have been invited to join <strong>{workspace_name}</strong>
+            as <strong>{assigned_role}</strong> ({to_email}).
+          </p>
+
+          <p style="font-weight: bold; margin-bottom: 8px;">مستخدم جديد؟ / New here?</p>
+          <p style="margin-top: 0; margin-bottom: 20px;">
+            <a href="{register_url}"
+               style="display: inline-block; background: #2b6cb0; color: #ffffff; text-decoration: none;
+                      padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+              إنشاء حساب · Create account
+            </a>
+          </p>
+
+          <p style="font-weight: bold; margin-bottom: 8px;">لديك حساب بالفعل؟ / Already have an account?</p>
+          <p style="margin-top: 0; margin-bottom: 28px;">
+            <a href="{accept_url}"
+               style="display: inline-block; background: #276749; color: #ffffff; text-decoration: none;
+                      padding: 14px 28px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+              قبول الدعوة · Accept invitation
+            </a>
+          </p>
+
+          <p style="font-size: 14px; color: #4a5568; margin-bottom: 8px;">
+            معاينة الدعوة / Preview invitation:
+          </p>
+          <p style="margin-top: 0;">
+            <a href="{preview_url}" style="color: #2b6cb0;">{preview_url}</a>
+          </p>
+
+          <p style="color: #718096; font-size: 12px; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+            افتح الروابط من المتصفح للوصول إلى موقع edu_forms. لا حاجة لأي إعدادات تقنية.
+            <br>edu_forms — Exam &amp; Proctoring Platform
+          </p>
+        </div>
         """
         text = (
-            f"Invitation to {workspace_name} as {assigned_role}.\n\n"
-            f"Preview: {preview_url}\n"
-            f"New user: POST {register_hint} with full_name and password only.\n"
-            f"Existing user: log in as {to_email}, then POST {accept_hint}\n"
+            f"دعوة للانضمام إلى {workspace_name} بدور {assigned_role}\n"
+            f"Invitation to {workspace_name} as {assigned_role}\n"
+            f"Email: {to_email}\n\n"
+            f"مستخدم جديد / New account:\n{register_url}\n\n"
+            f"مستخدم موجود / Existing account:\n{accept_url}\n\n"
+            f"معاينة / Preview:\n{preview_url}\n"
         )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
 
@@ -148,18 +185,6 @@ class EmailDeliveryService:
             f"Expires in {expires} minutes. One-time use only.\n"
         )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
-
-    def _invite_preview_link(self, raw_token: str) -> str:
-        base = current_app.config.get("API_URL", "http://127.0.0.1:5000").rstrip("/")
-        return f"{base}/invites/{raw_token}"
-
-    def _invite_register_link(self, raw_token: str) -> str:
-        base = current_app.config.get("API_URL", "http://127.0.0.1:5000").rstrip("/")
-        return f"{base}/invites/{raw_token}/register"
-
-    def _invite_accept_link(self, raw_token: str) -> str:
-        base = current_app.config.get("API_URL", "http://127.0.0.1:5000").rstrip("/")
-        return f"{base}/invites/{raw_token}/accept"
 
     def _send(self, *, to_email: str, subject: str, html_body: str, text_body: str) -> None:
         gmail_user = current_app.config.get("GMAIL_USER")

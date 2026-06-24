@@ -4,7 +4,9 @@ from router.decorators import handle_service_errors, require_auth, require_works
 from schemas.workspace_schema import CreateInviteSchema, RegisterThroughInviteSchema
 from service.exceptions import ConflictError
 from service.invite_service import InviteService
+from utils.dev_invite import attach_dev_invite, should_expose_invite_in_response
 from utils.enums import MembershipRole
+from utils.invite_links import invite_link_bundle
 
 invite_bp = Blueprint("invites", __name__)
 
@@ -24,7 +26,7 @@ def create_invite():
 
     data = CreateInviteSchema().load(request.get_json() or {})
     inviter_role = g.membership.role if g.membership else None
-    invite, raw = InviteService().create_invite(
+    invite, raw, email_sent = InviteService().create_invite(
         workspace_id=g.workspace_id,
         email=data["email"],
         assigned_role=data["assigned_role"],
@@ -32,23 +34,21 @@ def create_invite():
         inviter_role=inviter_role,
         is_superadmin=g.current_user.is_superadmin,
     )
-    from utils.dev_invite import attach_dev_invite, should_expose_invite_in_response
-
     response = {
         "invite_id": invite.id,
         "invited_email": invite.invited_email,
         "assigned_role": invite.assigned_role,
         "expires_at": invite.expires_at.isoformat(),
+        "email_sent": email_sent,
     }
+    if not email_sent and current_app.config.get("DEBUG"):
+        response["email_hint"] = (
+            "Email was not delivered. Check GMAIL_USER/GMAIL_APP_PASSWORD in .env "
+            "or use register_url / accept_url from this response."
+        )
     if should_expose_invite_in_response():
         response = attach_dev_invite(response, raw_token=raw)
-        response["preview_url"] = f"{request.url_root.rstrip('/')}/invites/{raw}"
-        response["register_url"] = (
-            f"{request.url_root.rstrip('/')}/invites/{raw}/register"
-        )
-        response["accept_url"] = (
-            f"{request.url_root.rstrip('/')}/invites/{raw}/accept"
-        )
+        response.update(invite_link_bundle(raw))
     return response, 201
 
 
@@ -104,4 +104,4 @@ def reject_invite(token):
     """
     InviteService().reject_invite(token)
     return {"message": "Invitation rejected"}, 200
-
+

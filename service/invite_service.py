@@ -39,7 +39,7 @@ class InviteService:
         invited_by_membership_id: int | None,
         inviter_role: str | None,
         is_superadmin: bool = False,
-    ) -> tuple[WorkspaceInvite, str]:
+    ) -> tuple[WorkspaceInvite, str, bool]:
         """
         Purpose: Create pending invitation.
         Must NOT: create membership or user.
@@ -87,7 +87,13 @@ class InviteService:
                 log_dev_invite_token(
                     email=email, raw_token=raw, workspace_id=workspace_id
                 )
-                return existing, raw
+                email_sent = self._send_invite_email(
+                    workspace=workspace,
+                    email=email,
+                    assigned_role=assigned_role,
+                    raw_token=raw,
+                )
+                return existing, raw, email_sent
             raise ConflictError("Pending invite already exists for this email")
 
         raw = generate_invite_token()
@@ -108,17 +114,13 @@ class InviteService:
 
         log_dev_invite_token(email=email, raw_token=raw, workspace_id=workspace_id)
 
-        try:
-            EmailDeliveryService().send_workspace_invite_email(
-                to_email=email,
-                workspace_name=workspace.name,
-                assigned_role=assigned_role,
-                raw_token=raw,
-            )
-        except EmailDeliveryError:
-            pass
-
-        return invite, raw
+        email_sent = self._send_invite_email(
+            workspace=workspace,
+            email=email,
+            assigned_role=assigned_role,
+            raw_token=raw,
+        )
+        return invite, raw, email_sent
 
     def preview_invite(self, raw_token: str) -> dict:
         """
@@ -252,6 +254,30 @@ class InviteService:
         invite.revoked_at = datetime.now(timezone.utc)
         invite.status = InviteStatus.EXPIRED.value
         db.session.commit()
+
+    def _send_invite_email(
+        self,
+        *,
+        workspace,
+        email: str,
+        assigned_role: str,
+        raw_token: str,
+    ) -> bool:
+        try:
+            EmailDeliveryService().send_workspace_invite_email(
+                to_email=email,
+                workspace_name=workspace.name,
+                assigned_role=assigned_role,
+                raw_token=raw_token,
+            )
+            return True
+        except EmailDeliveryError as exc:
+            current_app.logger.error(
+                "Failed to send invite email to %s: %s (use dev_token / frontend URLs in DEBUG)",
+                email,
+                exc,
+            )
+            return False
 
     def _find_by_raw_token(self, raw_token: str) -> WorkspaceInvite | None:
         return self.invites.find_by_token_hash(hash_token(raw_token))

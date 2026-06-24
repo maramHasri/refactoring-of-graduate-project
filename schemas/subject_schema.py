@@ -16,6 +16,17 @@ class UpdateSubjectSchema(Schema):
     is_archived = fields.Bool()
 
 
+class AssignStudentSubjectsSchema(Schema):
+    membership_id = fields.Int(required=True)
+    subject_ids = fields.List(
+        fields.Int(), required=True, validate=validate.Length(min=1)
+    )
+
+
+class ReplaceStudentSubjectsSchema(Schema):
+    subject_ids = fields.List(fields.Int(), required=True)
+
+
 class AssignMembershipToSubjectSchema(Schema):
     membership_id = fields.Int(required=True)
 

@@ -27,6 +27,7 @@ class Config:
 
     # Email (Gmail App Password only) + frontend/API links
     APP_URL = os.getenv("APP_URL", "http://localhost:3000")
+    FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
     API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
     PASSWORD_RESET_PATH = os.getenv("PASSWORD_RESET_PATH", "/reset-password")
 

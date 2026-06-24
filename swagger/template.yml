@@ -22,6 +22,17 @@ securityDefinitions:
     name: X-Workspace-Id
     in: header
     description: Active workspace context (not in JWT)
+tags:
+  - name: Meta
+  - name: Auth
+  - name: Super Admin
+  - name: Workspaces
+    description: Workspace management and student subject assignments
+  - name: Subjects
+  - name: Question banks
+  - name: Tests
+  - name: Invites
+  - name: Join codes
 paths:
   /:
     get:
@@ -312,7 +323,7 @@ paths:
                     user_id: { type: integer }
                     full_name: { type: string, example: "Ahmed Ali" }
                     email: { type: string, example: "ahmed@example.com" }
-                    membership_role: { type: string, example: TEACHER }
+                    membership_role: { type: string, example: "TEACHER" }
                     created_at: { type: string, format: date-time }
         403:
           description: Forbidden (not owner/admin, or not an institution workspace)
@@ -353,6 +364,104 @@ paths:
       responses:
         200:
           description: Deleted
+  /student-memberships/subjects:
+    post:
+      tags: [Workspaces]
+      operationId: assignSubjectsToStudent
+      summary: Assign subjects to student
+      description: Bulk-assign subjects to a student membership. Owner or ADMIN only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [membership_id, subject_ids]
+            properties:
+              membership_id: { type: integer }
+              subject_ids:
+                type: array
+                items: { type: integer }
+      responses:
+        201:
+          description: Subjects assigned
+        403:
+          description: Forbidden
+        404:
+          description: Not found
+        422:
+          description: Validation error
+  /student-memberships/{membership_id}/subjects:
+    get:
+      tags: [Workspaces]
+      operationId: listStudentSubjects
+      summary: List subjects assigned to student
+      description: Owner, ADMIN, or the student themselves.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Assigned subjects
+        403:
+          description: Forbidden
+        404:
+          description: Not found
+    put:
+      tags: [Workspaces]
+      operationId: replaceStudentSubjects
+      summary: Replace student subject assignments
+      description: Sync subject_memberships to match subject_ids. Owner or ADMIN only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [subject_ids]
+            properties:
+              subject_ids:
+                type: array
+                items: { type: integer }
+      responses:
+        200:
+          description: Assignments updated
+        403:
+          description: Forbidden
+        404:
+          description: Not found
+  /student-memberships/{membership_id}/subjects/{subject_id}:
+    delete:
+      tags: [Workspaces]
+      operationId: removeStudentSubject
+      summary: Remove one subject from student
+      description: Soft-remove one subject assignment. Owner or ADMIN only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Subject removed
+        403:
+          description: Forbidden
+        404:
+          description: Not found
   /subjects:
     get:
       tags: [Subjects]
@@ -449,8 +558,8 @@ paths:
                     assignment_id: { type: integer }
                     membership_id: { type: integer }
                     subject_id: { type: integer }
-                    subject_role: { type: string, example: TEACHER }
-                    membership_role: { type: string, example: TEACHER }
+                    subject_role: { type: string, example: "TEACHER" }
+                    membership_role: { type: string, example: "TEACHER" }
                     full_name: { type: string, example: "Ahmed Ali" }
                     assigned_at: { type: string, format: date-time }
     post:
@@ -1280,6 +1389,9 @@ paths:
     post:
       tags: [Invites]
       summary: Create invitation
+      description: |
+        Email links and dev response URLs use FRONTEND_BASE_URL (React app), not the API server.
+        Frontend pages extract the token and call POST /invites/{token}/register or /accept.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - in: body
@@ -1292,6 +1404,19 @@ paths:
       responses:
         201:
           description: Invite created
+          schema:
+            type: object
+            properties:
+              invite_id: { type: integer }
+              invited_email: { type: string }
+              assigned_role: { type: string }
+              expires_at: { type: string }
+              email_sent: { type: boolean }
+              email_hint: { type: string, description: Present in DEBUG when email_sent is false }
+              dev_token: { type: string, description: Development only }
+              preview_url: { type: string, example: "http://localhost:5173/invites/{token}" }
+              register_url: { type: string, example: "http://localhost:5173/invites/{token}/register" }
+              accept_url: { type: string, example: "http://localhost:5173/invites/{token}/accept" }
   /invites/{token}:
     get:
       tags: [Invites]

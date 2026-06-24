@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from models import Subject, SubjectMembership
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import SubjectMembershipStatus, SubjectRole
+from utils.enums import MembershipStatus, SubjectMembershipStatus, SubjectRole
 
 
 class SubjectRepository(BaseRepository):
@@ -96,6 +96,49 @@ class SubjectMembershipRepository(BaseRepository):
                 .order_by(SubjectMembership.id)
             ).scalars().all()
         )
+
+    def find_by_membership_and_subject(
+        self, membership_id: int, subject_id: int
+    ) -> SubjectMembership | None:
+        return db.session.execute(
+            db.select(SubjectMembership).where(
+                SubjectMembership.membership_id == membership_id,
+                SubjectMembership.subject_id == subject_id,
+            )
+        ).scalar_one_or_none()
+
+    def list_student_assignments_for_membership(
+        self, membership_id: int, workspace_id: int
+    ) -> list[SubjectMembership]:
+        return list(
+            db.session.execute(
+                db.select(SubjectMembership)
+                .join(Subject, Subject.id == SubjectMembership.subject_id)
+                .where(
+                    SubjectMembership.membership_id == membership_id,
+                    SubjectMembership.subject_role == SubjectRole.STUDENT.value,
+                    SubjectMembership.deleted_at.is_(None),
+                    SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                    Subject.workspace_id == workspace_id,
+                    Subject.deleted_at.is_(None),
+                )
+                .order_by(Subject.name)
+            ).scalars().all()
+        )
+
+    def reactivate(
+        self,
+        link: SubjectMembership,
+        *,
+        assigned_by_membership_id: int | None,
+        subject_role: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        link.deleted_at = None
+        link.status = SubjectMembershipStatus.ACTIVE.value
+        link.subject_role = subject_role
+        link.assigned_by_membership_id = assigned_by_membership_id
+        link.updated_at = now
 
     def soft_remove(self, link: SubjectMembership) -> None:
         now = datetime.now(timezone.utc)

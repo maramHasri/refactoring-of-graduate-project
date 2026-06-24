@@ -17,7 +17,7 @@ from utils.academic_rbac import (
     verify_subject_teacher_access,
 )
 from utils.db import db
-from utils.enums import MembershipRole, SubjectMembershipStatus, SubjectRole
+from utils.enums import MembershipRole, MembershipStatus, SubjectMembershipStatus, SubjectRole
 
 
 class SubjectService:
@@ -275,6 +275,112 @@ class SubjectService:
         links = self.subject_memberships.list_students_for_subject(subject_id)
         return [self._serialize_assignment(link) for link in links]
 
+    def assign_subjects_to_student(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        subject_ids: list[int],
+        actor_membership,
+    ) -> dict:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not can_manage_subjects(workspace, actor_membership):
+            raise ForbiddenError("Only workspace owner or admin can assign subjects to students")
+
+        self._validate_student_membership(workspace_id, student_membership_id)
+        unique_subject_ids = self._validate_subject_ids(workspace_id, subject_ids)
+
+        for subject_id in unique_subject_ids:
+            self._ensure_student_subject_link(
+                student_membership_id=student_membership_id,
+                subject_id=subject_id,
+                actor_membership_id=actor_membership.id,
+            )
+
+        db.session.commit()
+        return self._serialize_student_subjects_response(
+            workspace_id, student_membership_id
+        )
+
+    def list_student_subjects(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        actor_membership,
+    ) -> dict:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        self._ensure_can_view_student_subjects(
+            workspace, actor_membership, student_membership_id
+        )
+        self._validate_student_membership(workspace_id, student_membership_id)
+        return self._serialize_student_subjects_response(
+            workspace_id, student_membership_id
+        )
+
+    def replace_student_subjects(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        subject_ids: list[int],
+        actor_membership,
+    ) -> dict:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not can_manage_subjects(workspace, actor_membership):
+            raise ForbiddenError("Only workspace owner or admin can update student subject assignments")
+
+        self._validate_student_membership(workspace_id, student_membership_id)
+        desired_subject_ids = set(self._validate_subject_ids(workspace_id, subject_ids))
+
+        current_links = self.subject_memberships.list_student_assignments_for_membership(
+            student_membership_id, workspace_id
+        )
+        current_subject_ids = {link.subject_id for link in current_links}
+
+        for link in current_links:
+            if link.subject_id not in desired_subject_ids:
+                self.subject_memberships.soft_remove(link)
+
+        for subject_id in desired_subject_ids - current_subject_ids:
+            self._ensure_student_subject_link(
+                student_membership_id=student_membership_id,
+                subject_id=subject_id,
+                actor_membership_id=actor_membership.id,
+            )
+
+        db.session.commit()
+        return self._serialize_student_subjects_response(
+            workspace_id, student_membership_id
+        )
+
+    def remove_student_subject(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        subject_id: int,
+        actor_membership,
+    ) -> dict:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not can_manage_subjects(workspace, actor_membership):
+            raise ForbiddenError("Only workspace owner or admin can remove student subject assignments")
+
+        self._validate_student_membership(workspace_id, student_membership_id)
+        self._get_subject_or_404(subject_id, workspace_id)
+
+        link = self.subject_memberships.find_active_by_role(
+            student_membership_id, subject_id, SubjectRole.STUDENT.value
+        )
+        if not link:
+            raise NotFoundError("Student subject assignment not found")
+
+        self.subject_memberships.soft_remove(link)
+        db.session.commit()
+        return self._serialize_student_subjects_response(
+            workspace_id, student_membership_id
+        )
+
     def get_actor_subject_link(
         self, membership_id: int, subject_id: int
     ) -> SubjectMembership | None:
@@ -340,4 +446,98 @@ class SubjectService:
             "membership_role": membership.role if membership else None,
             "full_name": user.full_name if user else None,
             "assigned_at": link.created_at.isoformat() if link.created_at else None,
+        }
+
+    def _validate_student_membership(
+        self, workspace_id: int, membership_id: int
+    ):
+        membership = self.memberships.get_by_id(membership_id)
+        if not membership or membership.workspace_id != workspace_id:
+            raise NotFoundError("Membership not found in this workspace")
+        if membership.role != MembershipRole.STUDENT.value:
+            raise ValidationError("Membership role must be STUDENT")
+        if membership.status != MembershipStatus.ACTIVE.value:
+            raise ValidationError("Membership is not active")
+        return membership
+
+    def _validate_subject_ids(
+        self, workspace_id: int, subject_ids: list[int]
+    ) -> list[int]:
+        if not subject_ids:
+            raise ValidationError("subject_ids is required")
+        unique_ids: list[int] = []
+        seen: set[int] = set()
+        for subject_id in subject_ids:
+            if subject_id in seen:
+                continue
+            seen.add(subject_id)
+            self._get_subject_or_404(subject_id, workspace_id)
+            unique_ids.append(subject_id)
+        return unique_ids
+
+    def _ensure_student_subject_link(
+        self,
+        *,
+        student_membership_id: int,
+        subject_id: int,
+        actor_membership_id: int,
+    ) -> SubjectMembership:
+        existing = self.subject_memberships.find_active_by_role(
+            student_membership_id, subject_id, SubjectRole.STUDENT.value
+        )
+        if existing:
+            return existing
+
+        row = self.subject_memberships.find_by_membership_and_subject(
+            student_membership_id, subject_id
+        )
+        if row:
+            if row.subject_role != SubjectRole.STUDENT.value:
+                raise ConflictError(
+                    "Membership already has a different subject role on this subject"
+                )
+            self.subject_memberships.reactivate(
+                row,
+                assigned_by_membership_id=actor_membership_id,
+                subject_role=SubjectRole.STUDENT.value,
+            )
+            return row
+
+        link = SubjectMembership(
+            subject_id=subject_id,
+            membership_id=student_membership_id,
+            subject_role=SubjectRole.STUDENT.value,
+            assigned_by_membership_id=actor_membership_id,
+            status=SubjectMembershipStatus.ACTIVE.value,
+        )
+        self.subject_memberships.add(link)
+        return link
+
+    def _ensure_can_view_student_subjects(
+        self,
+        workspace,
+        actor_membership,
+        student_membership_id: int,
+    ) -> None:
+        if can_manage_subjects(workspace, actor_membership):
+            return
+        if actor_membership.id == student_membership_id:
+            return
+        raise ForbiddenError("Insufficient permissions to view student subject assignments")
+
+    def _serialize_student_subjects_response(
+        self, workspace_id: int, student_membership_id: int
+    ) -> dict:
+        links = self.subject_memberships.list_student_assignments_for_membership(
+            student_membership_id, workspace_id
+        )
+        subjects = []
+        for link in links:
+            subject = self.subjects.get_by_id(link.subject_id)
+            if subject:
+                subjects.append(self._serialize_subject(subject))
+        return {
+            "membership_id": student_membership_id,
+            "assigned_subjects": subjects,
+            "count": len(subjects),
         }
