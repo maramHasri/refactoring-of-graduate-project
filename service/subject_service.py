@@ -8,6 +8,7 @@ from repositories.subject_repository import (
     SubjectMembershipRepository,
     SubjectRepository,
 )
+from repositories.topic_repository import TopicRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import (
@@ -26,6 +27,7 @@ class SubjectService:
         self.subject_memberships = SubjectMembershipRepository()
         self.memberships = MembershipRepository()
         self.workspaces = WorkspaceRepository()
+        self.topics = TopicRepository()
 
     def create_subject(
         self,
@@ -62,15 +64,30 @@ class SubjectService:
 
         if can_manage_subjects(workspace, actor_membership):
             rows = self.subjects.list_active_by_workspace(workspace_id)
-            return [self._serialize_subject(s) for s in rows]
+            topics_map = self.topics.map_by_subject_ids(
+                workspace_id, [s.id for s in rows]
+            )
+            return [
+                self._serialize_subject(s, topics_map=topics_map) for s in rows
+            ]
 
         if actor_membership.role == MembershipRole.TEACHER.value:
             links = self._subjects_for_membership(actor_membership.id, workspace_id)
-            return [self._serialize_subject(s) for s in links]
+            topics_map = self.topics.map_by_subject_ids(
+                workspace_id, [s.id for s in links]
+            )
+            return [
+                self._serialize_subject(s, topics_map=topics_map) for s in links
+            ]
 
         if actor_membership.role == MembershipRole.STUDENT.value:
             links = self._subjects_for_membership(actor_membership.id, workspace_id)
-            return [self._serialize_subject(s) for s in links]
+            topics_map = self.topics.map_by_subject_ids(
+                workspace_id, [s.id for s in links]
+            )
+            return [
+                self._serialize_subject(s, topics_map=topics_map) for s in links
+            ]
 
         raise ForbiddenError("Insufficient permissions to list subjects")
 
@@ -79,7 +96,8 @@ class SubjectService:
     ) -> dict:
         subject = self._get_subject_or_404(subject_id, workspace_id)
         self._ensure_can_view_subject(subject, actor_membership)
-        return self._serialize_subject(subject)
+        topics_map = self.topics.map_by_subject_ids(workspace_id, [subject.id])
+        return self._serialize_subject(subject, topics_map=topics_map)
 
     def update_subject(
         self,
@@ -422,7 +440,26 @@ class SubjectService:
             ).scalars().all()
         )
 
-    def _serialize_subject(self, subject: Subject) -> dict:
+    def _serialize_topic_summary(self, topic) -> dict:
+        return {
+            "id": topic.id,
+            "name": topic.name,
+        }
+
+    def _serialize_subject(
+        self,
+        subject: Subject,
+        *,
+        workspace_id: int | None = None,
+        topics_map: dict | None = None,
+    ) -> dict:
+        if topics_map is not None:
+            topic_rows = topics_map.get(subject.id, [])
+        elif workspace_id is not None:
+            topic_rows = self.topics.list_by_subject(subject.id, workspace_id)
+        else:
+            topic_rows = []
+
         return {
             "id": subject.id,
             "name": subject.name,
@@ -433,6 +470,7 @@ class SubjectService:
             "created_by_membership_id": subject.created_by_membership_id,
             "created_at": subject.created_at.isoformat() if subject.created_at else None,
             "updated_at": subject.updated_at.isoformat() if subject.updated_at else None,
+            "topics": [self._serialize_topic_summary(t) for t in topic_rows],
         }
 
     def _serialize_assignment(self, link: SubjectMembership) -> dict:
@@ -531,11 +569,15 @@ class SubjectService:
         links = self.subject_memberships.list_student_assignments_for_membership(
             student_membership_id, workspace_id
         )
+        subject_ids = [link.subject_id for link in links]
+        topics_map = self.topics.map_by_subject_ids(workspace_id, subject_ids)
         subjects = []
         for link in links:
             subject = self.subjects.get_by_id(link.subject_id)
             if subject:
-                subjects.append(self._serialize_subject(subject))
+                subjects.append(
+                    self._serialize_subject(subject, topics_map=topics_map)
+                )
         return {
             "membership_id": student_membership_id,
             "assigned_subjects": subjects,

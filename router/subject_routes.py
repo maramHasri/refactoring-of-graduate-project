@@ -34,7 +34,7 @@ def create_subject():
         description=data.get("description"),
         actor_membership=g.membership,
     )
-    return {"message": "Subject created", "subject": _svc()._serialize_subject(subject)}, 201
+    return {"message": "Subject created", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 201
 
 
 @subject_bp.route("", methods=["GET"])
@@ -64,7 +64,7 @@ def update_subject(subject_id):
     subject = _svc().update_subject(
         subject_id, g.workspace_id, g.membership, data
     )
-    return {"message": "Subject updated", "subject": _svc()._serialize_subject(subject)}, 200
+    return {"message": "Subject updated", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
 
 
 @subject_bp.route("/<int:subject_id>", methods=["DELETE"])
@@ -73,7 +73,7 @@ def update_subject(subject_id):
 def delete_subject(subject_id):
     """DELETE /subjects/{id} — soft delete / archive (no hard delete)."""
     subject = _svc().archive_subject(subject_id, g.workspace_id, g.membership)
-    return {"message": "Subject archived", "subject": _svc()._serialize_subject(subject)}, 200
+    return {"message": "Subject archived", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
 
 
 @subject_bp.route("/<int:subject_id>/teachers", methods=["POST"])
@@ -167,14 +167,14 @@ def list_students(subject_id):
 @handle_service_errors
 def create_subject_topic(subject_id):
     """
-    POST /subjects/{id}/topics — workspace admin/owner or subject-assigned TEACHER.
+    POST /subjects/{id}/topics — workspace owner/admin only.
     """
     data = CreateTopicSchema().load(request.get_json() or {})
     topic = _topic_svc().create_topic(
         workspace_id=g.workspace_id,
         subject_id=subject_id,
         name=data["name"],
-        code=data.get("code"),
+        description=data.get("description"),
         actor_membership=g.membership,
     )
     return {
@@ -214,7 +214,7 @@ def get_subject_topic(subject_id, topic_id):
 @require_workspace_membership
 @handle_service_errors
 def update_subject_topic(subject_id, topic_id):
-    """PATCH /subjects/{id}/topics/{topicId} — admin or subject TEACHER."""
+    """PATCH /subjects/{id}/topics/{topicId} — workspace owner/admin only."""
     data = UpdateTopicSchema().load(request.get_json() or {}, partial=True)
     topic = _topic_svc().update_topic(
         workspace_id=g.workspace_id,
@@ -233,7 +233,7 @@ def update_subject_topic(subject_id, topic_id):
 @require_workspace_membership
 @handle_service_errors
 def delete_subject_topic(subject_id, topic_id):
-    """DELETE /subjects/{id}/topics/{topicId} — admin or subject TEACHER."""
+    """DELETE /subjects/{id}/topics/{topicId} — workspace owner/admin only."""
     _topic_svc().delete_topic(
         workspace_id=g.workspace_id,
         subject_id=subject_id,

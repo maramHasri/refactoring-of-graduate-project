@@ -39,3 +39,23 @@ class TopicRepository(BaseRepository):
                 Topic.name == name,
             )
         ).scalar_one_or_none()
+
+    def map_by_subject_ids(
+        self, workspace_id: int, subject_ids: list[int]
+    ) -> dict[int, list[Topic]]:
+        if not subject_ids:
+            return {}
+        rows = list(
+            db.session.execute(
+                db.select(Topic)
+                .where(
+                    Topic.workspace_id == workspace_id,
+                    Topic.subject_id.in_(subject_ids),
+                )
+                .order_by(Topic.subject_id, Topic.name)
+            ).scalars().all()
+        )
+        grouped: dict[int, list[Topic]] = {sid: [] for sid in subject_ids}
+        for topic in rows:
+            grouped.setdefault(topic.subject_id, []).append(topic)
+        return grouped

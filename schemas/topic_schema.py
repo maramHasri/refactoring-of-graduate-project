@@ -7,7 +7,6 @@ class TopicSchema(Schema):
     id = fields.Int(dump_only=True)
     name = fields.Str(required=True)
     workspace_id = fields.Int(required=True)
-    code = fields.Str(allow_none=True)
     subject_id = fields.Int(required=True)
 
 
@@ -15,12 +14,12 @@ class CreateTopicSchema(Schema):
     """POST /subjects/{subjectId}/topics — workspace comes from X-Workspace-Id."""
 
     name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
-    code = fields.Str(allow_none=True, validate=validate.Length(max=50))
+    description = fields.Str(allow_none=True)
 
 
 class UpdateTopicSchema(Schema):
     name = fields.Str(validate=validate.Length(min=1, max=255))
-    code = fields.Str(allow_none=True, validate=validate.Length(max=50))
+    description = fields.Str(allow_none=True)
 
 
 class QuestionTypeSchema(Schema):

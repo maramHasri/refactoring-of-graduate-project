@@ -471,6 +471,14 @@ paths:
       responses:
         200:
           description: Subject list
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              subjects:
+                type: array
+                items:
+                  $ref: "#/definitions/SubjectWithTopics"
     post:
       tags: [Subjects]
       summary: Create subject (owner or admin)
@@ -501,6 +509,8 @@ paths:
       responses:
         200:
           description: Subject detail
+          schema:
+            $ref: "#/definitions/SubjectWithTopics"
     patch:
       tags: [Subjects]
       summary: Update subject (owner or admin)
@@ -666,12 +676,20 @@ paths:
       responses:
         200:
           description: Topics in subject
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              topics:
+                type: array
+                items:
+                  $ref: "#/definitions/Topic"
     post:
       tags: [Subjects]
       summary: Create topic under subject
       description: |
-        Workspace admin/owner or teacher with subject_role=TEACHER on subject_memberships.
-        Topics are global per subject (not per question bank).
+        Workspace owner or admin only. Topics are scoped to a subject (not per question bank).
+        Topic names must be unique within the same subject.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -685,11 +703,17 @@ paths:
             type: object
             required: [name]
             properties:
-              name: { type: string, example: "Algebra basics" }
-              code: { type: string, example: "ALG-01" }
+              name: { type: string, example: "Algebra" }
+              description: { type: string, example: "Basic algebra concepts" }
       responses:
         201:
           description: Topic created
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              topic:
+                $ref: "#/definitions/Topic"
   /subjects/{subject_id}/topics/{topic_id}:
     get:
       tags: [Subjects]
@@ -707,10 +731,15 @@ paths:
       responses:
         200:
           description: Topic details
+          schema:
+            type: object
+            properties:
+              topic:
+                $ref: "#/definitions/Topic"
     patch:
       tags: [Subjects]
       summary: Update topic
-      description: Admin/owner or subject-assigned TEACHER only.
+      description: Workspace owner or admin only. subject_id cannot be changed.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -727,14 +756,15 @@ paths:
             type: object
             properties:
               name: { type: string }
-              code: { type: string }
+              description: { type: string }
       responses:
         200:
           description: Topic updated
     delete:
       tags: [Subjects]
       summary: Delete topic
-      description: Admin/owner or subject-assigned TEACHER only.
+      description: |
+        Workspace owner or admin only. Deletion is blocked when questions still reference the topic.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -1562,3 +1592,36 @@ paths:
             type: object
             properties:
               success: { type: boolean, example: true }
+
+definitions:
+  TopicSummary:
+    type: object
+    properties:
+      id: { type: integer, example: 10 }
+      name: { type: string, example: "Algebra" }
+  Topic:
+    type: object
+    properties:
+      id: { type: integer }
+      name: { type: string, example: "Algebra" }
+      description: { type: string, example: "Basic algebra concepts" }
+      subject_id: { type: integer }
+      workspace_id: { type: integer }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+  SubjectWithTopics:
+    type: object
+    properties:
+      id: { type: integer, example: 1 }
+      name: { type: string, example: "Mathematics" }
+      title: { type: string, example: "Mathematics" }
+      description: { type: string }
+      workspace_id: { type: integer }
+      is_archived: { type: boolean }
+      created_by_membership_id: { type: integer }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+      topics:
+        type: array
+        items:
+          $ref: "#/definitions/TopicSummary"

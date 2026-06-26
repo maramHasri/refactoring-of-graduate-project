@@ -73,3 +73,13 @@ class QuestionRepository(BaseRepository):
             .unique()
             .all()
         )
+
+    def count_by_topic_id(self, topic_id: int) -> int:
+        return (
+            db.session.execute(
+                db.select(db.func.count(Question.id)).where(
+                    Question.topic_id == topic_id
+                )
+            ).scalar()
+            or 0
+        )

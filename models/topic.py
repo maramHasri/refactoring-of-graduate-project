@@ -2,20 +2,21 @@ from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.orm import relationship
 
 from utils.db import db
+from utils.mixins import TimestampMixin
 
 
-class Topic(db.Model):
+class Topic(db.Model, TimestampMixin):
     __tablename__ = "topics"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(String(255), nullable=False)
+    description = db.Column(Text, nullable=True)
     workspace_id = db.Column(
         db.Integer,
         ForeignKey("workspaces.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    code = db.Column(String(50), nullable=True)
     subject_id = db.Column(
         db.Integer,
         ForeignKey("subjects.id", ondelete="CASCADE"),
