@@ -52,6 +52,11 @@ class Config:
         "EXPOSE_INVITE_IN_DEV_RESPONSE", "false"
     ).lower() in ("1", "true", "yes")
 
+    PROCTORING_STORAGE_DIR = os.getenv(
+        "PROCTORING_STORAGE_DIR",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "proctoring"),
+    )
+
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@eduforms.local")
     SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "SuperAdmin@123")
     SUPER_ADMIN_FULL_NAME = os.getenv("SUPER_ADMIN_FULL_NAME", "Platform Super Admin")

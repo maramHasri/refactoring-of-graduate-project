@@ -1,0 +1,755 @@
+"""
+Exam attempt runtime — start, resume, autosave, submit, timeout, grading.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+from flask import current_app
+
+from models import AttemptAnswer, Test, TestAttempt, TestQuestion
+from repositories.attempt_repository import (
+    AttemptAnswerRepository,
+    TestAttemptRepository,
+    TestQuestionRepositoryExtended,
+)
+from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
+from repositories.test_repository import TestRepository
+from repositories.workspace_repository import WorkspaceRepository
+from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from utils.academic_rbac import (
+    can_manage_test_attempts,
+    can_take_published_test,
+    verify_subject_student_access,
+)
+from utils.db import db
+from utils.enums import (
+    AttemptSubmissionSource,
+    MembershipRole,
+    TestAttemptStatus,
+    TestStatus,
+)
+
+logger = logging.getLogger(__name__)
+
+_OBJECTIVE_TYPES = frozenset({"MCQ", "TRUE_FALSE", "MULTI_SELECT"})
+
+
+class AttemptService:
+    def __init__(self):
+        self.attempts = TestAttemptRepository()
+        self.answers = AttemptAnswerRepository()
+        self.test_questions = TestQuestionRepositoryExtended()
+        self.tests = TestRepository()
+        self.subjects = SubjectRepository()
+        self.subject_memberships = SubjectMembershipRepository()
+        self.workspaces = WorkspaceRepository()
+
+    def list_available_tests(
+        self, *, workspace_id: int, actor_membership
+    ) -> list[dict]:
+        workspace = self._get_workspace(workspace_id)
+        subject_ids = self._student_subject_ids(actor_membership.id, workspace_id)
+        if not subject_ids and actor_membership.role != MembershipRole.ADMIN.value:
+            if not self._is_workspace_manager(workspace, actor_membership):
+                return []
+
+        if self._is_workspace_manager(workspace, actor_membership):
+            from utils.enums import TestStatus as TS
+
+            rows = list(
+                db.session.execute(
+                    db.select(Test)
+                    .where(
+                        Test.status == TS.PUBLISHED.value,
+                        Test.created_by.has(workspace_id=workspace_id),
+                    )
+                    .order_by(Test.published_at.desc().nullslast(), Test.id.desc())
+                ).scalars().all()
+            )
+        else:
+            rows = self.attempts.list_published_for_subjects(subject_ids, workspace_id)
+
+        return [self._serialize_test_summary(test) for test in rows]
+
+    def start_or_resume_attempt(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+    ) -> dict:
+        test, actor_link = self._resolve_student_test_access(
+            test_id, workspace_id, actor_membership
+        )
+        self._ensure_test_takeable(test)
+
+        existing = self.attempts.find_active_for_student(test.id, actor_membership.id)
+        if existing:
+            self._check_and_apply_timeout(existing, test)
+            if existing.status == TestAttemptStatus.IN_PROGRESS.value:
+                existing.last_activity_at = datetime.now(timezone.utc)
+                db.session.commit()
+                logger.info(
+                    "Resumed attempt id=%s test_id=%s membership_id=%s",
+                    existing.id,
+                    test.id,
+                    actor_membership.id,
+                )
+                return {
+                    "message": "Attempt resumed",
+                    "attempt": self.serialize_attempt(existing, include_answers=True),
+                    "resumed": True,
+                }
+
+        if self.attempts.find_completed_for_student(test.id, actor_membership.id):
+            raise ConflictError("You have already completed this test")
+
+        if test.status != TestStatus.PUBLISHED.value:
+            raise ValidationError("Test is not available for attempts")
+
+        attempt = TestAttempt(
+            test_id=test.id,
+            student_membership_id=actor_membership.id,
+            user_id=actor_user_id,
+            status=TestAttemptStatus.IN_PROGRESS.value,
+            started_at=datetime.now(timezone.utc),
+            last_activity_at=datetime.now(timezone.utc),
+            expires_at=self._compute_expires_at(test),
+        )
+        self.attempts.add(attempt)
+        db.session.commit()
+        self._maybe_start_proctoring(
+            attempt=attempt,
+            test=test,
+            workspace_id=workspace_id,
+        )
+        logger.info(
+            "Started attempt id=%s test_id=%s membership_id=%s",
+            attempt.id,
+            test.id,
+            actor_membership.id,
+        )
+        return {
+            "message": "Attempt started",
+            "attempt": self.serialize_attempt(attempt, include_answers=True),
+            "resumed": False,
+        }
+
+    def get_current_attempt(
+        self, *, test_id: int, workspace_id: int, actor_membership
+    ) -> dict:
+        test, _ = self._resolve_student_test_access(
+            test_id, workspace_id, actor_membership
+        )
+        attempt = self.attempts.find_active_for_student(test.id, actor_membership.id)
+        if not attempt:
+            raise NotFoundError("No in-progress attempt for this test")
+        self._check_and_apply_timeout(attempt, test)
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            raise NotFoundError("No in-progress attempt for this test")
+        return {
+            "attempt": self.serialize_attempt(attempt, include_answers=True),
+        }
+
+    def get_attempt(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+        student_view: bool = False,
+    ) -> dict:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        self._ensure_attempt_access(
+            attempt, test, workspace_id, actor_membership, student_view=student_view
+        )
+        self._check_and_apply_timeout(attempt, test)
+        strip = student_view or attempt.student_membership_id == actor_membership.id
+        return {
+            "attempt": self.serialize_attempt(
+                attempt,
+                include_answers=True,
+                student_view=strip,
+            ),
+        }
+
+    def list_test_attempts(
+        self, *, test_id: int, workspace_id: int, actor_membership
+    ) -> list[dict]:
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+        rows = self.attempts.list_for_test(test.id)
+        return [self.serialize_attempt(row, include_answers=False) for row in rows]
+
+    def save_answers(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+        answers: list[dict],
+    ) -> dict:
+        attempt, test = self._resolve_in_progress_attempt(
+            test_id, attempt_id, workspace_id, actor_membership
+        )
+        saved = self._upsert_answers(attempt, test, answers)
+        attempt.last_activity_at = datetime.now(timezone.utc)
+        db.session.commit()
+        logger.info(
+            "Autosaved %s answer(s) for attempt id=%s",
+            len(saved),
+            attempt.id,
+        )
+        return {
+            "message": "Answers saved",
+            "answers": [self._serialize_answer(a) for a in saved],
+            "count": len(saved),
+        }
+
+    def update_answer(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        test_question_id: int,
+        workspace_id: int,
+        actor_membership,
+        data: dict,
+    ) -> dict:
+        attempt, test = self._resolve_in_progress_attempt(
+            test_id, attempt_id, workspace_id, actor_membership
+        )
+        saved = self._upsert_answers(
+            attempt,
+            test,
+            [{"test_question_id": test_question_id, **data}],
+        )
+        attempt.last_activity_at = datetime.now(timezone.utc)
+        db.session.commit()
+        if not saved:
+            raise NotFoundError("Test question not found in this exam")
+        logger.info(
+            "Updated answer for attempt id=%s test_question_id=%s",
+            attempt.id,
+            test_question_id,
+        )
+        return {
+            "message": "Answer updated",
+            "answer": self._serialize_answer(saved[0]),
+        }
+
+    def submit_attempt(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+        submission_source: str = AttemptSubmissionSource.STUDENT.value,
+    ) -> dict:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+
+        if submission_source == AttemptSubmissionSource.FORCE.value:
+            self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+        else:
+            if attempt.student_membership_id != actor_membership.id:
+                raise ForbiddenError("You can only submit your own attempt")
+            self._resolve_student_test_access(test_id, workspace_id, actor_membership)
+
+        self._check_and_apply_timeout(attempt, test)
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            raise ConflictError("Attempt is not in progress")
+
+        result = self._finalize_attempt(
+            attempt, test, submission_source=submission_source
+        )
+        return {
+            "message": "Attempt submitted",
+            **result,
+        }
+
+    def force_submit_attempt(
+        self, *, test_id: int, attempt_id: int, workspace_id: int, actor_membership
+    ) -> dict:
+        result = self.submit_attempt(
+            test_id=test_id,
+            attempt_id=attempt_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+            submission_source=AttemptSubmissionSource.FORCE.value,
+        )
+        result["message"] = "Attempt force-submitted"
+        return result
+
+    def timeout_attempt(
+        self, *, test_id: int, attempt_id: int, workspace_id: int, actor_membership
+    ) -> dict:
+        return self.submit_attempt(
+            test_id=test_id,
+            attempt_id=attempt_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+            submission_source=AttemptSubmissionSource.TIMEOUT.value,
+        )
+
+    def _finalize_attempt(
+        self,
+        attempt: TestAttempt,
+        test: Test,
+        *,
+        submission_source: str,
+    ) -> dict:
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            raise ConflictError("Attempt is already finalized")
+
+        now = datetime.now(timezone.utc)
+        attempt.status = TestAttemptStatus.SUBMITTED.value
+        attempt.submitted_at = now
+        attempt.last_activity_at = now
+        attempt.submission_source = submission_source
+
+        self._auto_grade_attempt(attempt, test)
+
+        pending_manual = any(
+            answer.is_correct is None
+            for answer in self.answers.list_for_attempt(attempt.id)
+        )
+        if not pending_manual:
+            attempt.status = TestAttemptStatus.GRADED.value
+
+        self._maybe_terminate_proctoring(attempt=attempt, completed=True)
+
+        db.session.commit()
+        logger.info(
+            "Finalized attempt id=%s source=%s status=%s raw_score=%s",
+            attempt.id,
+            submission_source,
+            attempt.status,
+            attempt.raw_score,
+        )
+        return {
+            "attempt": self.serialize_attempt(attempt, include_answers=True),
+        }
+
+    def _auto_grade_attempt(self, attempt: TestAttempt, test: Test) -> None:
+        question_rows = {
+            row.id: row
+            for row in self.test_questions.list_active_for_test(test.id)
+        }
+        total_earned = Decimal("0")
+        for answer in self.answers.list_for_attempt(attempt.id):
+            test_question = question_rows.get(answer.test_question_id)
+            if not test_question:
+                continue
+            is_correct, earned = self._grade_answer(test_question, answer)
+            answer.is_correct = is_correct
+            answer.earned_score = earned
+            if earned is not None:
+                total_earned += Decimal(str(earned))
+
+        attempt.raw_score = float(total_earned)
+        attempt.final_score = float(total_earned)
+
+    def _grade_answer(
+        self, test_question: TestQuestion, answer: AttemptAnswer
+    ) -> tuple[bool | None, Decimal | None]:
+        type_code = (test_question.snapshot_type_code or "").upper()
+        if type_code == "ESSAY" or type_code not in _OBJECTIVE_TYPES:
+            return None, None
+
+        choices = self._load_json(test_question.snapshot_choices_json) or []
+        indices = answer.get_selected_indices()
+        max_points = Decimal(str(test_question.points or 0))
+
+        if type_code in ("MCQ", "TRUE_FALSE"):
+            if len(indices) != 1:
+                return False, Decimal("0")
+            idx = indices[0]
+            if idx < 0 or idx >= len(choices):
+                return False, Decimal("0")
+            correct = bool(choices[idx].get("is_correct"))
+            return correct, max_points if correct else Decimal("0")
+
+        if type_code == "MULTI_SELECT":
+            correct_indices = {
+                i for i, choice in enumerate(choices) if choice.get("is_correct")
+            }
+            selected = set(indices)
+            if selected == correct_indices and correct_indices:
+                return True, max_points
+            return False, Decimal("0")
+
+        return None, None
+
+    def _upsert_answers(
+        self,
+        attempt: TestAttempt,
+        test: Test,
+        payloads: list[dict],
+    ) -> list[AttemptAnswer]:
+        if not payloads:
+            return []
+
+        question_ids = [int(item["test_question_id"]) for item in payloads]
+        question_map = self.test_questions.map_ids_for_test(test.id, question_ids)
+        saved: list[AttemptAnswer] = []
+
+        for item in payloads:
+            test_question_id = int(item["test_question_id"])
+            test_question = question_map.get(test_question_id)
+            if not test_question:
+                raise NotFoundError(
+                    f"Test question {test_question_id} not found in this exam"
+                )
+
+            row = self.answers.find_by_attempt_and_test_question(
+                attempt.id, test_question_id
+            )
+            if not row:
+                row = AttemptAnswer(
+                    attempt_id=attempt.id,
+                    test_question_id=test_question_id,
+                )
+                self.answers.add(row)
+
+            self._apply_answer_payload(row, test_question, item)
+            saved.append(row)
+
+        return saved
+
+    def _apply_answer_payload(
+        self,
+        answer: AttemptAnswer,
+        test_question: TestQuestion,
+        data: dict,
+    ) -> None:
+        type_code = (test_question.snapshot_type_code or "").upper()
+
+        if "answer_text" in data:
+            answer.answer_text = (data.get("answer_text") or "").strip() or None
+
+        if "selected_choice_indices" in data:
+            indices = data.get("selected_choice_indices")
+            if indices is None:
+                answer.set_selected_indices([])
+            elif isinstance(indices, list):
+                answer.set_selected_indices(indices)
+            else:
+                raise ValidationError("selected_choice_indices must be an array of integers")
+
+        if type_code in _OBJECTIVE_TYPES and not answer.get_selected_indices():
+            if answer.answer_text:
+                raise ValidationError(
+                    f"{type_code} questions require selected_choice_indices"
+                )
+
+        if type_code == "ESSAY" and answer.get_selected_indices():
+            raise ValidationError("ESSAY questions cannot include selected_choice_indices")
+
+    def _check_and_apply_timeout(self, attempt: TestAttempt, test: Test) -> None:
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            return
+        if not attempt.expires_at:
+            return
+        now = datetime.now(timezone.utc)
+        if now >= attempt.expires_at:
+            logger.info("Attempt id=%s timed out", attempt.id)
+            self._finalize_attempt(
+                attempt,
+                test,
+                submission_source=AttemptSubmissionSource.TIMEOUT.value,
+            )
+
+    def _compute_expires_at(self, test: Test) -> datetime | None:
+        if not test.duration_minutes:
+            return None
+        return datetime.now(timezone.utc) + timedelta(minutes=int(test.duration_minutes))
+
+    def _ensure_test_takeable(self, test: Test) -> None:
+        if test.status != TestStatus.PUBLISHED.value:
+            raise ValidationError("Test is not published")
+        now = datetime.now(timezone.utc)
+        if test.starts_at and now < test.starts_at:
+            raise ValidationError("Test has not started yet")
+        if test.entry_window_minutes and test.starts_at:
+            window_end = test.starts_at + timedelta(minutes=int(test.entry_window_minutes))
+            if now > window_end:
+                raise ValidationError("Test entry window has closed")
+
+    def serialize_attempt(
+        self,
+        attempt: TestAttempt,
+        *,
+        include_answers: bool = True,
+        student_view: bool = False,
+    ) -> dict:
+        payload = {
+            "id": attempt.id,
+            "test_id": attempt.test_id,
+            "student_membership_id": attempt.student_membership_id,
+            "user_id": attempt.user_id,
+            "status": attempt.status,
+            "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
+            "submitted_at": attempt.submitted_at.isoformat()
+            if attempt.submitted_at
+            else None,
+            "expires_at": attempt.expires_at.isoformat() if attempt.expires_at else None,
+            "last_activity_at": attempt.last_activity_at.isoformat()
+            if attempt.last_activity_at
+            else None,
+            "submission_source": attempt.submission_source,
+            "raw_score": attempt.raw_score,
+            "final_score": attempt.final_score,
+        }
+
+        if include_answers:
+            test = attempt.test or self.tests.get_by_id(attempt.test_id)
+            question_rows = (
+                self.test_questions.list_active_for_test(test.id) if test else []
+            )
+            answer_map = {
+                answer.test_question_id: answer
+                for answer in self.answers.list_for_attempt(attempt.id)
+            }
+            payload["questions"] = [
+                self._serialize_runtime_question(
+                    row,
+                    answer_map.get(row.id),
+                    student_view=student_view,
+                )
+                for row in question_rows
+            ]
+            payload["answers"] = [
+                self._serialize_answer(answer_map[q.id])
+                for q in question_rows
+                if q.id in answer_map
+            ]
+        return payload
+
+    def _serialize_runtime_question(
+        self,
+        row: TestQuestion,
+        answer: AttemptAnswer | None,
+        *,
+        student_view: bool,
+    ) -> dict:
+        choices = self._load_json(row.snapshot_choices_json) or []
+        if student_view:
+            choices = [
+                {
+                    "index": idx,
+                    "body": choice.get("body"),
+                    "order_index": choice.get("order_index", idx),
+                }
+                for idx, choice in enumerate(choices)
+            ]
+        else:
+            choices = [
+                {
+                    "index": idx,
+                    **choice,
+                }
+                for idx, choice in enumerate(choices)
+            ]
+
+        payload = {
+            "test_question_id": row.id,
+            "question_id": row.question_id,
+            "source_type": row.source_type,
+            "points": float(row.points) if row.points is not None else None,
+            "snapshot_question_text": row.snapshot_question_text,
+            "snapshot_type_code": row.snapshot_type_code,
+            "snapshot_topic_name": row.snapshot_topic_name,
+            "snapshot_difficulty": row.snapshot_difficulty,
+            "choices": choices,
+        }
+        if answer:
+            payload["answer"] = self._serialize_answer(answer)
+        return payload
+
+    def _serialize_answer(self, answer: AttemptAnswer) -> dict:
+        return {
+            "id": answer.id,
+            "attempt_id": answer.attempt_id,
+            "test_question_id": answer.test_question_id,
+            "answer_text": answer.answer_text,
+            "selected_choice_indices": answer.get_selected_indices(),
+            "is_correct": answer.is_correct,
+            "earned_score": float(answer.earned_score)
+            if answer.earned_score is not None
+            else None,
+            "updated_at": answer.updated_at.isoformat() if answer.updated_at else None,
+        }
+
+    def _serialize_test_summary(self, test: Test) -> dict:
+        return {
+            "test_id": test.id,
+            "name": test.name,
+            "slug": test.slug,
+            "description": test.description,
+            "subject_id": test.subject_id,
+            "status": test.status,
+            "duration_minutes": test.duration_minutes,
+            "total_score": float(test.total_score) if test.total_score is not None else None,
+            "passing_score": float(test.passing_score)
+            if test.passing_score is not None
+            else None,
+            "starts_at": test.starts_at.isoformat() if test.starts_at else None,
+            "published_at": test.published_at.isoformat() if test.published_at else None,
+        }
+
+    def _resolve_in_progress_attempt(
+        self,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> tuple[TestAttempt, Test]:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        if attempt.student_membership_id != actor_membership.id:
+            raise ForbiddenError("You can only modify your own attempt")
+        self._resolve_student_test_access(test_id, workspace_id, actor_membership)
+        self._check_and_apply_timeout(attempt, test)
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            raise ConflictError("Attempt is not in progress")
+        return attempt, test
+
+    def _resolve_student_test_access(
+        self, test_id: int, workspace_id: int, actor_membership
+    ):
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        workspace = self._get_workspace(workspace_id)
+        actor_link = self.subject_memberships.find_active(
+            actor_membership.id, test.subject_id
+        )
+        if not can_take_published_test(workspace, actor_membership, actor_link):
+            raise ForbiddenError("You are not enrolled in this test's subject")
+        if actor_membership.role == MembershipRole.STUDENT.value:
+            if not verify_subject_student_access(actor_link):
+                raise ForbiddenError("Only students enrolled in the subject can take tests")
+        return test, actor_link
+
+    def _ensure_attempt_access(
+        self,
+        attempt: TestAttempt,
+        test: Test,
+        workspace_id: int,
+        actor_membership,
+        *,
+        student_view: bool,
+    ) -> None:
+        if attempt.student_membership_id == actor_membership.id:
+            self._resolve_student_test_access(test.id, workspace_id, actor_membership)
+            return
+        if student_view:
+            raise ForbiddenError("Cannot view another student's attempt in student mode")
+        self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+
+    def _ensure_teacher_attempt_access(
+        self, test: Test, workspace_id: int, actor_membership
+    ) -> None:
+        workspace = self._get_workspace(workspace_id)
+        actor_link = self.subject_memberships.find_active(
+            actor_membership.id, test.subject_id
+        )
+        is_creator = test.created_by_membership_id == actor_membership.id
+        if not can_manage_test_attempts(
+            workspace,
+            actor_membership,
+            actor_subject_link=actor_link,
+            is_test_creator=is_creator,
+        ):
+            raise ForbiddenError("Insufficient permissions to manage attempts")
+
+    def _student_subject_ids(
+        self, membership_id: int, workspace_id: int
+    ) -> list[int]:
+        from models import Subject, SubjectMembership
+        from utils.enums import SubjectMembershipStatus, SubjectRole
+
+        rows = db.session.execute(
+            db.select(SubjectMembership.subject_id)
+            .join(Subject, Subject.id == SubjectMembership.subject_id)
+            .where(
+                SubjectMembership.membership_id == membership_id,
+                Subject.workspace_id == workspace_id,
+                SubjectMembership.subject_role == SubjectRole.STUDENT.value,
+                SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                SubjectMembership.deleted_at.is_(None),
+                Subject.deleted_at.is_(None),
+            )
+        ).scalars().all()
+        return list(rows)
+
+    def _is_workspace_manager(self, workspace, membership) -> bool:
+        from utils.rbac import can_manage_workspace_settings
+
+        return can_manage_workspace_settings(workspace, membership)
+
+    def _get_workspace(self, workspace_id: int):
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not workspace:
+            raise NotFoundError("Workspace not found")
+        return workspace
+
+    def _get_test_in_workspace(self, test_id: int, workspace_id: int) -> Test:
+        test = self.tests.get_by_id_in_workspace(test_id, workspace_id)
+        if not test:
+            raise NotFoundError("Test not found")
+        return test
+
+    def _get_attempt_or_404(self, attempt_id: int, test_id: int) -> TestAttempt:
+        attempt = self.attempts.get_for_test(attempt_id, test_id)
+        if not attempt:
+            raise NotFoundError("Attempt not found")
+        return attempt
+
+    def _maybe_start_proctoring(
+        self, *, attempt: TestAttempt, test: Test, workspace_id: int
+    ) -> None:
+        from service.proctoring_service import ProctoringService
+
+        try:
+            ProctoringService().ensure_session_for_attempt(
+                test_attempt=attempt,
+                workspace_id=workspace_id,
+                test=test,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to auto-start proctoring for attempt id=%s", attempt.id
+            )
+
+    def _maybe_terminate_proctoring(self, *, attempt: TestAttempt, completed: bool) -> None:
+        from service.proctoring_service import ProctoringService
+
+        try:
+            ProctoringService().terminate_session_for_attempt(
+                test_attempt_id=attempt.id,
+                completed=completed,
+                actor_user_id=attempt.user_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to terminate proctoring for attempt id=%s", attempt.id
+            )
+
+    def _load_json(self, value):
+        if not value:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None

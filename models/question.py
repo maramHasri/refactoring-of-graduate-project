@@ -42,12 +42,6 @@ class QuestionChoice(db.Model, TimestampMixin):
     order_index = db.Column(db.Integer, nullable=True)
 
     question = relationship("Question", back_populates="choices")
-    attempt_answers = relationship(
-        "AttemptAnswer",
-        back_populates="selected_choice",
-        lazy="dynamic",
-    )
-
     __table_args__ = (
         Index("ix_question_choices_question_order", "question_id", "order_index"),
     )
@@ -165,12 +159,6 @@ class Question(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
-    attempt_answers = relationship(
-        "AttemptAnswer",
-        back_populates="question",
-        lazy="dynamic",
-    )
-
     __table_args__ = (
         Index("ix_questions_status", "status"),
         Index("ix_questions_bank_id", "bank_id"),
@@ -222,6 +210,11 @@ class TestQuestion(db.Model, TimestampMixin):
 
     test = relationship("Test", back_populates="test_questions")
     question = relationship("Question", back_populates="test_questions")
+    attempt_answers = relationship(
+        "AttemptAnswer",
+        back_populates="test_question",
+        lazy="dynamic",
+    )
 
     __table_args__ = (
         UniqueConstraint("test_id", "question_id", name="unique_test_question"),

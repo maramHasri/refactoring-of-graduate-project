@@ -110,6 +110,8 @@ class TestAttempt(db.Model):
     started_at = db.Column(db.DateTime(timezone=True), nullable=False)
     submitted_at = db.Column(db.DateTime(timezone=True), nullable=True)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_activity_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    submission_source = db.Column(String(30), nullable=True)
     raw_score = db.Column(Float, nullable=True)
     final_score = db.Column(Float, nullable=True)
 
@@ -125,6 +127,12 @@ class TestAttempt(db.Model):
         back_populates="attempt",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+    proctoring_session = relationship(
+        "ProctoringSession",
+        back_populates="test_attempt",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (

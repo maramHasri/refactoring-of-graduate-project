@@ -31,6 +31,7 @@ tags:
   - name: Subjects
   - name: Question banks
   - name: Tests
+  - name: Proctoring
   - name: Invites
   - name: Join codes
 paths:
@@ -1380,6 +1381,408 @@ paths:
       responses:
         200:
           description: Test archived
+  /tests/available:
+    get:
+      tags: [Tests]
+      summary: List published tests available to take
+      description: |
+        Students see published tests for subjects they are enrolled in.
+        Workspace owner/admin see all published tests in the workspace.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Available tests
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              tests:
+                type: array
+                items:
+                  $ref: "#/definitions/TestSummary"
+  /tests/{test_id}/attempts:
+    get:
+      tags: [Tests]
+      summary: List attempts for a test (teacher/admin)
+      description: Requires test creator, workspace owner/admin, or subject-assigned teacher.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Attempt list
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              attempts:
+                type: array
+                items:
+                  $ref: "#/definitions/TestAttempt"
+        403:
+          description: Forbidden
+    post:
+      tags: [Tests]
+      summary: Start or resume exam attempt
+      description: |
+        Student must be enrolled in the test subject (subject_role=STUDENT).
+        Returns 200 when resuming an in-progress attempt, 201 when starting new.
+        Sets expires_at from test.duration_minutes when configured.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        201:
+          description: Attempt started
+          schema:
+            $ref: "#/definitions/StartAttemptResponse"
+        200:
+          description: Attempt resumed
+          schema:
+            $ref: "#/definitions/StartAttemptResponse"
+        409:
+          description: Already completed
+        422:
+          description: Test not available
+  /tests/{test_id}/attempts/current:
+    get:
+      tags: [Tests]
+      summary: Get current in-progress attempt (resume)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: In-progress attempt with questions (student view — no correct answers)
+          schema:
+            type: object
+            properties:
+              attempt:
+                $ref: "#/definitions/TestAttemptRuntime"
+        404:
+          description: No in-progress attempt
+  /tests/{test_id}/attempts/{attempt_id}:
+    get:
+      tags: [Tests]
+      summary: Get attempt details
+      description: Student sees own attempt without correct answers. Teachers see full grading data.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Attempt detail
+          schema:
+            type: object
+            properties:
+              attempt:
+                $ref: "#/definitions/TestAttemptRuntime"
+  /tests/{test_id}/attempts/{attempt_id}/answers:
+    put:
+      tags: [Tests]
+      summary: Bulk autosave answers
+      description: Upsert multiple answers while attempt is IN_PROGRESS. Idempotent per test_question_id.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [answers]
+            properties:
+              answers:
+                type: array
+                items:
+                  $ref: "#/definitions/SaveAnswerItem"
+            example:
+              answers:
+                - test_question_id: 1
+                  selected_choice_indices: [0]
+                - test_question_id: 2
+                  answer_text: "Photosynthesis converts light to chemical energy."
+      responses:
+        200:
+          description: Answers saved
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              count: { type: integer }
+              answers:
+                type: array
+                items:
+                  $ref: "#/definitions/AttemptAnswer"
+        409:
+          description: Attempt not in progress
+  /tests/{test_id}/attempts/{attempt_id}/answers/{test_question_id}:
+    patch:
+      tags: [Tests]
+      summary: Update a single answer (autosave)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - name: test_question_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            $ref: "#/definitions/SaveAnswerItem"
+      responses:
+        200:
+          description: Answer updated
+  /tests/{test_id}/attempts/{attempt_id}/submit:
+    post:
+      tags: [Tests]
+      summary: Submit attempt (student)
+      description: Finalizes attempt, runs auto-grading for objective questions, sets status GRADED when fully auto-graded.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Submitted
+          schema:
+            $ref: "#/definitions/SubmitAttemptResponse"
+  /tests/{test_id}/attempts/{attempt_id}/force-submit:
+    post:
+      tags: [Tests]
+      summary: Force submit attempt (teacher/admin)
+      description: Teacher, workspace owner/admin, or test creator may finalize a student attempt.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Force submitted (submission_source=FORCE)
+  /tests/{test_id}/attempts/{attempt_id}/timeout:
+    post:
+      tags: [Tests]
+      summary: Finalize attempt on timeout
+      description: |
+        Called when client timer expires. Also applied automatically when expires_at is reached
+        on any attempt read/write. submission_source=TIMEOUT.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Timed out and finalized
+  /tests/{test_id}/proctoring/sessions:
+    get:
+      tags: [Proctoring]
+      summary: List active proctoring sessions for a test
+      description: Teacher, admin, or test creator only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Active proctoring sessions
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/session:
+    post:
+      tags: [Proctoring]
+      summary: Start proctoring session
+      description: |
+        Student only. Also auto-started when attempt begins if test.settings_config.proctoring.enabled is true.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              device_metadata: { type: object }
+              browser_metadata: { type: object }
+      responses:
+        201:
+          description: Session started
+    get:
+      tags: [Proctoring]
+      summary: Get proctoring session status
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Session status
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/events:
+    post:
+      tags: [Proctoring]
+      summary: Ingest proctoring event (REST)
+      description: Student generates events. WebSocket channel is preferred for real-time.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [event_type]
+            properties:
+              event_type: { type: string, example: TAB_SWITCH }
+              payload: { type: object }
+      responses:
+        201:
+          description: Event recorded (may include violation)
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/violations:
+    get:
+      tags: [Proctoring]
+      summary: List violations for attempt
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Violations list
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/violations/{violation_id}/evidence:
+    get:
+      tags: [Proctoring]
+      summary: Get evidence package for violation
+      description: MEDIUM and HIGH violations include forensic evidence package.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - name: violation_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Evidence package
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/violations/{violation_id}/review:
+    post:
+      tags: [Proctoring]
+      summary: Review violation (proctor/admin)
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: violation_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: [REVIEWED, DISMISSED, CONFIRMED] }
+              review_notes: { type: string }
+      responses:
+        200:
+          description: Violation reviewed
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/audit-logs:
+    get:
+      tags: [Proctoring]
+      summary: Proctoring audit log trail
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Audit logs
   /join-codes/register-student:
     post:
       tags: [Join codes]
@@ -1625,3 +2028,93 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/TopicSummary"
+  TestSummary:
+    type: object
+    properties:
+      test_id: { type: integer }
+      name: { type: string }
+      slug: { type: string }
+      subject_id: { type: integer }
+      status: { type: string, example: PUBLISHED }
+      duration_minutes: { type: integer }
+      total_score: { type: number }
+      passing_score: { type: number }
+  TestAttempt:
+    type: object
+    properties:
+      id: { type: integer }
+      test_id: { type: integer }
+      student_membership_id: { type: integer }
+      user_id: { type: integer }
+      status: { type: string, enum: [IN_PROGRESS, SUBMITTED, GRADED] }
+      started_at: { type: string, format: date-time }
+      submitted_at: { type: string, format: date-time }
+      expires_at: { type: string, format: date-time }
+      last_activity_at: { type: string, format: date-time }
+      submission_source: { type: string, enum: [STUDENT, TIMEOUT, FORCE] }
+      raw_score: { type: number }
+      final_score: { type: number }
+  TestAttemptRuntime:
+    allOf:
+      - $ref: "#/definitions/TestAttempt"
+      - type: object
+        properties:
+          questions:
+            type: array
+            items:
+              $ref: "#/definitions/RuntimeQuestion"
+          answers:
+            type: array
+            items:
+              $ref: "#/definitions/AttemptAnswer"
+  StartAttemptResponse:
+    type: object
+    properties:
+      message: { type: string }
+      resumed: { type: boolean }
+      attempt:
+        $ref: "#/definitions/TestAttemptRuntime"
+  SubmitAttemptResponse:
+    type: object
+    properties:
+      message: { type: string }
+      attempt:
+        $ref: "#/definitions/TestAttemptRuntime"
+  SaveAnswerItem:
+    type: object
+    required: [test_question_id]
+    properties:
+      test_question_id: { type: integer }
+      answer_text: { type: string }
+      selected_choice_indices:
+        type: array
+        items: { type: integer }
+        description: Zero-based indices into snapshot choices
+  AttemptAnswer:
+    type: object
+    properties:
+      id: { type: integer }
+      attempt_id: { type: integer }
+      test_question_id: { type: integer }
+      answer_text: { type: string }
+      selected_choice_indices:
+        type: array
+        items: { type: integer }
+      is_correct: { type: boolean }
+      earned_score: { type: number }
+      updated_at: { type: string, format: date-time }
+  RuntimeQuestion:
+    type: object
+    properties:
+      test_question_id: { type: integer }
+      snapshot_question_text: { type: string }
+      snapshot_type_code: { type: string, example: MCQ }
+      points: { type: number }
+      choices:
+        type: array
+        items:
+          type: object
+          properties:
+            index: { type: integer }
+            body: { type: string }
+            order_index: { type: integer }

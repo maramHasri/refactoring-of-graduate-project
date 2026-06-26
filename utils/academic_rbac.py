@@ -39,6 +39,30 @@ def verify_subject_student_access(
     return has_subject_role(subject_membership, role=SubjectRole.STUDENT.value)
 
 
+def can_take_published_test(
+    workspace: Workspace,
+    actor: Membership | None,
+    actor_subject_link: SubjectMembership | None,
+) -> bool:
+    """Students enrolled in the test subject may start or resume attempts."""
+    if can_manage_subjects(workspace, actor):
+        return True
+    return verify_subject_student_access(actor_subject_link)
+
+
+def can_manage_test_attempts(
+    workspace: Workspace,
+    actor: Membership | None,
+    *,
+    actor_subject_link: SubjectMembership | None,
+    is_test_creator: bool,
+) -> bool:
+    """Teachers, admins, or test creator may force-submit and list attempts."""
+    if can_manage_subjects(workspace, actor) or is_test_creator:
+        return True
+    return verify_subject_teacher_access(actor_subject_link)
+
+
 def can_assign_teachers_to_subject(
     workspace: Workspace, membership: Membership | None
 ) -> bool:

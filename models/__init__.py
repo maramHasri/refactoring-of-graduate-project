@@ -22,6 +22,13 @@ from models.question import (
     TestQuestion,
 )
 from models.attempt_answer import AttemptAnswer
+from models.proctoring import (
+    ProctoringAuditLog,
+    ProctoringEvent,
+    ProctoringEvidencePackage,
+    ProctoringSession,
+    ProctoringViolation,
+)
 from models.billing import (
     Feature,
     Payment,
@@ -48,6 +55,11 @@ __all__ = [
     "Test",
     "TestAttempt",
     "AttemptAnswer",
+    "ProctoringSession",
+    "ProctoringEvent",
+    "ProctoringViolation",
+    "ProctoringEvidencePackage",
+    "ProctoringAuditLog",
     "QuestionBank",
     "QuestionType",
     "QuestionChoice",

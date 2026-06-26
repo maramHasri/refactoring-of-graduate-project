@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env
 instance/
+uploads/
 .mypy_cache/
 .pytest_cache/
 htmlcov/

@@ -64,7 +64,8 @@ from schemas.topic_schema import (
 )
 from schemas.attempt_schema import (
     AttemptAnswerSchema,
-    CreateAttemptAnswerSchema,
+    BulkSaveAttemptAnswersSchema,
+    SaveAttemptAnswerItemSchema,
     UpdateAttemptAnswerSchema,
 )
 from schemas.billing_schema import (

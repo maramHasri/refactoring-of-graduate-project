@@ -46,6 +46,10 @@ def create_app(config_class=None):
     register_blueprints(app)
     _init_swagger(app)
 
+    from router.proctoring_ws import register_proctoring_websocket
+
+    register_proctoring_websocket(app)
+
     @app.cli.command("seed")
     def seed_command():
         from seeds.run_seeds import run_all_seeds

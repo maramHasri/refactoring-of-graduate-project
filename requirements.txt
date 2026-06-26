@@ -12,3 +12,5 @@ PyJWT==2.9.0
 email-validator==2.2.0
 flasgger==0.9.7.1
 PyYAML==6.0.2
+flask-sock==0.7.0
+simple-websocket==1.0.0
