@@ -57,4 +57,15 @@ def create_app(config_class=None):
         run_all_seeds()
         print("Seed data applied successfully.")
 
+    @app.cli.command("publish-due-tests")
+    def publish_due_tests_command():
+        from service.test_service import TestService
+
+        published_ids = TestService().publish_due_scheduled_tests()
+        print(f"Published {len(published_ids)} test(s): {published_ids}")
+
+    from jobs.scheduled_test_publisher import init_scheduled_test_publisher
+
+    init_scheduled_test_publisher(app)
+
     return app

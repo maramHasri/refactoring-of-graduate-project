@@ -210,9 +210,9 @@ New `attempt_bp` registered at `/tests` alongside `test_bp` — nested URL struc
 ### Not in Phase 1 (future)
 
 - Manual essay grading API
-- Scheduled test auto-publish background job
-- WebSocket / real-time event stream
-- Proctoring session & event models
+- ~~Scheduled test auto-publish background job~~ → **Implemented** (see `jobs/scheduled_test_publisher.py`, `PROJECT_STATUS_REPORT.md` §4)
+- ~~WebSocket / real-time event stream~~ → **Implemented in Phase 2** (`router/proctoring_ws.py`)
+- ~~Proctoring session & event models~~ → **Implemented in Phase 2**
 - Retake policy configuration
 - Background job for server-side timeout sweep (currently lazy on request)
 

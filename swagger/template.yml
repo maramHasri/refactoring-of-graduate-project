@@ -31,7 +31,11 @@ tags:
   - name: Subjects
   - name: Question banks
   - name: Tests
+    description: Teacher/admin — create, configure, publish, and manage exams
+  - name: Student Exams
+    description: Student — available exams, start/resume attempts, autosave answers, submit, and exam-time proctoring
   - name: Proctoring
+    description: Teacher/proctor — monitor sessions, review violations, and audit logs
   - name: Invites
   - name: Join codes
 paths:
@@ -1081,6 +1085,7 @@ paths:
       responses:
         200:
           description: Archived
+  # ── Tests — teacher/admin management ────────────────────────────────────
   /tests:
     post:
       tags: [Tests]
@@ -1289,8 +1294,13 @@ paths:
       summary: Generate and add AI questions to exam
       description: |
         Subject name is taken from the exam's linked subject and included in the AI prompt.
-        When GEMINI_API_KEY is set, uses Google Gemini (default model gemini-2.0-flash).
-        Without an API key, returns local placeholder draft questions.
+        Provider is selected via AI_QUESTION_PROVIDER (.env):
+        - `qwen` — Alibaba DashScope (DASHSCOPE_API_KEY) or HuggingFace Qwen (HF_TOKEN)
+        - `gemini` — Google Gemini (GEMINI_API_KEY, default model gemini-2.5-flash)
+        - `huggingface` — HF router (HF_TOKEN + HF_QWEN_MODEL)
+        - `placeholder` — local draft questions without external API
+        - `auto` — gemini → qwen → huggingface → placeholder (first available)
+        In development, AI_FALLBACK_TO_PLACEHOLDER=true uses placeholders on quota/404 errors.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1319,8 +1329,72 @@ paths:
               message: { type: string }
               count: { type: integer }
               subject_name: { type: string }
-              ai_model: { type: string, example: gemini-2.0-flash }
+              ai_model: { type: string, example: Qwen/Qwen2.5-7B-Instruct }
               questions: { type: array, items: { type: object } }
+  /tests/{test_id}/questions/{test_question_id}:
+    patch:
+      tags: [Tests]
+      summary: Update exam question snapshot
+      description: |
+        Partial update of a test_questions snapshot row. Allowed only while test is DRAFT
+        and no student attempts exist. Does not modify the source question bank.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: test_question_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
+              body: { type: string }
+              explanation: { type: string }
+              points: { type: number }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              topic_id: { type: integer }
+              choices:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    body: { type: string }
+                    is_correct: { type: boolean }
+                    order_index: { type: integer }
+      responses:
+        200:
+          description: Question updated
+        422:
+          description: Test not DRAFT or validation error
+    delete:
+      tags: [Tests]
+      summary: Remove question from exam
+      description: |
+        Hard-deletes the test_questions snapshot. Allowed only while test is DRAFT
+        and no student attempts exist.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: test_question_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Question removed
+        404:
+          description: Question not found
+        422:
+          description: Test not DRAFT or attempts exist
   /tests/{test_id}/publish-now:
     post:
       tags: [Tests]
@@ -1338,6 +1412,11 @@ paths:
     post:
       tags: [Tests]
       summary: Schedule test publication
+      description: |
+        Sets status to SCHEDULED and stores publish_at in scheduled_publish_at.
+        A background job checks every 60s (configurable) and auto-publishes due tests
+        (status becomes PUBLISHED, published_at is set). You can also run
+        `flask publish-due-tests` manually.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1381,9 +1460,10 @@ paths:
       responses:
         200:
           description: Test archived
+  # ── Student Exams — runtime (take exam, attempts, submit) ───────────────
   /tests/available:
     get:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: List published tests available to take
       description: |
         Students see published tests for subjects they are enrolled in.
@@ -1425,7 +1505,7 @@ paths:
         403:
           description: Forbidden
     post:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Start or resume exam attempt
       description: |
         Student must be enrolled in the test subject (subject_role=STUDENT).
@@ -1452,7 +1532,7 @@ paths:
           description: Test not available
   /tests/{test_id}/attempts/current:
     get:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Get current in-progress attempt (resume)
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -1472,7 +1552,7 @@ paths:
           description: No in-progress attempt
   /tests/{test_id}/attempts/{attempt_id}:
     get:
-      tags: [Tests]
+      tags: [Student Exams, Tests]
       summary: Get attempt details
       description: Student sees own attempt without correct answers. Teachers see full grading data.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -1495,7 +1575,7 @@ paths:
                 $ref: "#/definitions/TestAttemptRuntime"
   /tests/{test_id}/attempts/{attempt_id}/answers:
     put:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Bulk autosave answers
       description: Upsert multiple answers while attempt is IN_PROGRESS. Idempotent per test_question_id.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -1541,7 +1621,7 @@ paths:
           description: Attempt not in progress
   /tests/{test_id}/attempts/{attempt_id}/answers/{test_question_id}:
     patch:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Update a single answer (autosave)
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -1566,7 +1646,7 @@ paths:
           description: Answer updated
   /tests/{test_id}/attempts/{attempt_id}/submit:
     post:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Submit attempt (student)
       description: Finalizes attempt, runs auto-grading for objective questions, sets status GRADED when fully auto-graded.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -1604,7 +1684,7 @@ paths:
           description: Force submitted (submission_source=FORCE)
   /tests/{test_id}/attempts/{attempt_id}/timeout:
     post:
-      tags: [Tests]
+      tags: [Student Exams]
       summary: Finalize attempt on timeout
       description: |
         Called when client timer expires. Also applied automatically when expires_at is reached
@@ -1622,6 +1702,7 @@ paths:
       responses:
         200:
           description: Timed out and finalized
+  # ── Proctoring — teacher/proctor monitoring ─────────────────────────────
   /tests/{test_id}/proctoring/sessions:
     get:
       tags: [Proctoring]
@@ -1638,7 +1719,7 @@ paths:
           description: Active proctoring sessions
   /tests/{test_id}/attempts/{attempt_id}/proctoring/session:
     post:
-      tags: [Proctoring]
+      tags: [Student Exams]
       summary: Start proctoring session
       description: |
         Student only. Also auto-started when attempt begins if test.settings_config.proctoring.enabled is true.
@@ -1663,7 +1744,7 @@ paths:
         201:
           description: Session started
     get:
-      tags: [Proctoring]
+      tags: [Student Exams, Proctoring]
       summary: Get proctoring session status
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -1680,7 +1761,7 @@ paths:
           description: Session status
   /tests/{test_id}/attempts/{attempt_id}/proctoring/events:
     post:
-      tags: [Proctoring]
+      tags: [Student Exams]
       summary: Ingest proctoring event (REST)
       description: Student generates events. WebSocket channel is preferred for real-time.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -1707,8 +1788,9 @@ paths:
           description: Event recorded (may include violation)
   /tests/{test_id}/attempts/{attempt_id}/proctoring/violations:
     get:
-      tags: [Proctoring]
+      tags: [Student Exams, Proctoring]
       summary: List violations for attempt
+      description: Students see their own violations (limited fields). Teachers/proctors see full details.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1724,7 +1806,7 @@ paths:
           description: Violations list
   /tests/{test_id}/attempts/{attempt_id}/proctoring/violations/{violation_id}/evidence:
     get:
-      tags: [Proctoring]
+      tags: [Student Exams, Proctoring]
       summary: Get evidence package for violation
       description: MEDIUM and HIGH violations include forensic evidence package.
       security: [{ Bearer: [], WorkspaceId: [] }]

@@ -9,6 +9,8 @@ from models import Test, TestQuestion
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
 from repositories.test_repository import TestQuestionRepository, TestRepository
+from repositories.topic_repository import TopicRepository
+from repositories.attempt_repository import TestAttemptRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.ai_question_service import AIQuestionService
 from service.question_bank_service import QuestionBankService
@@ -23,10 +25,12 @@ class TestService:
     def __init__(self):
         self.tests = TestRepository()
         self.test_questions = TestQuestionRepository()
+        self.attempts = TestAttemptRepository()
         self.questions = QuestionRepository()
         self.question_types = QuestionTypeRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
+        self.topics = TopicRepository()
         self.workspaces = WorkspaceRepository()
         self.bank_service = QuestionBankService()
         self.ai_questions = AIQuestionService()
@@ -381,6 +385,49 @@ class TestService:
         db.session.commit()
         return [self.serialize_test_question(row) for row in created], model_name, subject_name
 
+    def update_test_question(
+        self,
+        *,
+        test_id: int,
+        test_question_id: int,
+        workspace_id: int,
+        actor_membership,
+        data: dict,
+    ) -> dict:
+        test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
+        self._ensure_no_attempts_on_test(test.id)
+        row = self._get_test_question_or_404(test.id, test_question_id)
+        merged = self._merge_test_question_payload(row, data)
+        validated = self._validate_and_normalize_payload(merged)
+        topic_id, topic_name = self._resolve_topic_snapshot(
+            test, validated["topic_id"], workspace_id
+        )
+        row.snapshot_question_text = validated["body"]
+        row.snapshot_explanation = validated["explanation"]
+        row.snapshot_type_code = validated["type_code"]
+        row.snapshot_difficulty = validated["difficulty"]
+        row.snapshot_topic_id = topic_id
+        row.snapshot_topic_name = topic_name
+        row.points = validated["points"]
+        row.snapshot_points = validated["points"]
+        row.snapshot_choices_json = json.dumps(validated["choices"])
+        db.session.commit()
+        return self.serialize_test_question(row)
+
+    def delete_test_question(
+        self,
+        *,
+        test_id: int,
+        test_question_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> None:
+        test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
+        self._ensure_no_attempts_on_test(test.id)
+        row = self._get_test_question_or_404(test.id, test_question_id)
+        self.test_questions.delete(row)
+        db.session.commit()
+
     def publish_now(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
@@ -390,6 +437,10 @@ class TestService:
         test.scheduled_publish_at = None
         db.session.commit()
         return test
+
+    def publish_due_scheduled_tests(self) -> list[int]:
+        """Publish all SCHEDULED tests whose scheduled_publish_at is in the past."""
+        return self.tests.publish_due_scheduled_tests()
 
     def schedule_publication(
         self,
@@ -450,6 +501,47 @@ class TestService:
         if test.status != TestStatus.DRAFT.value:
             raise ValidationError("Questions can only be modified while test is DRAFT")
         return test
+
+    def _get_test_question_or_404(self, test_id: int, test_question_id: int) -> TestQuestion:
+        row = self.test_questions.get_for_test(test_question_id, test_id)
+        if not row:
+            raise NotFoundError("Test question not found")
+        return row
+
+    def _ensure_no_attempts_on_test(self, test_id: int) -> None:
+        if self.attempts.list_for_test(test_id):
+            raise ValidationError(
+                "Cannot modify exam questions after student attempts have been recorded"
+            )
+
+    def _merge_test_question_payload(self, row: TestQuestion, patch: dict) -> dict:
+        current = {
+            "type_code": row.snapshot_type_code,
+            "body": row.snapshot_question_text,
+            "explanation": row.snapshot_explanation,
+            "points": float(row.points) if row.points is not None else 1,
+            "difficulty": row.snapshot_difficulty,
+            "topic_id": row.snapshot_topic_id,
+            "choices": self._load_json(row.snapshot_choices_json) or [],
+        }
+        merged = {**current, **patch}
+        if "choices" not in patch:
+            merged["choices"] = current["choices"]
+        return merged
+
+    def _resolve_topic_snapshot(
+        self, test: Test, topic_id: int | None, workspace_id: int
+    ) -> tuple[int | None, str | None]:
+        if topic_id is None:
+            return None, None
+        topic = self.topics.get_in_subject(
+            topic_id, subject_id=test.subject_id, workspace_id=workspace_id
+        )
+        if not topic:
+            raise ValidationError(
+                f"topic_id {topic_id} does not belong to the exam subject"
+            )
+        return topic.id, topic.name
 
     def _snapshot_from_source_question(self, question) -> dict:
         return {

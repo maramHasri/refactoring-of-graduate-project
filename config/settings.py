@@ -19,8 +19,16 @@ class Config:
     }
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # AI question generation: auto | gemini | qwen | huggingface | placeholder
+    AI_QUESTION_PROVIDER = os.getenv("AI_QUESTION_PROVIDER", "auto")
+    DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
+    QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-turbo")
     HF_TOKEN = os.getenv("HF_TOKEN")
+    HF_QWEN_MODEL = os.getenv("HF_QWEN_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+    AI_FALLBACK_TO_PLACEHOLDER = os.getenv(
+        "AI_FALLBACK_TO_PLACEHOLDER", "false"
+    ).lower() in ("1", "true", "yes")
     GMAIL_USER = os.getenv("GMAIL_USER")
     GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
     SHAM_CASH_API_KEY = os.getenv("SHAM_CASH_API_KEY")
@@ -57,6 +65,13 @@ class Config:
         os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "proctoring"),
     )
 
+    SCHEDULED_TEST_PUBLISH_ENABLED = os.getenv(
+        "SCHEDULED_TEST_PUBLISH_ENABLED", "true"
+    ).lower() in ("1", "true", "yes")
+    SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS = int(
+        os.getenv("SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS", "60")
+    )
+
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@eduforms.local")
     SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "SuperAdmin@123")
     SUPER_ADMIN_FULL_NAME = os.getenv("SUPER_ADMIN_FULL_NAME", "Platform Super Admin")
@@ -64,6 +79,9 @@ class Config:
 
 class DevelopmentConfig(Config):
     DEBUG = True
+    AI_FALLBACK_TO_PLACEHOLDER = os.getenv(
+        "AI_FALLBACK_TO_PLACEHOLDER", "true"
+    ).lower() in ("1", "true", "yes")
     EXPOSE_OTP_IN_DEV_RESPONSE = os.getenv(
         "EXPOSE_OTP_IN_DEV_RESPONSE", "true"
     ).lower() in ("1", "true", "yes")

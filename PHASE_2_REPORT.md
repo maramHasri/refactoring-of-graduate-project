@@ -183,7 +183,13 @@ Verified:
 - S3/cloud storage backend implementation
 - Configurable rule thresholds via `settings_config.proctoring.rules`
 - Manual essay grading API (Phase 1 gap)
+- Retake policy / exam behavior settings in `settings_config` (navigation, shuffle, max_attempts)
 - Automated integration test suite
+
+**Also completed after Phase 2:**
+
+- Scheduled test auto-publish (`jobs/scheduled_test_publisher.py`) — see `PROJECT_STATUS_REPORT.md`
+- Swagger reorganized: **Student Exams** tag for student-facing exam APIs
 
 ---
 

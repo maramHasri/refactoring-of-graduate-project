@@ -10,6 +10,7 @@ from schemas.test_schema import (
     RandomFromBanksSchema,
     ScheduleTestSchema,
     UpdateTestSchema,
+    UpdateTestQuestionSchema,
 )
 from service.test_service import TestService
 
@@ -160,6 +161,34 @@ def add_ai_questions_to_test(test_id):
         "ai_model": ai_model,
         "subject_name": subject_name,
     }, 201
+
+
+@test_bp.route("/<int:test_id>/questions/<int:test_question_id>", methods=["PATCH"])
+@require_workspace_membership
+@handle_service_errors
+def update_test_question(test_id, test_question_id):
+    data = UpdateTestQuestionSchema().load(request.get_json() or {}, partial=True)
+    item = _svc().update_test_question(
+        test_id=test_id,
+        test_question_id=test_question_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        data=data,
+    )
+    return {"message": "Test question updated", "question": item}, 200
+
+
+@test_bp.route("/<int:test_id>/questions/<int:test_question_id>", methods=["DELETE"])
+@require_workspace_membership
+@handle_service_errors
+def delete_test_question(test_id, test_question_id):
+    _svc().delete_test_question(
+        test_id=test_id,
+        test_question_id=test_question_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    )
+    return {"message": "Test question removed"}, 200
 
 
 @test_bp.route("/<int:test_id>/publish-now", methods=["POST"])
