@@ -80,6 +80,19 @@ def list_community_question_banks():
     return payload, 200
 
 
+@question_bank_bp.route("/<int:bank_id>", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_question_bank(bank_id):
+    """GET /question-banks/{id} — view bank metadata (includes cross-workspace COMMUNITY)."""
+    payload = _svc().get_question_bank_for_view(
+        bank_id=bank_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    )
+    return {"question_bank": payload}, 200
+
+
 @question_bank_bp.route("/<int:bank_id>/questions", methods=["POST"])
 @require_workspace_membership
 @handle_service_errors

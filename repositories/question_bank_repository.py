@@ -17,6 +17,16 @@ class QuestionBankRepository(BaseRepository):
             )
         ).scalar_one_or_none()
 
+    def get_active_community_by_id(self, bank_id: int) -> QuestionBank | None:
+        """Cross-workspace lookup for platform COMMUNITY banks."""
+        return db.session.execute(
+            db.select(QuestionBank).where(
+                QuestionBank.id == bank_id,
+                QuestionBank.visibility == QuestionBankVisibility.COMMUNITY.value,
+                *self._active_bank_filters(),
+            )
+        ).scalar_one_or_none()
+
     def list_by_subject(self, subject_id: int, workspace_id: int) -> list[QuestionBank]:
         return list(
             db.session.execute(

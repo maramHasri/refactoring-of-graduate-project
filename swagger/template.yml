@@ -882,8 +882,10 @@ paths:
       tags: [Question banks]
       summary: Discover community question banks
       description: |
-        Returns active COMMUNITY visibility banks available platform-wide.
-        No workspace context required.
+        Returns all active question banks with visibility COMMUNITY across the entire platform.
+        No workspace or subject assignment is required to discover them.
+        Use GET /question-banks/{bank_id} and GET /question-banks/{bank_id}/questions
+        (with your X-Workspace-Id) to browse content from any workspace.
       security: [{ Bearer: [] }]
       parameters:
         - name: page
@@ -1053,6 +1055,25 @@ paths:
         404:
           description: Question not found in bank
   /question-banks/{bank_id}:
+    get:
+      tags: [Question banks]
+      summary: Get question bank details
+      description: |
+        Returns bank metadata. COMMUNITY banks are readable from any workspace.
+        PRIVATE/WORKSPACE banks require normal visibility rules in your workspace.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: bank_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Question bank metadata
+        403:
+          description: Forbidden
+        404:
+          description: Not found
     patch:
       tags: [Question banks]
       summary: Update question bank

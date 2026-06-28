@@ -113,6 +113,7 @@ class QuestionBankService:
         page: int | None = None,
         per_page: int | None = None,
     ) -> dict:
+        """All active COMMUNITY banks platform-wide (no workspace filter)."""
         page, per_page, offset = normalize_pagination(page, per_page)
         total = self.banks.count_community()
         rows = self.banks.list_community(offset=offset, limit=per_page)
@@ -121,6 +122,20 @@ class QuestionBankService:
             "count": len(rows),
             **build_pagination_meta(total=total, page=page, per_page=per_page),
         }
+
+    def get_question_bank_for_view(
+        self,
+        *,
+        bank_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        bank = self.resolve_bank_for_question_view(
+            bank_id=bank_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        return self._serialize_bank(bank)
 
     def list_subject_question_banks(
         self,
@@ -234,11 +249,16 @@ class QuestionBankService:
 
         bank = self.banks.get_active_by_id(bank_id, workspace_id)
         if not bank:
+            bank = self.banks.get_active_community_by_id(bank_id)
+        if not bank:
             raise NotFoundError("Question bank not found")
 
-        actor_link = self.subject_memberships.find_active(
-            actor_membership.id, bank.subject_id
-        )
+        actor_link = None
+        if bank.workspace_id == workspace_id:
+            actor_link = self.subject_memberships.find_active(
+                actor_membership.id, bank.subject_id
+            )
+
         if not can_view_question_bank(
             bank.visibility,
             workspace=workspace,
@@ -275,7 +295,7 @@ class QuestionBankService:
     def _serialize_bank(self, bank: QuestionBank) -> dict:
         subject = bank.subject
         if subject is None and bank.subject_id:
-            subject = self.subjects.get_active_by_id(bank.subject_id, bank.workspace_id)
+            subject = self.subjects.get_by_id(bank.subject_id)
         return {
             "id": bank.id,
             "title": bank.title,
