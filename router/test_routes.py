@@ -100,13 +100,13 @@ def add_manual_questions_to_test(test_id):
 @require_workspace_membership
 @handle_service_errors
 def import_csv_questions_to_test(test_id):
-    items = _svc().import_questions_from_csv(
+    result = _svc().import_questions_from_csv(
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
         file_storage=request.files.get("csv_file"),
     )
-    return {"message": "CSV questions imported", "questions": items, "count": len(items)}, 201
+    return result, 201
 
 
 @test_bp.route("/<int:test_id>/questions/from-bank", methods=["POST"])

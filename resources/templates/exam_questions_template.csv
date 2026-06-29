@@ -1,0 +1,5 @@
+Question Type,Question,Explanation,Difficulty,Points,Topic ID,Choice A,Choice B,Choice C,Choice D,Choice E,Choice F,Correct Answers
+MCQ,What is HTTP?,HyperText Transfer Protocol,EASY,2,,FTP,HTTP,SMTP,DNS,,,B
+TRUE_FALSE,Encryption uses keys.,,EASY,1,,True,False,,,,,A
+MULTI_SELECT,Which are network attacks?,,MEDIUM,4,,DDoS,MITM,Backup,Phishing,,,ABD
+ESSAY,Explain the CIA Triangle.,Manual grading.,HARD,8,,,,,,,,

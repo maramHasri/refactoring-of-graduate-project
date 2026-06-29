@@ -446,6 +446,14 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 ---
 
+#### `GET /templates/exam-questions-csv` — تحميل قالب CSV
+
+**Headers:** `Authorization`, `X-Workspace-Id`
+
+يعيد ملف `exam_questions_template.csv` جاهزاً للتحرير في Excel. يحتوي على أمثلة لأنواع MCQ و TRUE_FALSE و MULTI_SELECT و ESSAY.
+
+---
+
 #### `POST /tests/{test_id}/questions/import-csv` — استيراد CSV
 
 **Content-Type:** `multipart/form-data`
@@ -454,17 +462,46 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 |-------|--------|
 | `csv_file` | ملف CSV بترميز UTF-8 |
 
-**أعمدة CSV المطلوبة:**
+**أعمدة القالب (بدون JSON داخل الخلايا):**
 
 | العمود | مطلوب؟ | الغرض |
 |--------|--------|--------|
-| `type_code` | نعم | نوع السؤال |
-| `body` | نعم | نص السؤال |
-| `choices` | حسب النوع | مصفوفة JSON كنص، مثال: `[{"body":"A","is_correct":true,"order_index":0}]` |
-| `explanation` | لا | |
-| `points` | لا | |
-| `difficulty` | لا | |
-| `topic_id` | لا | |
+| `Question Type` | نعم | MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY |
+| `Question` | نعم | نص السؤال |
+| `Explanation` | لا | شرح الإجابة |
+| `Difficulty` | لا | EASY, MEDIUM, HARD |
+| `Points` | لا | رقم أكبر من 0 (افتراضي 1 إذا تُرك فارغاً) |
+| `Topic ID` | لا | معرف موضوع ضمن مادة الاختبار |
+| `Choice A` … `Choice F` | حسب النوع | نص الخيارات (اترك فارغاً لـ ESSAY) |
+| `Correct Answers` | حسب النوع | حروف A–F بدون فواصل، مثال: `B` أو `ABD` |
+
+**قواعد الإجابات الصحيحة:**
+
+| النوع | القاعدة |
+|-------|---------|
+| MCQ | حرف واحد فقط |
+| TRUE_FALSE | حرف واحد: A أو B فقط (Choice C–F يجب أن تبقى فارغة) |
+| MULTI_SELECT | حرف واحد أو أكثر |
+| ESSAY | يترك `Correct Answers` فارغاً |
+
+**استجابة ناجحة (201):**
+
+```json
+{
+  "message": "CSV questions imported",
+  "count": 13,
+  "questions": [ ... ],
+  "failed_count": 2,
+  "failed_rows": [
+    { "row": 6, "error": "Row 6: MCQ questions must have exactly one correct answer" },
+    { "row": 12, "error": "Row 12: correct answer \"E\" references an empty choice" }
+  ]
+}
+```
+
+`failed_rows` و `failed_count` يظهران فقط عند وجود صفوف فاشلة (استيراد جزئي). الصفوف الصالحة تُنشأ؛ الفاشلة تُتخطى.
+
+**التوافق مع الصيغة القديمة:** ما زال مقبولاً ملف بأعمدة `type_code`, `body`, `choices` (JSON في الخلية).
 
 ---
 

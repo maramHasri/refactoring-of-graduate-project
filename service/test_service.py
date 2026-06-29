@@ -1,10 +1,8 @@
 import json
 import logging
 import re
-from io import StringIO
 from datetime import datetime, timezone
 from decimal import Decimal
-import csv
 
 from flask import current_app
 
@@ -17,6 +15,7 @@ from repositories.topic_repository import TopicRepository
 from repositories.attempt_repository import TestAttemptRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.exam_blueprint_service import ExamBlueprintService
+from service.exam_csv_import_parser import parse_exam_csv, read_csv_text
 from service.ai_question_service import AIQuestionService
 from service.email_delivery_service import EmailDeliveryError, EmailDeliveryService
 from service.question_bank_service import QuestionBankService
@@ -330,35 +329,70 @@ class TestService:
         workspace_id: int,
         actor_membership,
         file_storage,
-    ) -> list[dict]:
+    ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         if not file_storage:
             raise ValidationError("csv_file is required")
 
-        raw_bytes = file_storage.read()
-        if not raw_bytes:
-            raise ValidationError("Uploaded CSV file is empty")
-        text = raw_bytes.decode("utf-8-sig")
-        reader = csv.DictReader(StringIO(text))
-        if not reader.fieldnames:
-            raise ValidationError("CSV headers are required")
+        text = read_csv_text(file_storage.read())
+        logger.info(
+            "[CSV Import] File received for test_id=%s actor_membership_id=%s",
+            test.id,
+            actor_membership.id,
+        )
 
-        rows = []
-        for idx, row in enumerate(reader):
-            rows.append(self._csv_row_to_question_payload(idx, row))
-        if not rows:
-            raise ValidationError("CSV file must contain at least one question row")
+        payloads, failed_rows = parse_exam_csv(
+            text,
+            subject_id=test.subject_id,
+            workspace_id=workspace_id,
+        )
 
-        created = [
-            self._create_snapshot_row_from_payload(
+        for failure in failed_rows:
+            logger.warning(
+                "[CSV Import] Row %s skipped: %s",
+                failure["row"],
+                failure["error"],
+            )
+
+        created = []
+        for payload in payloads:
+            row = self._create_snapshot_row_from_payload(
                 test_id=test.id,
                 payload=payload,
                 source_type=TestQuestionSourceType.IMPORT.value,
             )
-            for payload in rows
-        ]
+            created.append(row)
+            logger.info(
+                "[CSV Import] Question created test_id=%s test_question_id=%s type=%s",
+                test.id,
+                row.id,
+                row.snapshot_type_code,
+            )
+
         db.session.commit()
-        return [self.serialize_test_question(row) for row in created]
+
+        imported_count = len(created)
+        failed_count = len(failed_rows)
+        logger.info(
+            "[CSV Import] Finished test_id=%s imported=%s failed=%s",
+            test.id,
+            imported_count,
+            failed_count,
+        )
+
+        result = {
+            "message": "CSV questions imported",
+            "count": imported_count,
+            "questions": [self.serialize_test_question(row) for row in created],
+        }
+        if failed_rows:
+            result["failed_rows"] = failed_rows
+            result["failed_count"] = failed_count
+            result["message"] = (
+                f"CSV import completed with {imported_count} imported and "
+                f"{failed_count} failed row(s)"
+            )
+        return result
 
     def add_questions_from_bank_selection(
         self,
@@ -1030,32 +1064,6 @@ class TestService:
                 {"body": "Option B", "is_correct": False, "order_index": 1},
             ]
         return []
-
-    def _csv_row_to_question_payload(self, row_index: int, row: dict) -> dict:
-        type_code = (row.get("type_code") or "").strip()
-        body = (row.get("body") or "").strip()
-        if not type_code or not body:
-            raise ValidationError(
-                f"CSV row {row_index + 1}: type_code and body are required"
-            )
-        choices_raw = (row.get("choices") or "").strip()
-        choices = []
-        if choices_raw:
-            try:
-                choices = json.loads(choices_raw)
-            except Exception:
-                raise ValidationError(
-                    f"CSV row {row_index + 1}: choices must be valid JSON array"
-                )
-        return {
-            "type_code": type_code,
-            "body": body,
-            "explanation": row.get("explanation"),
-            "points": row.get("points") or None,
-            "difficulty": row.get("difficulty") or None,
-            "topic_id": row.get("topic_id") or None,
-            "choices": choices,
-        }
 
     def _to_decimal(self, value, field_name: str):
         if value is None:

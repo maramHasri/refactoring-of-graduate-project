@@ -31,6 +31,7 @@ tags:
   - name: Subjects
   - name: Question banks
   - name: Tests
+  - name: Templates
     description: Teacher/admin — create, configure, publish, and manage exams
   - name: Student Exams
     description: Student — available exams, start/resume attempts, autosave answers, submit, and exam-time proctoring
@@ -1283,6 +1284,17 @@ paths:
     post:
       tags: [Tests]
       summary: Import exam questions from CSV
+      description: |
+        Upload a teacher-friendly CSV (no JSON in cells). Download the template from
+        GET /templates/exam-questions-csv.
+
+        **Columns:** Question Type, Question, Explanation, Difficulty, Points, Topic ID,
+        Choice A–F, Correct Answers (letters A–F, e.g. `B` or `ABD`).
+
+        **Supported types:** MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
+
+        Partial import: valid rows are created; invalid rows are returned in `failed_rows`.
+        Legacy format (`type_code`, `body`, `choices` as JSON) is still accepted.
       consumes: [multipart/form-data]
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -1296,7 +1308,37 @@ paths:
           required: true
       responses:
         201:
-          description: CSV questions imported
+          description: CSV questions imported (possibly with row failures)
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              count: { type: integer }
+              questions:
+                type: array
+                items: { type: object }
+              failed_count: { type: integer }
+              failed_rows:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    row: { type: integer }
+                    error: { type: string }
+  /templates/exam-questions-csv:
+    get:
+      tags: [Templates]
+      summary: Download exam questions CSV template
+      description: |
+        Returns a UTF-8 CSV template with example rows for MCQ, TRUE_FALSE, MULTI_SELECT, and ESSAY.
+        Use this file in Excel or Google Sheets before uploading via POST /tests/{test_id}/questions/import-csv.
+      produces: [text/csv]
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: CSV template file
+          schema:
+            type: file
   /tests/{test_id}/questions/from-bank:
     post:
       tags: [Tests]
