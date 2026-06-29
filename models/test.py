@@ -68,6 +68,12 @@ class Test(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
+    assigned_students = relationship(
+        "TestStudentAssignment",
+        back_populates="test",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
+    )
     subject = relationship("Subject")
 
     __table_args__ = (

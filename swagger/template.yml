@@ -1489,6 +1489,63 @@ paths:
           description: Question not found
         422:
           description: Test not DRAFT or attempts exist
+  /tests/{test_id}/assign-students:
+    post:
+      tags: [Tests]
+      summary: Assign students to exam whitelist
+      description: |
+        Creates or updates explicit allowed students for the exam.
+        Each membership must be an active STUDENT enrolled in the exam subject.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [student_membership_ids]
+            properties:
+              student_membership_ids:
+                type: array
+                items: { type: integer }
+                example: [15, 22, 35, 40]
+      responses:
+        201:
+          description: Students assigned successfully
+  /tests/{test_id}/assigned-students:
+    get:
+      tags: [Tests]
+      summary: List exam assigned students
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Assigned students list
+  /tests/{test_id}/assigned-students/{membership_id}:
+    delete:
+      tags: [Tests]
+      summary: Remove assigned student from exam
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Student removed from assigned list
   /tests/{test_id}/publish-now:
     post:
       tags: [Tests]
@@ -1564,7 +1621,9 @@ paths:
       tags: [Student Exams]
       summary: List published tests available to take
       description: |
-        Students see published tests for subjects they are enrolled in.
+        Students see published tests only if they are:
+        - enrolled in the subject
+        - assigned in the exam whitelist
         Workspace owner/admin see all published tests in the workspace.
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
@@ -1606,9 +1665,11 @@ paths:
       tags: [Student Exams]
       summary: Start or resume exam attempt
       description: |
-        Student must be enrolled in the test subject (subject_role=STUDENT).
+        Student must be enrolled in the test subject and assigned in exam whitelist.
         Returns 200 when resuming an in-progress attempt, 201 when starting new.
-        Sets expires_at from test.duration_minutes when configured.
+        Entry window is checked only when creating the first attempt.
+        Resume ignores entry window and is allowed until global end time.
+        Remaining time is based on (starts_at + duration_minutes) - now.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1626,6 +1687,8 @@ paths:
             $ref: "#/definitions/StartAttemptResponse"
         409:
           description: Already completed
+        403:
+          description: Entry window closed or student not assigned
         422:
           description: Test not available
   /tests/{test_id}/attempts/current:

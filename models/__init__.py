@@ -13,6 +13,7 @@ from models.workspace import (
 )
 from models.subject import MembershipSubject, Subject, SubjectMembership
 from models.test import Test, TestAttempt
+from models.test_assignment import TestStudentAssignment
 from models.topic import Topic
 from models.question import (
     Question,
@@ -54,6 +55,7 @@ __all__ = [
     "Topic",
     "Test",
     "TestAttempt",
+    "TestStudentAssignment",
     "AttemptAnswer",
     "ProctoringSession",
     "ProctoringEvent",

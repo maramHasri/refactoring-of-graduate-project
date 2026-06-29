@@ -158,6 +158,14 @@ class AIGenerateQuestionsSchema(Schema):
     additional_instructions = fields.Str(allow_none=True)
 
 
+class AssignStudentsToTestSchema(Schema):
+    student_membership_ids = fields.List(
+        fields.Int(validate=validate.Range(min=1)),
+        required=True,
+        validate=validate.Length(min=1),
+    )
+
+
 class UpdateTestQuestionSchema(Schema):
     """PATCH /tests/{test_id}/questions/{test_question_id} — partial snapshot update."""
 

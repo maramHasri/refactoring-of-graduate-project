@@ -648,7 +648,48 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 ---
 
-### 5.7 النشر والجدولة والإغلاق
+### 5.7 تعيين الطلاب (Exam Whitelist)
+
+> من الآن فصاعداً، النشر لا يعني إتاحة الامتحان لكل طلاب المادة تلقائياً.  
+> يجب تعيين قائمة طلاب مسموح لهم قبل الدخول.
+
+#### `POST /tests/{test_id}/assign-students`
+
+```json
+{
+  "student_membership_ids": [15, 22, 35, 40]
+}
+```
+
+**السلوك:**
+- يتحقق من صلاحية المعلّم/المالك على الاختبار
+- يحذف التكرار من القائمة
+- يتحقق أن كل Membership:
+  - داخل نفس Workspace
+  - `role=STUDENT` و `status=ACTIVE`
+  - مسجل في نفس مادة الاختبار (`subject_memberships`)
+- يحفظهم في whitelist
+
+**Response `201`:**
+
+```json
+{
+  "message": "Students assigned successfully",
+  "count": 4
+}
+```
+
+#### `GET /tests/{test_id}/assigned-students`
+
+يرجع الطلاب المعيّنين على الاختبار مع حالة دعوة البريد (`invite_status`).
+
+#### `DELETE /tests/{test_id}/assigned-students/{membership_id}`
+
+يحذف الطالب من whitelist لهذا الاختبار.
+
+---
+
+### 5.8 النشر والجدولة والإغلاق
 
 #### `POST /tests/{test_id}/publish-now` — نشر فوري
 
@@ -658,6 +699,7 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 - يعيّن `status` = `PUBLISHED`
 - يعيّن `published_at` = الآن
 - يمسح `scheduled_publish_at`
+- يطلق إرسال دعوات البريد للطلاب الموجودين في whitelist (مرة واحدة لكل طالب)
 
 **Response `200`:**
 
@@ -692,6 +734,8 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 **السلوك:**
 - `status` = `SCHEDULED`
 - `scheduled_publish_at` = `publish_at`
+- بدون إنشاء محاولات طلاب
+- عند نشره لاحقاً من الـ background worker يتم إرسال دعوات البريد تلقائياً
 
 **Response `200`:**
 
@@ -757,7 +801,9 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 }
 ```
 
-يعيد فقط اختبارات `PUBLISHED` في مواد الطالب (أو كل المنشورة لـ Admin).
+يعيد فقط اختبارات `PUBLISHED` التي:
+- الطالب مسجل بمادتها
+- والطالب موجود في whitelist الخاصة بالاختبار
 
 ---
 
@@ -787,7 +833,18 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 **أخطاء شائعة:**
 - `409` — أكمل الطالب الاختبار مسبقاً (محاولة واحدة فقط)
-- `400` — الاختبار غير منشور / لم يبدأ بعد / انتهت نافذة الدخول
+- `403` — الطالب غير معيّن في whitelist أو نافذة الدخول أُغلقت (للمحاولة الأولى)
+- `400` — الاختبار غير منشور / لم يبدأ بعد
+
+**مهم جداً (منطق الزمن العالمي):**
+- وقت النهاية لا يُحسب من `attempt_start + duration`
+- بل دائماً من:
+  - `global_end = starts_at + duration_minutes`
+- لذلك كل الطلاب ينتهون في نفس الوقت.
+
+**الاستئناف:**
+- نافذة الدخول (`entry_window`) تُفحص فقط عند إنشاء أول محاولة.
+- إذا أنشأ الطالب محاولة قبل إغلاق النافذة، يمكنه الاستئناف لاحقاً حتى `global_end`.
 
 ---
 

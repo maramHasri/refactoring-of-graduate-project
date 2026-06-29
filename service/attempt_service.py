@@ -17,6 +17,7 @@ from repositories.attempt_repository import (
     TestQuestionRepositoryExtended,
 )
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
+from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.test_repository import TestRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
@@ -47,6 +48,7 @@ class AttemptService:
         self.tests = TestRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
+        self.test_assignments = TestStudentAssignmentRepository()
         self.workspaces = WorkspaceRepository()
 
     def list_available_tests(
@@ -72,7 +74,11 @@ class AttemptService:
                 ).scalars().all()
             )
         else:
-            rows = self.attempts.list_published_for_subjects(subject_ids, workspace_id)
+            rows = self.attempts.list_published_for_subjects(
+                subject_ids,
+                workspace_id,
+                actor_membership.id,
+            )
 
         return [self._serialize_test_summary(test) for test in rows]
 
@@ -84,19 +90,16 @@ class AttemptService:
         actor_membership,
         actor_user_id: int,
     ) -> dict:
-        test, actor_link = self._resolve_student_test_access(
-            test_id, workspace_id, actor_membership
-        )
-        self._ensure_test_takeable(test)
-
+        test, _ = self._resolve_student_test_access(test_id, workspace_id, actor_membership)
         existing = self.attempts.find_active_for_student(test.id, actor_membership.id)
         if existing:
+            self._ensure_resume_allowed(existing, test)
             self._check_and_apply_timeout(existing, test)
             if existing.status == TestAttemptStatus.IN_PROGRESS.value:
-                existing.last_activity_at = datetime.now(timezone.utc)
+                existing.last_activity_at = local_timezone_now()
                 db.session.commit()
                 logger.info(
-                    "Resumed attempt id=%s test_id=%s membership_id=%s",
+                    "event=attempt_resumed attempt_id=%s test_id=%s student_membership_id=%s result=success",
                     existing.id,
                     test.id,
                     actor_membership.id,
@@ -110,17 +113,19 @@ class AttemptService:
         if self.attempts.find_completed_for_student(test.id, actor_membership.id):
             raise ConflictError("You have already completed this test")
 
-        if test.status != TestStatus.PUBLISHED.value:
-            raise ValidationError("Test is not available for attempts")
+        self._ensure_test_takeable_for_first_attempt(test)
+
+        now = local_timezone_now()
+        expires_at = self._compute_global_expires_at(test)
 
         attempt = TestAttempt(
             test_id=test.id,
             student_membership_id=actor_membership.id,
             user_id=actor_user_id,
             status=TestAttemptStatus.IN_PROGRESS.value,
-            started_at=datetime.now(timezone.utc),
-            last_activity_at=datetime.now(timezone.utc),
-            expires_at=self._compute_expires_at(test),
+            started_at=now,
+            last_activity_at=now,
+            expires_at=expires_at,
         )
         self.attempts.add(attempt)
         db.session.commit()
@@ -130,7 +135,7 @@ class AttemptService:
             workspace_id=workspace_id,
         )
         logger.info(
-            "Started attempt id=%s test_id=%s membership_id=%s",
+            "event=attempt_created attempt_id=%s test_id=%s student_membership_id=%s result=success",
             attempt.id,
             test.id,
             actor_membership.id,
@@ -302,6 +307,31 @@ class AttemptService:
             submission_source=AttemptSubmissionSource.TIMEOUT.value,
         )
 
+    def auto_submit_due_attempts(self) -> list[int]:
+        now = local_timezone_now()
+        due_attempt_ids: list[int] = []
+        rows = self.attempts.list_in_progress_with_global_timing()
+        for attempt in rows:
+            test = attempt.test or self.tests.get_by_id(attempt.test_id)
+            if not test:
+                continue
+            global_end = self._global_end_time(test)
+            if not global_end or now < global_end:
+                continue
+            self._finalize_attempt(
+                attempt,
+                test,
+                submission_source=AttemptSubmissionSource.TIMEOUT.value,
+            )
+            due_attempt_ids.append(attempt.id)
+        if due_attempt_ids:
+            logger.info(
+                "event=auto_submission_batch count=%s attempt_ids=%s result=success",
+                len(due_attempt_ids),
+                due_attempt_ids,
+            )
+        return due_attempt_ids
+
     def _finalize_attempt(
         self,
         attempt: TestAttempt,
@@ -459,34 +489,70 @@ class AttemptService:
     def _check_and_apply_timeout(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             return
-        if not attempt.expires_at:
+        global_end = self._global_end_time(test)
+        if not global_end:
             return
-        now = datetime.now(timezone.utc)
-        if now >= attempt.expires_at:
-            logger.info("Attempt id=%s timed out", attempt.id)
+        now = local_timezone_now()
+        if now >= global_end:
+            logger.info(
+                "event=auto_submission_executed attempt_id=%s test_id=%s reason=global_end_reached",
+                attempt.id,
+                attempt.test_id,
+            )
             self._finalize_attempt(
                 attempt,
                 test,
                 submission_source=AttemptSubmissionSource.TIMEOUT.value,
             )
 
-    def _compute_expires_at(self, test: Test) -> datetime | None:
-        if not test.duration_minutes:
+    def _global_end_time(self, test: Test) -> datetime | None:
+        if not test.starts_at or not test.duration_minutes:
             return None
-        return local_timezone_now() + timedelta(minutes=int(test.duration_minutes))
+        return ensure_local_aware(test.starts_at) + timedelta(
+            minutes=int(test.duration_minutes)
+        )
 
-    def _ensure_test_takeable(self, test: Test) -> None:
+    def _compute_global_expires_at(self, test: Test) -> datetime:
+        global_end = self._global_end_time(test)
+        if not global_end:
+            raise ValidationError(
+                "Test starts_at and duration_minutes are required for global timing"
+            )
+        return global_end
+
+    def _ensure_test_takeable_for_first_attempt(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value:
             raise ValidationError("Test is not published")
         now = local_timezone_now()
-        if test.starts_at and now < ensure_local_aware(test.starts_at):
+        if not test.starts_at:
+            raise ValidationError("Test start time is not configured")
+        if not test.duration_minutes:
+            raise ValidationError("Test duration is not configured")
+        starts_at = ensure_local_aware(test.starts_at)
+        if now < starts_at:
             raise ValidationError("Test has not started yet")
-        if test.entry_window_minutes and test.starts_at:
-            window_end = ensure_local_aware(test.starts_at) + timedelta(
+        global_end = self._global_end_time(test)
+        if global_end and now >= global_end:
+            raise ForbiddenError("Exam has already ended")
+        if test.entry_window_minutes:
+            window_end = starts_at + timedelta(
                 minutes=int(test.entry_window_minutes)
             )
             if now > window_end:
-                raise ValidationError("Test entry window has closed")
+                logger.info(
+                    "event=entry_window_rejected test_id=%s reason=window_closed result=forbidden",
+                    test.id,
+                )
+                raise ForbiddenError("Entry window has closed.")
+
+    def _ensure_resume_allowed(self, attempt: TestAttempt, test: Test) -> None:
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            raise ConflictError("Attempt is not in progress")
+        if test.status != TestStatus.PUBLISHED.value:
+            raise ForbiddenError("Exam is no longer available for resume")
+        global_end = self._global_end_time(test)
+        if global_end and local_timezone_now() >= global_end:
+            raise ForbiddenError("Exam has already ended")
 
     def serialize_attempt(
         self,
@@ -495,6 +561,13 @@ class AttemptService:
         include_answers: bool = True,
         student_view: bool = False,
     ) -> dict:
+        test = attempt.test or self.tests.get_by_id(attempt.test_id)
+        global_end = self._global_end_time(test) if test else None
+        now = local_timezone_now()
+        remaining_seconds = None
+        if global_end:
+            remaining_seconds = max(0, int((global_end - now).total_seconds()))
+
         payload = {
             "id": attempt.id,
             "test_id": attempt.test_id,
@@ -512,10 +585,11 @@ class AttemptService:
             "submission_source": attempt.submission_source,
             "raw_score": attempt.raw_score,
             "final_score": attempt.final_score,
+            "global_end_at": global_end.isoformat() if global_end else None,
+            "remaining_seconds": remaining_seconds,
         }
 
         if include_answers:
-            test = attempt.test or self.tests.get_by_id(attempt.test_id)
             question_rows = (
                 self.test_questions.list_active_for_test(test.id) if test else []
             )
@@ -640,6 +714,12 @@ class AttemptService:
         if actor_membership.role == MembershipRole.STUDENT.value:
             if not verify_subject_student_access(actor_link):
                 raise ForbiddenError("Only students enrolled in the subject can take tests")
+            assignment = self.test_assignments.find(
+                test_id=test.id,
+                student_membership_id=actor_membership.id,
+            )
+            if not assignment:
+                raise ForbiddenError("You are not assigned to this exam")
         return test, actor_link
 
     def _ensure_attempt_access(

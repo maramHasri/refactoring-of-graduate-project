@@ -18,6 +18,56 @@ class EmailDeliveryError(Exception):
 
 
 class EmailDeliveryService:
+    def send_exam_invitation_email(
+        self,
+        *,
+        to_email: str,
+        student_name: str,
+        exam_name: str,
+        subject_name: str,
+        teacher_name: str,
+        starts_at_text: str,
+        duration_minutes: int | None,
+        exam_link: str,
+    ) -> None:
+        subject = f"Exam invitation: {exam_name}"
+        duration_text = (
+            f"{duration_minutes} minutes" if duration_minutes is not None else "Not specified"
+        )
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1a202c;">
+          <h2 style="color: #1a365d;">Exam Invitation</h2>
+          <p>Hello {student_name},</p>
+          <p>You have been assigned to an exam.</p>
+          <ul>
+            <li><strong>Exam:</strong> {exam_name}</li>
+            <li><strong>Subject:</strong> {subject_name}</li>
+            <li><strong>Teacher:</strong> {teacher_name}</li>
+            <li><strong>Start time:</strong> {starts_at_text}</li>
+            <li><strong>Duration:</strong> {duration_text}</li>
+          </ul>
+          <p>
+            <a href="{exam_link}"
+               style="display: inline-block; background: #2b6cb0; color: #ffffff; text-decoration: none;
+                      padding: 12px 22px; border-radius: 8px; font-weight: bold;">
+              Open exam
+            </a>
+          </p>
+          <p style="color: #718096; font-size: 12px;">edu_forms — Exam &amp; Proctoring Platform</p>
+        </div>
+        """
+        text = (
+            f"Hello {student_name},\n\n"
+            f"You have been assigned to an exam.\n"
+            f"Exam: {exam_name}\n"
+            f"Subject: {subject_name}\n"
+            f"Teacher: {teacher_name}\n"
+            f"Start time: {starts_at_text}\n"
+            f"Duration: {duration_text}\n"
+            f"Exam link: {exam_link}\n"
+        )
+        self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
+
     def send_otp_email(self, *, to_email: str, full_name: str, otp_code: str) -> None:
         expires = current_app.config.get("OTP_EXPIRES_MINUTES", 15)
         subject = "Your edu_forms verification code"

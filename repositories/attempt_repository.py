@@ -1,4 +1,4 @@
-from models import AttemptAnswer, Test, TestAttempt, TestQuestion
+from models import AttemptAnswer, Test, TestAttempt, TestQuestion, TestStudentAssignment
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import TestAttemptStatus, TestStatus
@@ -55,19 +55,38 @@ class TestAttemptRepository(BaseRepository):
         )
 
     def list_published_for_subjects(
-        self, subject_ids: list[int], workspace_id: int
+        self, subject_ids: list[int], workspace_id: int, student_membership_id: int
     ) -> list[Test]:
         if not subject_ids:
             return []
         return list(
             db.session.execute(
                 db.select(Test)
+                .join(
+                    TestStudentAssignment,
+                    TestStudentAssignment.test_id == Test.id,
+                )
                 .where(
                     Test.subject_id.in_(subject_ids),
                     Test.status == TestStatus.PUBLISHED.value,
                     Test.created_by.has(workspace_id=workspace_id),
+                    TestStudentAssignment.student_membership_id == student_membership_id,
                 )
                 .order_by(Test.published_at.desc().nullslast(), Test.id.desc())
+            ).scalars().all()
+        )
+
+    def list_in_progress_with_global_timing(self) -> list[TestAttempt]:
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .where(
+                    TestAttempt.status == TestAttemptStatus.IN_PROGRESS.value,
+                    Test.status == TestStatus.PUBLISHED.value,
+                    Test.starts_at.is_not(None),
+                    Test.duration_minutes.is_not(None),
+                )
             ).scalars().all()
         )
 

@@ -1,11 +1,15 @@
 import json
+import logging
 import re
 from io import StringIO
 from datetime import datetime, timezone
 from decimal import Decimal
 import csv
 
-from models import Test, TestQuestion
+from flask import current_app
+
+from models import Membership, Test, TestQuestion, TestStudentAssignment
+from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
 from repositories.test_repository import TestQuestionRepository, TestRepository
@@ -14,13 +18,24 @@ from repositories.attempt_repository import TestAttemptRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.exam_blueprint_service import ExamBlueprintService
 from service.ai_question_service import AIQuestionService
+from service.email_delivery_service import EmailDeliveryError, EmailDeliveryService
 from service.question_bank_service import QuestionBankService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import can_manage_subjects, verify_subject_teacher_access
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
-from utils.enums import Difficulty, TestQuestionSourceType, TestStatus
+from utils.enums import (
+    Difficulty,
+    MembershipRole,
+    MembershipStatus,
+    SubjectRole,
+    TestQuestionSourceType,
+    TestStatus,
+)
 from utils.question_type_validation import validate_question_create_payload
+
+
+logger = logging.getLogger(__name__)
 
 
 class TestService:
@@ -29,14 +44,114 @@ class TestService:
         self.test_questions = TestQuestionRepository()
         self.attempts = TestAttemptRepository()
         self.questions = QuestionRepository()
+        self.test_assignments = TestStudentAssignmentRepository()
         self.question_types = QuestionTypeRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
         self.topics = TopicRepository()
         self.workspaces = WorkspaceRepository()
         self.bank_service = QuestionBankService()
+        self.email_delivery = EmailDeliveryService()
         self.ai_questions = AIQuestionService()
         self.exam_blueprint = ExamBlueprintService()
+
+    def assign_students_to_test(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+        student_membership_ids: list[int],
+    ) -> int:
+        test = self._resolve_test_access(test_id, workspace_id, actor_membership)
+        unique_ids: list[int] = []
+        seen: set[int] = set()
+        for membership_id in student_membership_ids:
+            student_id = int(membership_id)
+            if student_id in seen:
+                continue
+            seen.add(student_id)
+            unique_ids.append(student_id)
+
+        self._validate_students_belong_to_test_subject(
+            workspace_id=workspace_id,
+            test=test,
+            student_membership_ids=unique_ids,
+        )
+
+        created_count = 0
+        for student_membership_id in unique_ids:
+            row = self.test_assignments.find(
+                test_id=test.id,
+                student_membership_id=student_membership_id,
+            )
+            if row:
+                row.assigned_by_membership_id = actor_membership.id
+                continue
+            self.test_assignments.add(
+                TestStudentAssignment(
+                    test_id=test.id,
+                    student_membership_id=student_membership_id,
+                    assigned_by_membership_id=actor_membership.id,
+                )
+            )
+            created_count += 1
+
+        db.session.commit()
+        logger.info(
+            "event=student_assigned test_id=%s actor_membership_id=%s requested=%s created=%s result=success",
+            test.id,
+            actor_membership.id,
+            len(unique_ids),
+            created_count,
+        )
+        return len(unique_ids)
+
+    def list_assigned_students(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> list[dict]:
+        test = self._resolve_test_access(test_id, workspace_id, actor_membership)
+        rows = self.test_assignments.list_for_test_with_student_profile(test.id)
+        return [
+            {
+                "assignment_id": item["assignment"].id,
+                "membership_id": item["membership"].id,
+                "user_id": item["user"].id,
+                "full_name": item["user"].full_name,
+                "email": item["user"].email,
+                "invite_status": item["assignment"].invite_status,
+                "invite_sent_at": format_local_datetime(item["assignment"].invite_sent_at),
+            }
+            for item in rows
+        ]
+
+    def remove_assigned_student(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+        student_membership_id: int,
+    ) -> None:
+        test = self._resolve_test_access(test_id, workspace_id, actor_membership)
+        row = self.test_assignments.find(
+            test_id=test.id,
+            student_membership_id=student_membership_id,
+        )
+        if not row:
+            raise NotFoundError("Student assignment not found")
+        self.test_assignments.delete(row)
+        db.session.commit()
+        logger.info(
+            "event=student_removed test_id=%s actor_membership_id=%s student_membership_id=%s result=success",
+            test.id,
+            actor_membership.id,
+            student_membership_id,
+        )
 
     def create_test(self, *, workspace_id: int, actor_membership, data: dict) -> Test:
         workspace = self.workspaces.get_by_id(workspace_id)
@@ -95,12 +210,22 @@ class TestService:
 
         if "name" in data and data["name"]:
             test.name = data["name"].strip()
-        if "slug" in data and data["slug"]:
-            slug = self._resolve_slug(data.get("slug"), test.name)
-            existing = self.tests.find_by_slug(slug)
-            if existing and existing.id != test.id:
-                raise ConflictError("Test slug already exists")
-            test.slug = slug
+        if "slug" in data:
+            raw_slug = (data.get("slug") or "").strip()
+            if not raw_slug:
+                raise ValidationError("slug cannot be empty")
+            slug = self._normalize_slug_value(raw_slug)
+            if not slug:
+                raise ValidationError(
+                    "slug must contain at least one latin letter or digit (a-z, 0-9)"
+                )
+            if slug != test.slug:
+                existing = self.tests.find_by_slug(slug)
+                if existing:
+                    raise ConflictError(
+                        f"Test slug '{slug}' is already used by test id {existing.id}"
+                    )
+                test.slug = slug
         if "description" in data:
             test.description = (data.get("description") or "").strip() or None
         if "grading_mode" in data:
@@ -427,11 +552,25 @@ class TestService:
         test.published_at = local_timezone_now()
         test.scheduled_publish_at = None
         db.session.commit()
+        logger.info(
+            "event=exam_published test_id=%s actor_membership_id=%s result=success",
+            test.id,
+            actor_membership.id,
+        )
+        self.dispatch_exam_invitations(test.id)
         return test
 
     def publish_due_scheduled_tests(self) -> list[int]:
         """Publish all SCHEDULED tests whose scheduled_publish_at is in the past."""
-        return self.tests.publish_due_scheduled_tests()
+        published_ids = self.tests.publish_due_scheduled_tests()
+        for test_id in published_ids:
+            logger.info(
+                "event=exam_published test_id=%s actor_membership_id=%s reason=scheduled_worker result=success",
+                test_id,
+                "system",
+            )
+            self.dispatch_exam_invitations(test_id)
+        return published_ids
 
     def schedule_publication(
         self,
@@ -453,6 +592,12 @@ class TestService:
         test.status = TestStatus.SCHEDULED.value
         test.scheduled_publish_at = publish_at
         db.session.commit()
+        logger.info(
+            "event=exam_scheduled test_id=%s actor_membership_id=%s publish_at=%s result=success",
+            test.id,
+            actor_membership.id,
+            format_local_datetime(publish_at),
+        )
         return test
 
     def close_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
@@ -470,6 +615,91 @@ class TestService:
         test.archived_at = local_timezone_now()
         db.session.commit()
         return test
+
+    def dispatch_exam_invitations(self, test_id: int) -> dict:
+        test = self.tests.get_by_id(test_id)
+        if not test or test.status != TestStatus.PUBLISHED.value:
+            return {"sent": 0, "failed": 0}
+
+        pending = self.test_assignments.list_pending_invites_for_test(test.id)
+        if not pending:
+            return {"sent": 0, "failed": 0}
+
+        starts_at_text = format_local_datetime(test.starts_at) or "Not set"
+        teacher_name = (
+            test.created_by.user.full_name
+            if test.created_by and test.created_by.user
+            else "Teacher"
+        )
+        subject_name = test.subject.name if test.subject else "Subject"
+        exam_link = self._build_exam_link(test.id)
+        sent_count = 0
+        failed_count = 0
+
+        logger.info(
+            "event=invitation_dispatch_started test_id=%s count=%s result=started",
+            test.id,
+            len(pending),
+        )
+        for row in pending:
+            membership = db.session.get(Membership, row.student_membership_id)
+            user = membership.user if membership else None
+            if not user or not user.email:
+                failed_count += 1
+                self.test_assignments.mark_invite_failed(
+                    row,
+                    error_message="Student email is missing",
+                )
+                logger.error(
+                    "event=invitation_failed test_id=%s student_membership_id=%s reason=missing_email result=failed",
+                    test.id,
+                    row.student_membership_id,
+                )
+                continue
+            try:
+                self.email_delivery.send_exam_invitation_email(
+                    to_email=user.email,
+                    student_name=user.full_name or "Student",
+                    exam_name=test.name,
+                    subject_name=subject_name,
+                    teacher_name=teacher_name,
+                    starts_at_text=starts_at_text,
+                    duration_minutes=test.duration_minutes,
+                    exam_link=exam_link,
+                )
+                sent_count += 1
+                self.test_assignments.mark_invite_sent(
+                    row,
+                    sent_at=local_timezone_now(),
+                )
+                logger.info(
+                    "event=invitation_sent test_id=%s student_membership_id=%s email=%s result=success",
+                    test.id,
+                    row.student_membership_id,
+                    user.email,
+                )
+            except EmailDeliveryError as exc:
+                failed_count += 1
+                self.test_assignments.mark_invite_failed(
+                    row,
+                    error_message=str(exc),
+                )
+                logger.error(
+                    "event=invitation_failed test_id=%s student_membership_id=%s reason=%s result=failed",
+                    test.id,
+                    row.student_membership_id,
+                    exc,
+                )
+        db.session.commit()
+        return {"sent": sent_count, "failed": failed_count}
+
+    def _build_exam_link(self, test_id: int) -> str:
+        base_url = (
+            current_app.config.get("FRONTEND_BASE_URL")
+            or current_app.config.get("APP_URL")
+            or "http://localhost:5173"
+        )
+        return f"{base_url.rstrip('/')}/tests/{test_id}"
 
     def _resolve_test_access(self, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self.tests.get_by_id(test_id)
@@ -634,24 +864,82 @@ class TestService:
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
-    def _resolve_slug(self, maybe_slug: str | None, name: str) -> str:
-        base = (maybe_slug or name or "").strip().lower()
-        base = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
-        if not base:
-            base = "test"
-        return base
+    def _validate_students_belong_to_test_subject(
+        self,
+        *,
+        workspace_id: int,
+        test: Test,
+        student_membership_ids: list[int],
+    ) -> None:
+        if not student_membership_ids:
+            raise ValidationError("student_membership_ids must contain at least one id")
 
-    def _resolve_unique_slug(self, base_slug: str) -> str:
+        missing_in_workspace: list[int] = []
+        not_student_role: list[int] = []
+        not_enrolled: list[int] = []
+        inactive_memberships: list[int] = []
+
+        for membership_id in student_membership_ids:
+            membership = db.session.get(Membership, membership_id)
+            if not membership or membership.workspace_id != workspace_id:
+                missing_in_workspace.append(membership_id)
+                continue
+            if membership.status != MembershipStatus.ACTIVE.value:
+                inactive_memberships.append(membership_id)
+                continue
+            if membership.role != MembershipRole.STUDENT.value:
+                not_student_role.append(membership_id)
+                continue
+            link = self.subject_memberships.find_active_by_role(
+                membership_id,
+                test.subject_id,
+                SubjectRole.STUDENT.value,
+            )
+            if not link:
+                not_enrolled.append(membership_id)
+
+        if missing_in_workspace:
+            raise ValidationError(
+                f"Membership(s) not found in workspace: {missing_in_workspace}"
+            )
+        if inactive_memberships:
+            raise ValidationError(
+                f"Membership(s) are not active: {inactive_memberships}"
+            )
+        if not_student_role:
+            raise ValidationError(
+                f"Only STUDENT memberships are allowed: {not_student_role}"
+            )
+        if not_enrolled:
+            raise ValidationError(
+                "Student membership(s) are not enrolled in the exam subject: "
+                f"{not_enrolled}"
+            )
+
+    def _normalize_slug_value(self, raw: str) -> str:
+        base = raw.strip().lower()
+        return re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+
+    def _resolve_slug(self, maybe_slug: str | None, name: str) -> str:
+        raw = (maybe_slug or name or "").strip()
+        normalized = self._normalize_slug_value(raw) if raw else ""
+        return normalized or "test"
+
+    def _resolve_unique_slug(self, base_slug: str, *, exclude_test_id: int | None = None) -> str:
         """
         Create a unique slug by appending -2, -3, ... when needed.
         This avoids collisions for non-latin titles that normalize to the same fallback.
         """
         candidate = base_slug
         counter = 2
-        while self.tests.find_by_slug(candidate):
+        while True:
+            existing = self.tests.find_by_slug(candidate)
+            if not existing or (
+                exclude_test_id is not None and existing.id == exclude_test_id
+            ):
+                return candidate
             candidate = f"{base_slug}-{counter}"
             counter += 1
-        return candidate
 
     def _create_snapshot_row_from_payload(
         self, *, test_id: int, payload: dict, source_type: str

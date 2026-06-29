@@ -18,6 +18,13 @@ def _publish_due_tests(app) -> list[int]:
         return TestService().publish_due_scheduled_tests()
 
 
+def _auto_submit_due_attempts(app) -> list[int]:
+    with app.app_context():
+        from service.attempt_service import AttemptService
+
+        return AttemptService().auto_submit_due_attempts()
+
+
 def _run_loop(app, interval: int) -> None:
     first_run = True
     while not _stop_event.is_set():
@@ -32,6 +39,13 @@ def _run_loop(app, interval: int) -> None:
                     "Auto-published %s scheduled test(s): %s",
                     len(published_ids),
                     published_ids,
+                )
+            auto_submitted_attempt_ids = _auto_submit_due_attempts(app)
+            if auto_submitted_attempt_ids:
+                logger.info(
+                    "Auto-submitted %s attempt(s): %s",
+                    len(auto_submitted_attempt_ids),
+                    auto_submitted_attempt_ids,
                 )
         except Exception:
             logger.exception("Scheduled test publish job failed")

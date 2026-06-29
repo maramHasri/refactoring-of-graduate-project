@@ -6,6 +6,7 @@ from schemas.test_schema import (
     AddBankQuestionsToTestSchema,
     AddManualQuestionsToTestSchema,
     AddQuestionsFromBankSelectionSchema,
+    AssignStudentsToTestSchema,
     CreateTestSchema,
     ExamBlueprintSchema,
     ScheduleTestSchema,
@@ -159,6 +160,45 @@ def add_ai_questions_to_test(test_id):
         "ai_model": ai_model,
         "subject_name": subject_name,
     }, 201
+
+
+@test_bp.route("/<int:test_id>/assign-students", methods=["POST"])
+@require_workspace_membership
+@handle_service_errors
+def assign_students_to_test(test_id):
+    data = AssignStudentsToTestSchema().load(request.get_json() or {})
+    count = _svc().assign_students_to_test(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        student_membership_ids=data["student_membership_ids"],
+    )
+    return {"message": "Students assigned successfully", "count": count}, 201
+
+
+@test_bp.route("/<int:test_id>/assigned-students", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_assigned_students(test_id):
+    items = _svc().list_assigned_students(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    )
+    return {"students": items, "count": len(items)}, 200
+
+
+@test_bp.route("/<int:test_id>/assigned-students/<int:membership_id>", methods=["DELETE"])
+@require_workspace_membership
+@handle_service_errors
+def remove_assigned_student(test_id, membership_id):
+    _svc().remove_assigned_student(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        student_membership_id=membership_id,
+    )
+    return {"message": "Student removed from assigned list"}, 200
 
 
 @test_bp.route("/<int:test_id>/questions/<int:test_question_id>", methods=["PATCH"])
