@@ -7,7 +7,7 @@ from schemas.test_schema import (
     AddManualQuestionsToTestSchema,
     AddQuestionsFromBankSelectionSchema,
     CreateTestSchema,
-    RandomFromBanksSchema,
+    ExamBlueprintSchema,
     ScheduleTestSchema,
     UpdateTestSchema,
     UpdateTestQuestionSchema,
@@ -28,7 +28,10 @@ def create_test():
         actor_membership=g.membership,
         data=data,
     )
-    return {"message": "Test created", "test": _svc().serialize_test(test)}, 201
+    return {
+        "message": "Test created successfully",
+        "test": _svc().serialize_test_created(test),
+    }, 201
 
 
 @test_bp.route("/my", methods=["GET"])
@@ -60,7 +63,7 @@ def update_test(test_id):
         actor_membership=g.membership,
         data=data,
     )
-    return {"message": "Test updated", "test": _svc().serialize_test(test)}, 200
+    return {"message": "Test updated", "test": _svc().serialize_test_updated(test)}, 200
 
 
 @test_bp.route("/<int:test_id>/questions", methods=["POST"])
@@ -124,18 +127,13 @@ def add_bank_selected_questions_to_test(test_id):
 @require_workspace_membership
 @handle_service_errors
 def add_random_questions_to_test(test_id):
-    data = RandomFromBanksSchema().load(request.get_json() or {})
-    items = _svc().add_random_questions_from_banks(
+    data = ExamBlueprintSchema().load(request.get_json() or {})
+    return _svc().generate_exam_from_blueprint(
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
-        bank_ids=data["bank_ids"],
-        count=data["count"],
-        difficulty=data.get("difficulty"),
-        type_code=data.get("type_code"),
-        topic_id=data.get("topic_id"),
-    )
-    return {"message": "Random questions added", "questions": items, "count": len(items)}, 201
+        banks_blueprint=data["banks"],
+    ), 201
 
 
 @test_bp.route("/<int:test_id>/questions/ai-generate", methods=["POST"])

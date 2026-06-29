@@ -87,7 +87,7 @@ class QuestionService:
         topic_id = self._resolve_optional_topic_id(
             payload.get("topic_id"),
             subject_id=bank.subject_id,
-            workspace_id=workspace_id,
+            workspace_id=bank.workspace_id,
             field_prefix=prefix,
         )
 
@@ -194,7 +194,7 @@ class QuestionService:
             question.topic_id = self._resolve_optional_topic_id(
                 data.get("topic_id"),
                 subject_id=bank.subject_id,
-                workspace_id=workspace_id,
+                workspace_id=bank.workspace_id,
             )
         if "difficulty" in data:
             difficulty = data.get("difficulty")
@@ -276,7 +276,7 @@ class QuestionService:
         if not topic:
             raise ValidationError(
                 f"{field_prefix}: topic_id must reference an existing topic "
-                "in the bank's subject"
+                f"in the bank's subject (subject_id={subject_id})"
             )
         return topic.id
 
@@ -294,6 +294,7 @@ class QuestionService:
             "points": float(question.points) if question.points is not None else None,
             "difficulty": question.difficulty,
             "topic_id": question.topic_id,
+            "topic_name": question.topic.name if question.topic else None,
             "status": question.status,
             "owner_user_id": question.owner_user_id,
             "choices": [

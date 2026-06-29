@@ -60,6 +60,8 @@ class Config:
         "EXPOSE_INVITE_IN_DEV_RESPONSE", "false"
     ).lower() in ("1", "true", "yes")
 
+    APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Damascus")
+
     PROCTORING_STORAGE_DIR = os.getenv(
         "PROCTORING_STORAGE_DIR",
         os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "proctoring"),
@@ -69,7 +71,7 @@ class Config:
         "SCHEDULED_TEST_PUBLISH_ENABLED", "true"
     ).lower() in ("1", "true", "yes")
     SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS = int(
-        os.getenv("SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS", "60")
+        os.getenv("SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS", "5")
     )
 
     SUPER_ADMIN_EMAIL = os.getenv("SUPER_ADMIN_EMAIL", "superadmin@eduforms.local")

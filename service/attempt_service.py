@@ -25,6 +25,7 @@ from utils.academic_rbac import (
     can_take_published_test,
     verify_subject_student_access,
 )
+from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
 from utils.enums import (
     AttemptSubmissionSource,
@@ -472,16 +473,18 @@ class AttemptService:
     def _compute_expires_at(self, test: Test) -> datetime | None:
         if not test.duration_minutes:
             return None
-        return datetime.now(timezone.utc) + timedelta(minutes=int(test.duration_minutes))
+        return local_timezone_now() + timedelta(minutes=int(test.duration_minutes))
 
     def _ensure_test_takeable(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value:
             raise ValidationError("Test is not published")
-        now = datetime.now(timezone.utc)
-        if test.starts_at and now < test.starts_at:
+        now = local_timezone_now()
+        if test.starts_at and now < ensure_local_aware(test.starts_at):
             raise ValidationError("Test has not started yet")
         if test.entry_window_minutes and test.starts_at:
-            window_end = test.starts_at + timedelta(minutes=int(test.entry_window_minutes))
+            window_end = ensure_local_aware(test.starts_at) + timedelta(
+                minutes=int(test.entry_window_minutes)
+            )
             if now > window_end:
                 raise ValidationError("Test entry window has closed")
 
@@ -603,8 +606,8 @@ class AttemptService:
             "passing_score": float(test.passing_score)
             if test.passing_score is not None
             else None,
-            "starts_at": test.starts_at.isoformat() if test.starts_at else None,
-            "published_at": test.published_at.isoformat() if test.published_at else None,
+            "starts_at": format_local_datetime(test.starts_at),
+            "published_at": format_local_datetime(test.published_at),
         }
 
     def _resolve_in_progress_attempt(

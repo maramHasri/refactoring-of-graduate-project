@@ -1,5 +1,6 @@
 from marshmallow import Schema, fields, pre_load, validate
 
+from schemas.app_timezone_fields import LocalDateTime
 from schemas.question_schema import CreateQuestionInBankItemSchema, QuestionChoiceInputSchema
 from utils.enums import (
     AvailabilityTimeMode,
@@ -25,7 +26,7 @@ class TestSchema(Schema):
     created_by_membership_id = fields.Int(allow_none=True)
     status = fields.Str()
     availability_time_mode = fields.Str(allow_none=True)
-    starts_at = fields.DateTime(allow_none=True)
+    starts_at = LocalDateTime(allow_none=True)
     duration_minutes = fields.Int(allow_none=True)
     entry_window_minutes = fields.Int(allow_none=True)
     published_at = fields.DateTime(dump_only=True)
@@ -41,10 +42,19 @@ class CreateTestSchema(Schema):
 
     name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
     description = fields.Str(allow_none=True)
-    duration_minutes = fields.Int(required=True, validate=validate.Range(min=1))
     subject_id = fields.Int(required=True)
-    passing_score = fields.Float(required=True, validate=validate.Range(min=0))
-    total_score = fields.Float(required=True, validate=validate.Range(min=0))
+    duration_minutes = fields.Int(
+        load_default=30,
+        validate=validate.Range(min=1),
+    )
+    total_score = fields.Float(
+        load_default=100,
+        validate=validate.Range(min=0),
+    )
+    passing_score = fields.Float(
+        load_default=50,
+        validate=validate.Range(min=0),
+    )
     auto_distribute_scores = fields.Bool(load_default=False)
 
 
@@ -62,7 +72,7 @@ class UpdateTestSchema(Schema):
         allow_none=True,
         validate=validate.OneOf([m.value for m in AvailabilityTimeMode]),
     )
-    starts_at = fields.DateTime(allow_none=True)
+    starts_at = LocalDateTime(allow_none=True)
     duration_minutes = fields.Int(allow_none=True, validate=validate.Range(min=1))
     entry_window_minutes = fields.Int(allow_none=True, validate=validate.Range(min=0))
 
@@ -80,7 +90,7 @@ class AddBankQuestionsToTestSchema(Schema):
 
 
 class ScheduleTestSchema(Schema):
-    publish_at = fields.DateTime(required=True)
+    publish_at = LocalDateTime(required=True)
 
 
 class AddManualQuestionsToTestSchema(Schema):
@@ -100,19 +110,38 @@ class AddQuestionsFromBankSelectionSchema(Schema):
     )
 
 
-class RandomFromBanksSchema(Schema):
-    bank_ids = fields.List(
-        fields.Int(validate=validate.Range(min=1)),
+class DifficultyDistributionSchema(Schema):
+    easy = fields.Int(required=True, validate=validate.Range(min=0, max=100))
+    medium = fields.Int(required=True, validate=validate.Range(min=0, max=100))
+    hard = fields.Int(required=True, validate=validate.Range(min=0, max=100))
+
+
+class BlueprintTopicSchema(Schema):
+    topic_id = fields.Int(required=True, validate=validate.Range(min=1))
+    percentage = fields.Int(required=True, validate=validate.Range(min=1, max=100))
+    difficulty_distribution = fields.Nested(
+        DifficultyDistributionSchema, required=True
+    )
+
+
+class BlueprintBankSchema(Schema):
+    bank_id = fields.Int(required=True, validate=validate.Range(min=1))
+    question_count = fields.Int(required=True, validate=validate.Range(min=1, max=200))
+    topics = fields.List(
+        fields.Nested(BlueprintTopicSchema),
         required=True,
         validate=validate.Length(min=1),
     )
-    count = fields.Int(required=True, validate=validate.Range(min=1, max=200))
-    difficulty = fields.Str(
-        allow_none=True,
-        validate=validate.OneOf(["EASY", "MEDIUM", "HARD"]),
+
+
+class ExamBlueprintSchema(Schema):
+    """POST /tests/{test_id}/questions/random-from-banks — exam blueprint generator."""
+
+    banks = fields.List(
+        fields.Nested(BlueprintBankSchema),
+        required=True,
+        validate=validate.Length(min=1),
     )
-    type_code = fields.Str(allow_none=True, validate=validate.Length(min=2, max=50))
-    topic_id = fields.Int(allow_none=True)
 
 
 class AIGenerateQuestionsSchema(Schema):

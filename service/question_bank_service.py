@@ -240,6 +240,39 @@ class QuestionBankService:
         )
         return bank
 
+    def resolve_bank_for_exam_blueprint(
+        self,
+        *,
+        bank_id: int,
+        workspace_id: int,
+        actor_membership,
+        test_subject_id: int,
+    ) -> QuestionBank:
+        """Resolve a bank for exam blueprint with clearer errors on workspace/subject mismatch."""
+        try:
+            bank = self.resolve_bank_for_question_view(
+                bank_id=bank_id,
+                workspace_id=workspace_id,
+                actor_membership=actor_membership,
+            )
+        except NotFoundError:
+            bank = self.banks.get_by_id(bank_id)
+            if bank and bank.deleted_at is None:
+                raise ValidationError(
+                    f"Question bank {bank_id} belongs to workspace {bank.workspace_id} "
+                    f"(subject {bank.subject_id}) and is not visible from workspace "
+                    f"{workspace_id}. Use X-Workspace-Id: {bank.workspace_id} for that "
+                    f"bank, or a COMMUNITY bank for exam subject {test_subject_id}."
+                ) from None
+            raise
+
+        if bank.subject_id != test_subject_id:
+            raise ValidationError(
+                f"Bank {bank.id} belongs to subject {bank.subject_id}, "
+                f"but the exam is for subject {test_subject_id}"
+            )
+        return bank
+
     def resolve_bank_for_question_view(
         self, *, bank_id: int, workspace_id: int, actor_membership
     ) -> QuestionBank:

@@ -12,10 +12,12 @@ from repositories.test_repository import TestQuestionRepository, TestRepository
 from repositories.topic_repository import TopicRepository
 from repositories.attempt_repository import TestAttemptRepository
 from repositories.workspace_repository import WorkspaceRepository
+from service.exam_blueprint_service import ExamBlueprintService
 from service.ai_question_service import AIQuestionService
 from service.question_bank_service import QuestionBankService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import can_manage_subjects, verify_subject_teacher_access
+from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
 from utils.enums import Difficulty, TestQuestionSourceType, TestStatus
 from utils.question_type_validation import validate_question_create_payload
@@ -34,6 +36,7 @@ class TestService:
         self.workspaces = WorkspaceRepository()
         self.bank_service = QuestionBankService()
         self.ai_questions = AIQuestionService()
+        self.exam_blueprint = ExamBlueprintService()
 
     def create_test(self, *, workspace_id: int, actor_membership, data: dict) -> Test:
         workspace = self.workspaces.get_by_id(workspace_id)
@@ -115,7 +118,8 @@ class TestService:
         if "availability_time_mode" in data:
             test.availability_time_mode = data.get("availability_time_mode")
         if "starts_at" in data:
-            test.starts_at = data.get("starts_at")
+            value = data.get("starts_at")
+            test.starts_at = ensure_local_aware(value) if value is not None else None
         if "duration_minutes" in data:
             test.duration_minutes = data.get("duration_minutes")
         if "entry_window_minutes" in data:
@@ -277,44 +281,25 @@ class TestService:
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
 
-    def add_random_questions_from_banks(
+    def generate_exam_from_blueprint(
         self,
         *,
         test_id: int,
         workspace_id: int,
         actor_membership,
-        bank_ids: list[int],
-        count: int,
-        difficulty: str | None = None,
-        type_code: str | None = None,
-        topic_id: int | None = None,
-    ) -> list[dict]:
+        banks_blueprint: list[dict],
+    ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
-        valid_bank_ids = []
-        for bank_id in bank_ids:
-            bank = self.bank_service.resolve_bank_for_question_view(
-                bank_id=bank_id,
-                workspace_id=workspace_id,
-                actor_membership=actor_membership,
-            )
-            if bank.subject_id != test.subject_id:
-                raise ValidationError("All selected banks must match exam subject")
-            valid_bank_ids.append(bank.id)
-
-        pool = self.questions.list_random_by_banks(
-            bank_ids=valid_bank_ids,
-            limit=count,
-            difficulty=(difficulty.upper() if difficulty else None),
-            type_code=type_code,
-            topic_id=topic_id,
+        plans = self.exam_blueprint.build_plan(
+            banks_blueprint=banks_blueprint,
+            test_subject_id=test.subject_id,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
         )
-        if len(pool) < count:
-            raise ValidationError(
-                f"Not enough questions to satisfy random selection (requested {count}, found {len(pool)})"
-            )
+        selected_questions, summary = self.exam_blueprint.select_questions(plans)
 
         created = []
-        for question in pool:
+        for question in selected_questions:
             snapshot = self._snapshot_from_source_question(question)
             row = TestQuestion(
                 test_id=test.id,
@@ -336,7 +321,13 @@ class TestService:
             created.append(row)
 
         db.session.commit()
-        return [self.serialize_test_question(row) for row in created]
+        serialized = [self.serialize_test_question(row) for row in created]
+        return {
+            "message": "Blueprint generated successfully",
+            "count": len(serialized),
+            "summary": summary,
+            "questions": serialized,
+        }
 
     def add_ai_generated_questions(
         self,
@@ -433,7 +424,7 @@ class TestService:
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
             raise ValidationError("Closed or archived tests cannot be published")
         test.status = TestStatus.PUBLISHED.value
-        test.published_at = datetime.now(timezone.utc)
+        test.published_at = local_timezone_now()
         test.scheduled_publish_at = None
         db.session.commit()
         return test
@@ -455,7 +446,8 @@ class TestService:
             raise ValidationError("Closed or archived tests cannot be scheduled")
         if not publish_at:
             raise ValidationError("publish_at is required")
-        now = datetime.now(timezone.utc)
+        publish_at = ensure_local_aware(publish_at)
+        now = local_timezone_now()
         if publish_at <= now:
             raise ValidationError("publish_at must be in the future")
         test.status = TestStatus.SCHEDULED.value
@@ -468,14 +460,14 @@ class TestService:
         if test.status == TestStatus.ARCHIVED.value:
             raise ValidationError("Archived tests cannot be closed")
         test.status = TestStatus.CLOSED.value
-        test.closed_at = datetime.now(timezone.utc)
+        test.closed_at = local_timezone_now()
         db.session.commit()
         return test
 
     def archive_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         test.status = TestStatus.ARCHIVED.value
-        test.archived_at = datetime.now(timezone.utc)
+        test.archived_at = local_timezone_now()
         db.session.commit()
         return test
 
@@ -569,6 +561,30 @@ class TestService:
             ),
         }
 
+    def serialize_test_created(self, test: Test) -> dict:
+        """Payload for POST /tests — essential fields only (no lifecycle/config nulls)."""
+        return {
+            "test_id": test.id,
+            "name": test.name,
+            "description": test.description,
+            "subject_id": test.subject_id,
+            "subject_name": test.subject.name if test.subject else None,
+            "duration_minutes": test.duration_minutes,
+            "total_score": float(test.total_score) if test.total_score is not None else None,
+            "passing_score": float(test.passing_score) if test.passing_score is not None else None,
+            "auto_distribute_scores": bool(test.auto_distribute_scores),
+            "status": test.status,
+            "slug": test.slug,
+            "created_at": format_local_datetime(test.created_at),
+        }
+
+    def serialize_test_updated(self, test: Test) -> dict:
+        """PATCH /tests/{id} — full settings without lifecycle close/archive timestamps."""
+        payload = self.serialize_test(test)
+        for key in ("published_at", "closed_at", "archived_at"):
+            payload.pop(key, None)
+        return payload
+
     def serialize_test(self, test: Test) -> dict:
         return {
             "test_id": test.id,
@@ -585,18 +601,16 @@ class TestService:
             "scoring_config": self._load_json(test.scoring_config),
             "settings_config": self._load_json(test.settings_config),
             "availability_time_mode": test.availability_time_mode,
-            "starts_at": test.starts_at.isoformat() if test.starts_at else None,
+            "starts_at": format_local_datetime(test.starts_at),
             "duration_minutes": test.duration_minutes,
             "entry_window_minutes": test.entry_window_minutes,
             "created_by_membership_id": test.created_by_membership_id,
-            "published_at": test.published_at.isoformat() if test.published_at else None,
-            "scheduled_publish_at": test.scheduled_publish_at.isoformat()
-            if test.scheduled_publish_at
-            else None,
-            "closed_at": test.closed_at.isoformat() if test.closed_at else None,
-            "archived_at": test.archived_at.isoformat() if test.archived_at else None,
-            "created_at": test.created_at.isoformat() if test.created_at else None,
-            "updated_at": test.updated_at.isoformat() if test.updated_at else None,
+            "published_at": format_local_datetime(test.published_at),
+            "scheduled_publish_at": format_local_datetime(test.scheduled_publish_at),
+            "closed_at": format_local_datetime(test.closed_at),
+            "archived_at": format_local_datetime(test.archived_at),
+            "created_at": format_local_datetime(test.created_at),
+            "updated_at": format_local_datetime(test.updated_at),
         }
 
     def serialize_test_question(self, row: TestQuestion) -> dict:

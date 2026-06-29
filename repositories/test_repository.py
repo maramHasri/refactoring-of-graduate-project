@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import update
 
 from models import Test, TestQuestion
 from repositories.base_repository import BaseRepository
+from utils.app_timezone import local_timezone_now
 from utils.db import db
 from utils.enums import TestStatus
 
@@ -36,7 +37,7 @@ class TestRepository(BaseRepository):
 
     def publish_due_scheduled_tests(self, *, now: datetime | None = None) -> list[int]:
         """Atomically publish SCHEDULED tests whose scheduled_publish_at has passed."""
-        now = now or datetime.now(timezone.utc)
+        now = now or local_timezone_now()
         stmt = (
             update(Test)
             .where(

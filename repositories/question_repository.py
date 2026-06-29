@@ -43,6 +43,63 @@ class QuestionRepository(BaseRepository):
             .one_or_none()
         )
 
+    def count_active_by_bank_topic_difficulty(
+        self,
+        *,
+        bank_id: int,
+        topic_id: int,
+        difficulty: str,
+    ) -> int:
+        normalized = difficulty.strip().upper()
+        return (
+            db.session.execute(
+                db.select(db.func.count(Question.id)).where(
+                    Question.bank_id == bank_id,
+                    Question.topic_id == topic_id,
+                    Question.status == "ACTIVE",
+                    Question.difficulty == normalized,
+                )
+            ).scalar()
+            or 0
+        )
+
+    def bank_has_topic(self, bank_id: int, topic_id: int) -> bool:
+        row = db.session.execute(
+            db.select(Question.id).where(
+                Question.bank_id == bank_id,
+                Question.topic_id == topic_id,
+                Question.status == "ACTIVE",
+            ).limit(1)
+        ).scalar_one_or_none()
+        return row is not None
+
+    def list_random_by_bank_topic_difficulty(
+        self,
+        *,
+        bank_id: int,
+        topic_id: int,
+        difficulty: str,
+        limit: int,
+        exclude_question_ids: set[int] | None = None,
+    ) -> list[Question]:
+        if limit <= 0:
+            return []
+        normalized = difficulty.strip().upper()
+        query = db.select(Question).where(
+            Question.bank_id == bank_id,
+            Question.topic_id == topic_id,
+            Question.status == "ACTIVE",
+            Question.difficulty == normalized,
+        )
+        if exclude_question_ids:
+            query = query.where(Question.id.not_in(exclude_question_ids))
+        return list(
+            db.session.execute(query.order_by(db.func.random()).limit(limit))
+            .scalars()
+            .unique()
+            .all()
+        )
+
     def list_random_by_banks(
         self,
         *,

@@ -14,3 +14,4 @@ flasgger==0.9.7.1
 PyYAML==6.0.2
 flask-sock==0.7.0
 simple-websocket==1.0.0
+tzdata>=2024.1

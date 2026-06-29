@@ -917,6 +917,8 @@ paths:
         or many for a full editing session. All questions are created in one transaction;
         if any item fails, nothing is saved.
         Supported type_code values: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
+        Optional topic_id per question — must be a topic under the bank's subject
+        (list topics via GET /subjects/{subject_id}/topics).
         Requires TEACHER assignment on the bank's subject (or workspace admin/owner).
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -947,7 +949,7 @@ paths:
                     difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
                     topic_id:
                       type: integer
-                      description: Optional. Must belong to the bank's subject when set.
+                      description: Optional. Must belong to the bank's subject (same workspace).
                     choices:
                       type: array
                       items:
@@ -961,6 +963,7 @@ paths:
               questions:
                 - type_code: MCQ
                   body: "What is 2 + 2?"
+                  topic_id: 11
                   points: 2
                   difficulty: EASY
                   choices:
@@ -968,6 +971,7 @@ paths:
                     - { body: "5", is_correct: false }
                 - type_code: ESSAY
                   body: "Explain photosynthesis."
+                  topic_id: 12
                   points: 5
                   difficulty: MEDIUM
       responses:
@@ -1121,18 +1125,49 @@ paths:
           required: true
           schema:
             type: object
-            required: [name, duration_minutes, subject_id, passing_score, total_score]
+            required: [name, subject_id]
             properties:
               name: { type: string, example: "Midterm Exam" }
               description: { type: string }
-              duration_minutes: { type: integer, example: 60 }
               subject_id: { type: integer, example: 1 }
-              passing_score: { type: number, example: 50 }
-              total_score: { type: number, example: 100 }
-              auto_distribute_scores: { type: boolean, example: true }
+              duration_minutes:
+                type: integer
+                default: 30
+                example: 30
+                description: Exam duration in minutes (default 30)
+              total_score:
+                type: number
+                default: 100
+                example: 100
+                description: Maximum score (default 100)
+              passing_score:
+                type: number
+                default: 50
+                example: 50
+                description: Passing score (default 50)
+              auto_distribute_scores: { type: boolean, example: false }
       responses:
         201:
           description: Test created
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Test created successfully" }
+              test:
+                type: object
+                properties:
+                  test_id: { type: integer }
+                  name: { type: string }
+                  description: { type: string }
+                  subject_id: { type: integer }
+                  subject_name: { type: string }
+                  duration_minutes: { type: integer }
+                  total_score: { type: number }
+                  passing_score: { type: number }
+                  auto_distribute_scores: { type: boolean }
+                  status: { type: string, example: DRAFT }
+                  slug: { type: string }
+                  created_at: { type: string, format: date-time }
   /tests/my:
     get:
       tags: [Tests]
@@ -1182,7 +1217,7 @@ paths:
               entry_window_minutes: { type: integer }
       responses:
         200:
-          description: Test updated
+          description: Test updated (excludes published_at, closed_at, archived_at)
   /tests/{test_id}/questions:
     post:
       tags: [Tests]
@@ -1287,7 +1322,11 @@ paths:
   /tests/{test_id}/questions/random-from-banks:
     post:
       tags: [Tests]
-      summary: Add random questions from one or more banks
+      summary: Generate exam questions from blueprint (random-from-banks)
+      description: |
+        Exam Blueprint Generator. Each bank defines question_count, topic percentages (must sum to 100),
+        and per-topic difficulty_distribution (easy + medium + hard = 100).
+        Questions are randomly selected per bank/topic/difficulty and snapshotted into the test.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1299,16 +1338,50 @@ paths:
           required: true
           schema:
             type: object
-            required: [bank_ids, count]
+            required: [banks]
             properties:
-              bank_ids: { type: array, items: { type: integer } }
-              count: { type: integer, example: 20 }
-              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
-              type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
-              topic_id: { type: integer }
+              banks:
+                type: array
+                items:
+                  type: object
+                  required: [bank_id, question_count, topics]
+                  properties:
+                    bank_id: { type: integer, example: 3 }
+                    question_count: { type: integer, example: 20 }
+                    topics:
+                      type: array
+                      items:
+                        type: object
+                        required: [topic_id, percentage, difficulty_distribution]
+                        properties:
+                          topic_id: { type: integer, example: 11 }
+                          percentage: { type: integer, example: 30 }
+                          difficulty_distribution:
+                            type: object
+                            required: [easy, medium, hard]
+                            properties:
+                              easy: { type: integer, example: 20 }
+                              medium: { type: integer, example: 50 }
+                              hard: { type: integer, example: 30 }
       responses:
         201:
-          description: Random questions added
+          description: Blueprint generated successfully
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Blueprint generated successfully" }
+              count: { type: integer }
+              summary:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    bank_id: { type: integer }
+                    requested: { type: integer }
+                    inserted: { type: integer }
+              questions: { type: array, items: { type: object } }
+        400:
+          description: Validation error (percentages, insufficient pool, topic not in bank)
   /tests/{test_id}/questions/ai-generate:
     post:
       tags: [Tests]
@@ -1435,9 +1508,10 @@ paths:
       summary: Schedule test publication
       description: |
         Sets status to SCHEDULED and stores publish_at in scheduled_publish_at.
-        A background job checks every 60s (configurable) and auto-publishes due tests
-        (status becomes PUBLISHED, published_at is set). You can also run
-        `flask publish-due-tests` manually.
+        Send naive local datetime (no Z suffix), e.g. `2026-06-29T08:00:00`.
+        Times use APP_TIMEZONE from server config (default Asia/Damascus).
+        A background job checks every 5s (configurable) and auto-publishes due tests.
+        You can also run `flask publish-due-tests` manually.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1451,7 +1525,10 @@ paths:
             type: object
             required: [publish_at]
             properties:
-              publish_at: { type: string, format: date-time }
+              publish_at:
+                type: string
+                example: "2026-06-29T08:00:00"
+                description: Local wall-clock time (APP_TIMEZONE). No Z or offset suffix.
       responses:
         200:
           description: Test scheduled
