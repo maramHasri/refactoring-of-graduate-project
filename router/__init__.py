@@ -10,6 +10,7 @@ from router.question_bank_routes import question_bank_bp
 from router.admin_routes import admin_bp
 from router.test_routes import test_bp
 from router.attempt_routes import attempt_bp
+from router.grading_routes import grading_bp
 from router.proctoring_routes import proctoring_bp
 from router.template_routes import template_bp
 
@@ -26,6 +27,7 @@ def register_blueprints(app):
     app.register_blueprint(question_bank_bp, url_prefix="/question-banks")
     app.register_blueprint(test_bp, url_prefix="/tests")
     app.register_blueprint(attempt_bp, url_prefix="/tests")
+    app.register_blueprint(grading_bp, url_prefix="/tests")
     app.register_blueprint(proctoring_bp, url_prefix="/tests")
     app.register_blueprint(template_bp, url_prefix="/templates")
     app.register_blueprint(admin_bp, url_prefix="/admin")

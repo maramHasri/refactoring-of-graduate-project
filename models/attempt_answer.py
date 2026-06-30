@@ -31,6 +31,7 @@ class AttemptAnswer(db.Model, TimestampMixin):
     )
     answer_text = db.Column(Text, nullable=True)
     selected_choice_indices = db.Column(Text, nullable=True)
+    teacher_feedback = db.Column(Text, nullable=True)
     is_correct = db.Column(db.Boolean, nullable=True)
     earned_score = db.Column(Numeric(6, 2), nullable=True)
     grading_status = db.Column(String(30), nullable=True, index=True)

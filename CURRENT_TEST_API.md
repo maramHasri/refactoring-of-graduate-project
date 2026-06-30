@@ -1,6 +1,6 @@
 # توثيق APIs الامتحانات — السلوك الحالي للباكيند
 
-> **آخر تحديث:** يعكس هذا الملف الكود الفعلي في المشروع (`router/test_routes.py`, `router/attempt_routes.py`, `router/proctoring_routes.py`).
+> **آخر تحديث:** يعكس هذا الملف الكود الفعلي في المشروع (`router/test_routes.py`, `router/attempt_routes.py`, `router/grading_routes.py`, `router/proctoring_routes.py`).
 >
 > **Base URL:** جميع المسارات تحت `/tests` ما لم يُذكر خلاف ذلك.
 >
@@ -1055,18 +1055,23 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 | `MCQ`, `TRUE_FALSE`, `MULTI_SELECT` | تصحيح فوري — `grading_status: AUTO_GRADED` |
 | `ESSAY` | بدون درجة — `grading_status: PENDING_REVIEW`, `earned_score: null` |
 
-**حالة المحاولة:**
-- بدون أسئلة مقالية → `status: GRADED` مباشرة
-- مع أسئلة مقالية → `status: SUBMITTED` حتى يصححها المعلّم
+**حالة المحاولة (حسب `AnswerGradingStatus` وليس نوع السؤال):**
+- أي إجابة `PENDING_REVIEW` → `status: SUBMITTED`
+- لا توجد إجابات `PENDING_REVIEW` → `status: GRADED` مع `raw_score`, `final_score`, `percentage`, `graded_at`
+- عند أول انتقال إلى `GRADED` يُرسل بريد إلكتروني واحد للطالب (`grading_notification_sent_at`)
 
 ---
 
-#### `POST /tests/{test_id}/attempts/{attempt_id}/grade` — تصحيح المقالات (معلّم)
+### 6.7.1 التصحيح — قسم Grading (Swagger)
+
+#### `POST /tests/{test_id}/attempts/{attempt_id}/grading/manual` — تصحيح يدوي (معلّم)
+
+يُصحّح فقط الإجابات ذات `grading_status: PENDING_REVIEW`.
 
 ```json
 {
   "answers": [
-    { "test_question_id": 55, "earned_score": 8 },
+    { "test_question_id": 55, "earned_score": 8, "teacher_feedback": "جيد" },
     { "test_question_id": 56, "earned_score": 0 }
   ]
 }
@@ -1081,12 +1086,48 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
     "status": "GRADED",
     "requires_manual_grading": false,
     "raw_score": 93,
-    "final_score": 93
+    "final_score": 93,
+    "percentage": 93.0,
+    "graded_at": "..."
   }
 }
 ```
 
-عند اكتمال تصحيح كل أسئلة `ESSAY` في الامتحان → `status` يصبح `GRADED`.
+عند عدم بقاء أي `PENDING_REVIEW` → `status` يصبح `GRADED` ويُعاد حساب الدرجات. البريد يُرسل مرة واحدة عند أول `GRADED` فقط.
+
+**Alias:** `POST .../grade` (للتوافق مع الإصدارات السابقة).
+
+---
+
+#### `GET /tests/{test_id}/attempts/{attempt_id}/grading/result` — نتيجة التصحيح
+
+**إذا `status: SUBMITTED`:**
+
+```json
+{
+  "grading_completed": false,
+  "message": "This attempt is waiting for manual grading."
+}
+```
+
+**إذا `status: GRADED`:**
+
+```json
+{
+  "grading_completed": true,
+  "final_score": 93,
+  "maximum_score": 100,
+  "percentage": 93.0,
+  "grading_summary": {
+    "total_answers": 10,
+    "auto_graded": 8,
+    "pending_review": 0,
+    "manually_graded": 2
+  },
+  "submitted_at": "...",
+  "graded_at": "..."
+}
+```
 
 ---
 
@@ -1136,7 +1177,9 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 | حقل المحاولة | الغرض |
 |--------------|--------|
 | `status` | `IN_PROGRESS` \| `SUBMITTED` \| `GRADED` |
-| `requires_manual_grading` | `true` إذا بقيت مقالات بانتظار التصحيح |
+| `requires_manual_grading` | `true` إذا وُجدت إجابات `grading_status: PENDING_REVIEW` |
+| `percentage` | النسبة المئوية بعد اكتمال التصحيح |
+| `graded_at` | وقت أول اكتمال تصحيح كامل |
 | `expires_at` | نهاية الوقت المسموح |
 | `submission_source` | `STUDENT` \| `TIMEOUT` \| `FORCE` |
 | `raw_score` / `final_score` | الدرجة بعد التصحيح |
@@ -1146,6 +1189,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 | `selected_choice_indices` | الفهارس المختارة |
 | `answer_text` | نص المقال |
 | `grading_status` | `AUTO_GRADED` \| `PENDING_REVIEW` \| `MANUALLY_GRADED` |
+| `teacher_feedback` | ملاحظات المعلّم (بعد التصحيح اليدوي) |
 | `is_correct` | نتيجة التصحيح (`null` للمقالي) |
 | `earned_score` | الدرجة المكتسبة |
 
@@ -1377,7 +1421,8 @@ ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&worksp
 | الموضوع | الوضع الحالي |
 |---------|--------------|
 | `auto_distribute_scores` | لا يُحدَّث بعد الإنشاء |
-| تصحيح ESSAY | `POST .../attempts/{id}/grade` |
+| تصحيح يدوي | `POST .../attempts/{id}/grading/manual` |
+| نتيجة التصحيح | `GET .../attempts/{id}/grading/result` |
 | `max_attempts` / إعادة المحاولة | مدعوم عبر `settings_config.attempt_settings.max_attempts` |
 | خلط الأسئلة / التنقل | غير مُطبَّق من `settings_config` |
 | عتبات proctoring | ثابتة في الكود (`proctoring_violation_engine.py`) |

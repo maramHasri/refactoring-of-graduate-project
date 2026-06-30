@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 
 from flask import current_app
 
@@ -20,16 +19,17 @@ from repositories.subject_repository import SubjectMembershipRepository, Subject
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.test_repository import TestRepository
 from repositories.workspace_repository import WorkspaceRepository
+from service.exam_grading_service import ExamGradingService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import (
     can_manage_test_attempts,
     can_take_published_test,
+    can_view_attempt_grading,
     verify_subject_student_access,
 )
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
 from utils.enums import (
-    AnswerGradingStatus,
     AttemptSubmissionSource,
     AvailabilityTimeMode,
     MembershipRole,
@@ -48,6 +48,7 @@ class AttemptService:
         self.answers = AttemptAnswerRepository()
         self.test_questions = TestQuestionRepositoryExtended()
         self.tests = TestRepository()
+        self.grading = ExamGradingService()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
         self.test_assignments = TestStudentAssignmentRepository()
@@ -357,64 +358,27 @@ class AttemptService:
         test = self._get_test_in_workspace(test_id, workspace_id)
         self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
 
-        if attempt.status not in (
-            TestAttemptStatus.SUBMITTED.value,
-            TestAttemptStatus.GRADED.value,
-        ):
+        if attempt.status != TestAttemptStatus.SUBMITTED.value:
             raise ValidationError(
-                "Essay grading is only available after the attempt is submitted"
+                "Manual grading is only available while the attempt is awaiting review"
             )
 
-        essay_questions = {
-            row.id: row
-            for row in self.test_questions.list_active_for_test(test.id)
-            if (row.snapshot_type_code or "").upper() == "ESSAY"
-        }
-        if not essay_questions:
-            raise ValidationError("This exam has no essay questions to grade")
-
-        for item in grades:
-            test_question_id = int(item["test_question_id"])
-            test_question = essay_questions.get(test_question_id)
-            if not test_question:
-                raise ValidationError(
-                    f"test_question_id {test_question_id} is not an essay in this exam"
-                )
-
-            max_points = Decimal(str(test_question.points or 0))
-            earned = Decimal(str(item["earned_score"]))
-            if earned > max_points:
-                raise ValidationError(
-                    f"earned_score for question {test_question_id} cannot exceed "
-                    f"{max_points}"
-                )
-
-            answer = self.answers.find_by_attempt_and_test_question(
-                attempt.id, test_question_id
-            )
-            if not answer:
-                answer = AttemptAnswer(
-                    attempt_id=attempt.id,
-                    test_question_id=test_question_id,
-                )
-                self.answers.add(answer)
-
-            answer.earned_score = earned
-            answer.is_correct = None
-            answer.grading_status = AnswerGradingStatus.MANUALLY_GRADED.value
-
-        self._recompute_attempt_scores(attempt)
-
-        if not self._attempt_requires_manual_grading(attempt, test):
-            attempt.status = TestAttemptStatus.GRADED.value
-            message = "Attempt fully graded"
-        else:
-            attempt.status = TestAttemptStatus.SUBMITTED.value
-            message = "Essay scores saved; manual grading still pending"
+        message, became_graded = self.grading.grade_pending_answers(
+            attempt,
+            test,
+            grades,
+            actor_membership_id=actor_membership.id,
+            actor_user_id=actor_membership.user_id,
+        )
+        self.grading.maybe_send_grading_notification(
+            attempt,
+            test,
+            became_graded_first_time=became_graded,
+        )
 
         db.session.commit()
         logger.info(
-            "event=essay_graded attempt_id=%s test_id=%s actor_membership_id=%s status=%s",
+            "event=manual_grading attempt_id=%s test_id=%s actor_membership_id=%s status=%s",
             attempt.id,
             test.id,
             actor_membership.id,
@@ -424,6 +388,37 @@ class AttemptService:
             "message": message,
             "attempt": self.serialize_attempt(attempt, include_answers=True),
         }
+
+    def get_grading_result(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        if attempt.student_membership_id == actor_membership.id:
+            self._resolve_student_test_access(test.id, workspace_id, actor_membership)
+        else:
+            workspace = self._get_workspace(workspace_id)
+            actor_link = self.subject_memberships.find_active(
+                actor_membership.id, test.subject_id
+            )
+            is_creator = test.created_by_membership_id == actor_membership.id
+            if not can_view_attempt_grading(
+                workspace,
+                actor_membership,
+                actor_subject_link=actor_link,
+                is_test_creator=is_creator,
+            ):
+                raise ForbiddenError(
+                    "Insufficient permissions to view this attempt's grading result"
+                )
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            raise ValidationError("Grading results are available only after submission")
+        return self.grading.build_grading_result(attempt, test)
 
     def timeout_attempt(
         self, *, test_id: int, attempt_id: int, workspace_id: int, actor_membership
@@ -485,12 +480,18 @@ class AttemptService:
         attempt.last_activity_at = now
         attempt.submission_source = submission_source
 
-        self._auto_grade_attempt(attempt, test)
-
-        if self._attempt_requires_manual_grading(attempt, test):
-            attempt.status = TestAttemptStatus.SUBMITTED.value
-        else:
-            attempt.status = TestAttemptStatus.GRADED.value
+        became_graded = self.grading.process_submission_grading(
+            attempt,
+            test,
+            submission_source=submission_source,
+            actor_membership_id=attempt.student_membership_id,
+            actor_user_id=attempt.user_id,
+        )
+        self.grading.maybe_send_grading_notification(
+            attempt,
+            test,
+            became_graded_first_time=became_graded,
+        )
 
         self._maybe_terminate_proctoring(attempt=attempt, completed=True)
 
@@ -505,98 +506,6 @@ class AttemptService:
         return {
             "attempt": self.serialize_attempt(attempt, include_answers=True),
         }
-
-    def _auto_grade_attempt(self, attempt: TestAttempt, test: Test) -> None:
-        """
-        Deterministic grading rules:
-        - MCQ / TRUE_FALSE / MULTI_SELECT → auto-graded immediately
-        - ESSAY → left ungraded (PENDING_REVIEW) for teacher review
-        """
-        question_rows = {
-            row.id: row
-            for row in self.test_questions.list_active_for_test(test.id)
-        }
-        for answer in self.answers.list_for_attempt(attempt.id):
-            test_question = question_rows.get(answer.test_question_id)
-            if not test_question:
-                continue
-            type_code = (test_question.snapshot_type_code or "").upper()
-            if type_code == "ESSAY":
-                answer.is_correct = None
-                answer.earned_score = None
-                answer.grading_status = AnswerGradingStatus.PENDING_REVIEW.value
-                continue
-            if type_code not in _OBJECTIVE_TYPES:
-                answer.is_correct = None
-                answer.earned_score = None
-                answer.grading_status = AnswerGradingStatus.PENDING_REVIEW.value
-                continue
-
-            is_correct, earned = self._grade_objective_answer(test_question, answer)
-            answer.is_correct = is_correct
-            answer.earned_score = earned
-            answer.grading_status = AnswerGradingStatus.AUTO_GRADED.value
-
-        self._recompute_attempt_scores(attempt)
-
-    def _recompute_attempt_scores(self, attempt: TestAttempt) -> None:
-        total_earned = Decimal("0")
-        for answer in self.answers.list_for_attempt(attempt.id):
-            if answer.earned_score is not None:
-                total_earned += Decimal(str(answer.earned_score))
-        attempt.raw_score = float(total_earned)
-        attempt.final_score = float(total_earned)
-
-    def _attempt_requires_manual_grading(
-        self, attempt: TestAttempt, test: Test
-    ) -> bool:
-        essay_question_ids = {
-            row.id
-            for row in self.test_questions.list_active_for_test(test.id)
-            if (row.snapshot_type_code or "").upper() == "ESSAY"
-        }
-        if not essay_question_ids:
-            return False
-
-        answers = {
-            answer.test_question_id: answer
-            for answer in self.answers.list_for_attempt(attempt.id)
-        }
-        for question_id in essay_question_ids:
-            answer = answers.get(question_id)
-            if not answer:
-                return True
-            if answer.grading_status != AnswerGradingStatus.MANUALLY_GRADED.value:
-                return True
-        return False
-
-    def _grade_objective_answer(
-        self, test_question: TestQuestion, answer: AttemptAnswer
-    ) -> tuple[bool | None, Decimal | None]:
-        type_code = (test_question.snapshot_type_code or "").upper()
-        choices = self._load_json(test_question.snapshot_choices_json) or []
-        indices = answer.get_selected_indices()
-        max_points = Decimal(str(test_question.points or 0))
-
-        if type_code in ("MCQ", "TRUE_FALSE"):
-            if len(indices) != 1:
-                return False, Decimal("0")
-            idx = indices[0]
-            if idx < 0 or idx >= len(choices):
-                return False, Decimal("0")
-            correct = bool(choices[idx].get("is_correct"))
-            return correct, max_points if correct else Decimal("0")
-
-        if type_code == "MULTI_SELECT":
-            correct_indices = {
-                i for i, choice in enumerate(choices) if choice.get("is_correct")
-            }
-            selected = set(indices)
-            if selected == correct_indices and correct_indices:
-                return True, max_points
-            return False, Decimal("0")
-
-        return None, None
 
     def _upsert_answers(
         self,
@@ -817,9 +726,9 @@ class AttemptService:
             "submission_source": attempt.submission_source,
             "raw_score": attempt.raw_score,
             "final_score": attempt.final_score,
-            "requires_manual_grading": (
-                self._attempt_requires_manual_grading(attempt, test) if test else False
-            ),
+            "percentage": attempt.percentage,
+            "graded_at": attempt.graded_at.isoformat() if attempt.graded_at else None,
+            "requires_manual_grading": self.grading.has_pending_review(attempt),
             "availability_time_mode": self._availability_mode(test) if test else None,
             "global_end_at": global_end.isoformat() if global_end else None,
             "remaining_seconds": remaining_seconds,
@@ -901,6 +810,7 @@ class AttemptService:
             if answer.earned_score is not None
             else None,
             "grading_status": answer.grading_status,
+            "teacher_feedback": answer.teacher_feedback,
             "updated_at": answer.updated_at.isoformat() if answer.updated_at else None,
         }
 

@@ -50,6 +50,19 @@ def can_take_published_test(
     return verify_subject_student_access(actor_subject_link)
 
 
+def can_view_attempt_grading(
+    workspace: Workspace,
+    actor: Membership | None,
+    *,
+    actor_subject_link: SubjectMembership | None,
+    is_test_creator: bool,
+) -> bool:
+    """Test creator, subject teacher, or workspace admin may view grading results."""
+    if can_manage_subjects(workspace, actor) or is_test_creator:
+        return True
+    return verify_subject_teacher_access(actor_subject_link)
+
+
 def can_manage_test_attempts(
     workspace: Workspace,
     actor: Membership | None,
@@ -58,9 +71,12 @@ def can_manage_test_attempts(
     is_test_creator: bool,
 ) -> bool:
     """Teachers, admins, or test creator may force-submit and list attempts."""
-    if can_manage_subjects(workspace, actor) or is_test_creator:
-        return True
-    return verify_subject_teacher_access(actor_subject_link)
+    return can_view_attempt_grading(
+        workspace,
+        actor,
+        actor_subject_link=actor_subject_link,
+        is_test_creator=is_test_creator,
+    )
 
 
 def can_assign_teachers_to_subject(

@@ -23,6 +23,7 @@ from models.question import (
     TestQuestion,
 )
 from models.attempt_answer import AttemptAnswer
+from models.attempt_grading_audit import AttemptGradingAuditLog
 from models.proctoring import (
     ProctoringAuditLog,
     ProctoringEvent,
@@ -57,6 +58,7 @@ __all__ = [
     "TestAttempt",
     "TestStudentAssignment",
     "AttemptAnswer",
+    "AttemptGradingAuditLog",
     "ProctoringSession",
     "ProctoringEvent",
     "ProctoringViolation",

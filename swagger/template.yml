@@ -37,6 +37,8 @@ tags:
     description: Student — available exams, start/resume attempts, autosave answers, submit, and exam-time proctoring
   - name: Proctoring
     description: Teacher/proctor — monitor sessions, review violations, and audit logs
+  - name: Grading
+    description: Teacher — manual grading of pending answers and grading results; students may view their own results
   - name: Invites
   - name: Join codes
 paths:
@@ -1908,9 +1910,10 @@ paths:
       summary: Submit attempt (student)
       description: |
         Finalizes attempt and runs deterministic auto-grading:
-        MCQ / TRUE_FALSE / MULTI_SELECT are graded immediately.
-        ESSAY answers stay PENDING_REVIEW; attempt status remains SUBMITTED until
-        a teacher grades essays via POST .../grade.
+        MCQ / TRUE_FALSE / MULTI_SELECT are graded immediately (AUTO_GRADED).
+        ESSAY answers become PENDING_REVIEW; attempt status remains SUBMITTED until
+        no answers are pending. When all answers are graded, status becomes GRADED
+        and a single grading-completion email is sent to the student.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1926,13 +1929,15 @@ paths:
           description: Submitted
           schema:
             $ref: "#/definitions/SubmitAttemptResponse"
-  /tests/{test_id}/attempts/{attempt_id}/grade:
+  /tests/{test_id}/attempts/{attempt_id}/grading/manual:
     post:
-      tags: [Tests]
-      summary: Grade essay answers (teacher)
+      tags: [Grading]
+      summary: Manually grade pending answers (teacher)
       description: |
-        Teacher manually scores ESSAY questions. Recomputes attempt totals.
-        Sets attempt status to GRADED when every essay in the exam has been scored.
+        Grades only answers with grading_status=PENDING_REVIEW.
+        Sets grading_status=MANUALLY_GRADED, optionally stores teacher_feedback.
+        When no answers remain pending, attempt status becomes GRADED (first time only
+        triggers a single grading-completion email to the student).
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1958,9 +1963,77 @@ paths:
                   properties:
                     test_question_id: { type: integer }
                     earned_score: { type: number, minimum: 0 }
+                    teacher_feedback: { type: string }
       responses:
         200:
-          description: Essay scores saved (attempt GRADED when complete)
+          description: Manual grades saved (attempt GRADED when no pending answers remain)
+  /tests/{test_id}/attempts/{attempt_id}/grading/result:
+    get:
+      tags: [Grading]
+      summary: Get grading result (student or teacher)
+      description: |
+        If attempt status is SUBMITTED, returns grading_completed=false with a waiting message.
+        If GRADED, returns final score, maximum score, percentage (2 decimal places),
+        grading summary, and timestamps.
+        Access: the student (own attempt), the test creator, subject teachers, or workspace admin.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Grading result payload
+          schema:
+            type: object
+            properties:
+              grading_completed: { type: boolean }
+              message: { type: string }
+              final_score: { type: number }
+              maximum_score: { type: number }
+              percentage: { type: number }
+              grading_summary: { type: object }
+              submitted_at: { type: string, format: date-time }
+              graded_at: { type: string, format: date-time }
+  /tests/{test_id}/attempts/{attempt_id}/grade:
+    post:
+      tags: [Grading]
+      summary: Manually grade pending answers (legacy alias)
+      description: Alias of POST .../grading/manual for backward compatibility.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [answers]
+            properties:
+              answers:
+                type: array
+                items:
+                  type: object
+                  required: [test_question_id, earned_score]
+                  properties:
+                    test_question_id: { type: integer }
+                    earned_score: { type: number, minimum: 0 }
+                    teacher_feedback: { type: string }
+      responses:
+        200:
+          description: Manual grades saved
   /tests/{test_id}/attempts/{attempt_id}/force-submit:
     post:
       tags: [Tests]

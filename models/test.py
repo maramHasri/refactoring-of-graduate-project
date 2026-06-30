@@ -118,6 +118,9 @@ class TestAttempt(db.Model):
     submission_source = db.Column(String(30), nullable=True)
     raw_score = db.Column(Float, nullable=True)
     final_score = db.Column(Float, nullable=True)
+    percentage = db.Column(Float, nullable=True)
+    graded_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    grading_notification_sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     test = relationship("Test", back_populates="attempts")
     student_membership = relationship(
@@ -137,6 +140,12 @@ class TestAttempt(db.Model):
         back_populates="test_attempt",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+    grading_audit_logs = relationship(
+        "AttemptGradingAuditLog",
+        back_populates="attempt",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
     )
 
     __table_args__ = (

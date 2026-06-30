@@ -68,6 +68,42 @@ class EmailDeliveryService:
         )
         self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
 
+    def send_grading_completed_email(
+        self,
+        *,
+        to_email: str,
+        student_name: str,
+        test_name: str,
+        final_score: float,
+        maximum_score: float,
+        percentage: float,
+    ) -> None:
+        subject = f"Grading completed: {test_name}"
+        percentage_text = f"{percentage:.2f}%"
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; color: #1a202c;">
+          <h2 style="color: #1a365d;">Exam grading completed</h2>
+          <p>Hello {student_name},</p>
+          <p>Your exam has been fully graded. Here are your results:</p>
+          <ul>
+            <li><strong>Exam:</strong> {test_name}</li>
+            <li><strong>Score:</strong> {final_score} / {maximum_score}</li>
+            <li><strong>Percentage:</strong> {percentage_text}</li>
+          </ul>
+          <p>You can view the full grading details in the exam platform.</p>
+          <p style="color: #718096; font-size: 12px;">edu_forms — Exam &amp; Proctoring Platform</p>
+        </div>
+        """
+        text = (
+            f"Hello {student_name},\n\n"
+            f"Your exam has been fully graded.\n"
+            f"Exam: {test_name}\n"
+            f"Score: {final_score} / {maximum_score}\n"
+            f"Percentage: {percentage_text}\n\n"
+            f"You can view the full grading details in the exam platform.\n"
+        )
+        self._send(to_email=to_email, subject=subject, html_body=html, text_body=text)
+
     def send_otp_email(self, *, to_email: str, full_name: str, otp_code: str) -> None:
         expires = current_app.config.get("OTP_EXPIRES_MINUTES", 15)
         subject = "Your edu_forms verification code"

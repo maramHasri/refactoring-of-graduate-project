@@ -40,10 +40,11 @@ class UpdateAttemptAnswerSchema(Schema):
 class GradeEssayAnswerItemSchema(Schema):
     test_question_id = fields.Int(required=True, validate=validate.Range(min=1))
     earned_score = fields.Float(required=True, validate=validate.Range(min=0))
+    teacher_feedback = fields.Str(allow_none=True)
 
 
 class GradeAttemptEssaysSchema(Schema):
-    """POST /tests/{test_id}/attempts/{attempt_id}/grade — teacher manual essay grading."""
+    """POST /tests/{test_id}/attempts/{attempt_id}/grading/manual — teacher manual grading."""
 
     answers = fields.List(
         fields.Nested(GradeEssayAnswerItemSchema),
