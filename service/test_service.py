@@ -202,6 +202,23 @@ class TestService:
         payload["questions"] = [self.serialize_test_question(row) for row in questions]
         return payload
 
+    def delete_test(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> None:
+        test = self._resolve_test_for_creator(test_id, workspace_id, actor_membership)
+        self._ensure_no_attempts_on_test(test.id)
+        self.tests.delete(test)
+        db.session.commit()
+        logger.info(
+            "event=test_deleted test_id=%s actor_membership_id=%s result=success",
+            test_id,
+            actor_membership.id,
+        )
+
     def update_test(self, *, test_id: int, workspace_id: int, actor_membership, data: dict) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status != TestStatus.DRAFT.value:
@@ -756,6 +773,16 @@ class TestService:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status != TestStatus.DRAFT.value:
             raise ValidationError("Questions can only be modified while test is DRAFT")
+        return test
+
+    def _resolve_test_for_creator(
+        self, test_id: int, workspace_id: int, actor_membership
+    ) -> Test:
+        test = self.tests.get_by_id_in_workspace(test_id, workspace_id)
+        if not test:
+            raise NotFoundError("Test not found in this workspace")
+        if test.created_by_membership_id != actor_membership.id:
+            raise ForbiddenError("Only the test creator can delete this test")
         return test
 
     def _get_test_question_or_404(self, test_id: int, test_question_id: int) -> TestQuestion:

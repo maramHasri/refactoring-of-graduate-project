@@ -30,6 +30,7 @@ from utils.app_timezone import ensure_local_aware, format_local_datetime, local_
 from utils.db import db
 from utils.enums import (
     AttemptSubmissionSource,
+    AvailabilityTimeMode,
     MembershipRole,
     TestAttemptStatus,
     TestStatus,
@@ -98,6 +99,27 @@ class AttemptService:
             if existing.status == TestAttemptStatus.IN_PROGRESS.value:
                 existing.last_activity_at = local_timezone_now()
                 db.session.commit()
+                deadline = self._attempt_end_deadline(existing, test)
+                if deadline:
+                    remaining_minutes = max(
+                        0.0, (deadline - local_timezone_now()).total_seconds() / 60
+                    )
+                    if self._is_flexible(test):
+                        logger.info(
+                            "[FLEXIBLE] Attempt resumed attempt_id=%s ends_at=%s "
+                            "remaining_minutes=%.1f",
+                            existing.id,
+                            deadline.isoformat(),
+                            remaining_minutes,
+                        )
+                    else:
+                        logger.info(
+                            "[SCHEDULED] Attempt resumed attempt_id=%s global_end=%s "
+                            "remaining_minutes=%.1f",
+                            existing.id,
+                            deadline.isoformat(),
+                            remaining_minutes,
+                        )
                 logger.info(
                     "event=attempt_resumed attempt_id=%s test_id=%s student_membership_id=%s result=success",
                     existing.id,
@@ -116,7 +138,7 @@ class AttemptService:
         self._ensure_test_takeable_for_first_attempt(test)
 
         now = local_timezone_now()
-        expires_at = self._compute_global_expires_at(test)
+        expires_at = self._compute_attempt_expires_at(test, now)
 
         attempt = TestAttempt(
             test_id=test.id,
@@ -129,6 +151,23 @@ class AttemptService:
         )
         self.attempts.add(attempt)
         db.session.commit()
+        if self._is_flexible(test):
+            logger.info(
+                "[FLEXIBLE] Attempt started attempt_id=%s test_id=%s student_membership_id=%s "
+                "ends_at=%s duration_minutes=%s",
+                attempt.id,
+                test.id,
+                actor_membership.id,
+                expires_at.isoformat(),
+                test.duration_minutes,
+            )
+        else:
+            logger.info(
+                "[SCHEDULED] Attempt started attempt_id=%s test_id=%s global_end=%s",
+                attempt.id,
+                test.id,
+                expires_at.isoformat(),
+            )
         self._maybe_start_proctoring(
             attempt=attempt,
             test=test,
@@ -310,14 +349,22 @@ class AttemptService:
     def auto_submit_due_attempts(self) -> list[int]:
         now = local_timezone_now()
         due_attempt_ids: list[int] = []
-        rows = self.attempts.list_in_progress_with_global_timing()
+        rows = self.attempts.list_in_progress_on_published_tests()
         for attempt in rows:
             test = attempt.test or self.tests.get_by_id(attempt.test_id)
             if not test:
                 continue
-            global_end = self._global_end_time(test)
-            if not global_end or now < global_end:
+            deadline = self._attempt_end_deadline(attempt, test)
+            if not deadline or now < deadline:
                 continue
+            mode_label = "FLEXIBLE" if self._is_flexible(test) else "SCHEDULED"
+            logger.info(
+                "[%s] Auto-submit attempt_id=%s test_id=%s deadline=%s",
+                mode_label,
+                attempt.id,
+                test.id,
+                deadline.isoformat(),
+            )
             self._finalize_attempt(
                 attempt,
                 test,
@@ -489,15 +536,18 @@ class AttemptService:
     def _check_and_apply_timeout(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             return
-        global_end = self._global_end_time(test)
-        if not global_end:
+        deadline = self._attempt_end_deadline(attempt, test)
+        if not deadline:
             return
         now = local_timezone_now()
-        if now >= global_end:
+        if now >= deadline:
+            mode_label = "FLEXIBLE" if self._is_flexible(test) else "SCHEDULED"
             logger.info(
-                "event=auto_submission_executed attempt_id=%s test_id=%s reason=global_end_reached",
+                "[%s] Timeout reached attempt_id=%s test_id=%s deadline=%s",
+                mode_label,
                 attempt.id,
                 attempt.test_id,
+                deadline.isoformat(),
             )
             self._finalize_attempt(
                 attempt,
@@ -505,33 +555,76 @@ class AttemptService:
                 submission_source=AttemptSubmissionSource.TIMEOUT.value,
             )
 
-    def _global_end_time(self, test: Test) -> datetime | None:
+    def _availability_mode(self, test: Test) -> str:
+        return (
+            test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value
+        ).upper()
+
+    def _is_flexible(self, test: Test) -> bool:
+        return self._availability_mode(test) == AvailabilityTimeMode.FLEXIBLE.value
+
+    def _is_scheduled(self, test: Test) -> bool:
+        return not self._is_flexible(test)
+
+    def _scheduled_global_end_time(self, test: Test) -> datetime | None:
         if not test.starts_at or not test.duration_minutes:
             return None
         return ensure_local_aware(test.starts_at) + timedelta(
             minutes=int(test.duration_minutes)
         )
 
-    def _compute_global_expires_at(self, test: Test) -> datetime:
-        global_end = self._global_end_time(test)
+    def _attempt_end_deadline(
+        self, attempt: TestAttempt, test: Test
+    ) -> datetime | None:
+        if self._is_flexible(test):
+            if not attempt.expires_at:
+                return None
+            return ensure_local_aware(attempt.expires_at)
+        return self._scheduled_global_end_time(test)
+
+    def _compute_attempt_expires_at(
+        self, test: Test, started_at: datetime
+    ) -> datetime:
+        if not test.duration_minutes:
+            raise ValidationError("Test duration is not configured")
+        if self._is_flexible(test):
+            ends_at = ensure_local_aware(started_at) + timedelta(
+                minutes=int(test.duration_minutes)
+            )
+            logger.info(
+                "[FLEXIBLE] Attempt ends at %s (duration_minutes=%s)",
+                ends_at.isoformat(),
+                test.duration_minutes,
+            )
+            return ends_at
+        global_end = self._scheduled_global_end_time(test)
         if not global_end:
             raise ValidationError(
-                "Test starts_at and duration_minutes are required for global timing"
+                "Test starts_at and duration_minutes are required for scheduled exams"
             )
+        logger.info("[SCHEDULED] Global end %s", global_end.isoformat())
         return global_end
 
     def _ensure_test_takeable_for_first_attempt(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value:
             raise ValidationError("Test is not published")
+        if not test.duration_minutes:
+            raise ValidationError("Test duration is not configured")
+
+        if self._is_flexible(test):
+            logger.info(
+                "[FLEXIBLE] Exam available for first attempt test_id=%s",
+                test.id,
+            )
+            return
+
         now = local_timezone_now()
         if not test.starts_at:
             raise ValidationError("Test start time is not configured")
-        if not test.duration_minutes:
-            raise ValidationError("Test duration is not configured")
         starts_at = ensure_local_aware(test.starts_at)
         if now < starts_at:
             raise ValidationError("Test has not started yet")
-        global_end = self._global_end_time(test)
+        global_end = self._scheduled_global_end_time(test)
         if global_end and now >= global_end:
             raise ForbiddenError("Exam has already ended")
         if test.entry_window_minutes:
@@ -544,14 +637,18 @@ class AttemptService:
                     test.id,
                 )
                 raise ForbiddenError("Entry window has closed.")
+        logger.info(
+            "[SCHEDULED] Global end %s",
+            global_end.isoformat() if global_end else "n/a",
+        )
 
     def _ensure_resume_allowed(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             raise ConflictError("Attempt is not in progress")
         if test.status != TestStatus.PUBLISHED.value:
             raise ForbiddenError("Exam is no longer available for resume")
-        global_end = self._global_end_time(test)
-        if global_end and local_timezone_now() >= global_end:
+        deadline = self._attempt_end_deadline(attempt, test)
+        if deadline and local_timezone_now() >= deadline:
             raise ForbiddenError("Exam has already ended")
 
     def serialize_attempt(
@@ -562,11 +659,16 @@ class AttemptService:
         student_view: bool = False,
     ) -> dict:
         test = attempt.test or self.tests.get_by_id(attempt.test_id)
-        global_end = self._global_end_time(test) if test else None
         now = local_timezone_now()
+        deadline = self._attempt_end_deadline(attempt, test) if test else None
+        global_end = (
+            self._scheduled_global_end_time(test)
+            if test and self._is_scheduled(test)
+            else None
+        )
         remaining_seconds = None
-        if global_end:
-            remaining_seconds = max(0, int((global_end - now).total_seconds()))
+        if deadline:
+            remaining_seconds = max(0, int((deadline - now).total_seconds()))
 
         payload = {
             "id": attempt.id,
@@ -585,6 +687,7 @@ class AttemptService:
             "submission_source": attempt.submission_source,
             "raw_score": attempt.raw_score,
             "final_score": attempt.final_score,
+            "availability_time_mode": self._availability_mode(test) if test else None,
             "global_end_at": global_end.isoformat() if global_end else None,
             "remaining_seconds": remaining_seconds,
         }

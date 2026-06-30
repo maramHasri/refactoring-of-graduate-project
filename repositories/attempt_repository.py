@@ -76,7 +76,20 @@ class TestAttemptRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def list_in_progress_on_published_tests(self) -> list[TestAttempt]:
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .where(
+                    TestAttempt.status == TestAttemptStatus.IN_PROGRESS.value,
+                    Test.status == TestStatus.PUBLISHED.value,
+                )
+            ).scalars().all()
+        )
+
     def list_in_progress_with_global_timing(self) -> list[TestAttempt]:
+        """Legacy query — scheduled exams with global timing fields set."""
         return list(
             db.session.execute(
                 db.select(TestAttempt)

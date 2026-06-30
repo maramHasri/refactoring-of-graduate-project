@@ -1219,6 +1219,26 @@ paths:
       responses:
         200:
           description: Test updated (excludes published_at, closed_at, archived_at)
+    delete:
+      tags: [Tests]
+      summary: Delete test (creator only)
+      description: |
+        Permanently deletes a test and its questions, assignments, and related data.
+        Only the membership that created the test may delete it.
+        Fails if any student attempts exist for this test.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test deleted
+        403:
+          description: Not the test creator
+        422:
+          description: Test has student attempts
   /tests/{test_id}/questions:
     post:
       tags: [Tests]
@@ -1709,9 +1729,13 @@ paths:
       description: |
         Student must be enrolled in the test subject and assigned in exam whitelist.
         Returns 200 when resuming an in-progress attempt, 201 when starting new.
-        Entry window is checked only when creating the first attempt.
-        Resume ignores entry window and is allowed until global end time.
-        Remaining time is based on (starts_at + duration_minutes) - now.
+
+        **SCHEDULED mode:** Entry window applies only on first attempt. All students share
+        `global_end_at = starts_at + duration_minutes`. Resume allowed until global end.
+
+        **FLEXIBLE mode:** No global start/end. Timer starts on first attempt:
+        `expires_at = attempt.started_at + duration_minutes`. `starts_at` and
+        `entry_window_minutes` are ignored. Each student has an independent countdown.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -2339,6 +2363,14 @@ definitions:
       submission_source: { type: string, enum: [STUDENT, TIMEOUT, FORCE] }
       raw_score: { type: number }
       final_score: { type: number }
+      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+      global_end_at:
+        type: string
+        format: date-time
+        description: SCHEDULED only — shared end time (starts_at + duration_minutes)
+      remaining_seconds:
+        type: integer
+        description: Seconds until attempt deadline (expires_at for FLEXIBLE, global_end_at for SCHEDULED)
   TestAttemptRuntime:
     allOf:
       - $ref: "#/definitions/TestAttempt"

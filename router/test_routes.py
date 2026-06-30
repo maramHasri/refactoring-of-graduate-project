@@ -67,6 +67,18 @@ def update_test(test_id):
     return {"message": "Test updated", "test": _svc().serialize_test_updated(test)}, 200
 
 
+@test_bp.route("/<int:test_id>", methods=["DELETE"])
+@require_workspace_membership
+@handle_service_errors
+def delete_test(test_id):
+    _svc().delete_test(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    )
+    return {"message": "Test deleted successfully"}, 200
+
+
 @test_bp.route("/<int:test_id>/questions", methods=["POST"])
 @require_workspace_membership
 @handle_service_errors

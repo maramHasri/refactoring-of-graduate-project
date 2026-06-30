@@ -35,6 +35,9 @@ class TestRepository(BaseRepository):
             db.select(Test).where(Test.slug == slug)
         ).scalar_one_or_none()
 
+    def delete(self, test: Test) -> None:
+        db.session.delete(test)
+
     def publish_due_scheduled_tests(self, *, now: datetime | None = None) -> list[int]:
         """Atomically publish SCHEDULED tests whose scheduled_publish_at has passed."""
         now = now or local_timezone_now()

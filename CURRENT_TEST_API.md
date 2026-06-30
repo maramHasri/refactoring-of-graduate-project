@@ -67,10 +67,25 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 ### قواعد زمنية للطالب (عند بدء المحاولة)
 
+يعتمد السلوك على `availability_time_mode`:
+
+#### `SCHEDULED` — امتحان بوقت ثابت
+
 - الاختبار يجب أن يكون `PUBLISHED`.
-- إذا وُجد `starts_at`: لا يبدأ الطالب قبل هذا الوقت.
-- إذا وُجد `entry_window_minutes` مع `starts_at`: يُغلق باب الدخول بعد `starts_at + entry_window_minutes`.
-- إذا وُجد `duration_minutes`: تُحسب `expires_at` للمحاولة = وقت البدء + المدة.
+- `starts_at` و `duration_minutes` مطلوبان.
+- لا يبدأ الطالب قبل `starts_at`.
+- `entry_window_minutes` يُفحص **فقط عند أول محاولة** — يُغلق الدخول بعد `starts_at + entry_window_minutes`.
+- **كل الطلاب ينتهون معاً** عند `global_end = starts_at + duration_minutes`.
+- الاستئناف مسموح حتى `global_end` (بغض النظر عن نافذة الدخول).
+
+#### `FLEXIBLE` — امتحان بوقت مرن
+
+- الاختبار يجب أن يكون `PUBLISHED` و `duration_minutes` مطلوب.
+- `starts_at` **لا يُستخدم** في حساب الوقت (يمكن أن يكون `null` أو قديماً).
+- `entry_window_minutes` **يُتجاهل بالكامل**.
+- المؤقت يبدأ **عند أول محاولة**: `expires_at = attempt.started_at + duration_minutes`.
+- كل طالب له عدّاد مستقل.
+- الاستئناف والتسليم التلقائي يعتمدان على `expires_at` للمحاولة، وليس على `starts_at`.
 
 ### النشر التلقائي للمجدول
 
@@ -873,15 +888,21 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 - `403` — الطالب غير معيّن في whitelist أو نافذة الدخول أُغلقت (للمحاولة الأولى)
 - `400` — الاختبار غير منشور / لم يبدأ بعد
 
-**مهم جداً (منطق الزمن العالمي):**
-- وقت النهاية لا يُحسب من `attempt_start + duration`
-- بل دائماً من:
-  - `global_end = starts_at + duration_minutes`
-- لذلك كل الطلاب ينتهون في نفس الوقت.
+**مهم — منطق الزمن حسب الوضع:**
 
-**الاستئناف:**
+| الوضع | مصدر وقت النهاية | `remaining_seconds` |
+|-------|------------------|---------------------|
+| `SCHEDULED` | `global_end_at = starts_at + duration_minutes` | حتى `global_end_at` |
+| `FLEXIBLE` | `expires_at = attempt.started_at + duration_minutes` | حتى `expires_at` |
+
+**SCHEDULED:**
 - نافذة الدخول (`entry_window`) تُفحص فقط عند إنشاء أول محاولة.
-- إذا أنشأ الطالب محاولة قبل إغلاق النافذة، يمكنه الاستئناف لاحقاً حتى `global_end`.
+- إذا أنشأ الطالب محاولة قبل إغلاق النافذة، يمكنه الاستئناف حتى `global_end_at`.
+
+**FLEXIBLE:**
+- لا يوجد `global_end_at` في الاستجابة.
+- لا يُرفض الامتحان لأن `starts_at + duration` في الماضي.
+- مثال: نُشر اليوم، `starts_at` أمس، `duration=10` → الطالب يبدأ اليوم وينتهي بعد 10 دقائق من بدئه.
 
 ---
 
