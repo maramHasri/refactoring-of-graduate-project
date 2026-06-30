@@ -6,6 +6,7 @@ from flask import Blueprint, g
 from router.decorators import handle_service_errors, require_workspace_membership
 from schemas.attempt_schema import (
     BulkSaveAttemptAnswersSchema,
+    GradeAttemptEssaysSchema,
     UpdateAttemptAnswerSchema,
 )
 from service.attempt_service import AttemptService
@@ -128,6 +129,23 @@ def submit_attempt(test_id, attempt_id):
         attempt_id=attempt_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
+    ), 200
+
+
+@attempt_bp.route("/<int:test_id>/attempts/<int:attempt_id>/grade", methods=["POST"])
+@require_workspace_membership
+@handle_service_errors
+def grade_attempt_essays(test_id, attempt_id):
+    """POST /tests/{test_id}/attempts/{attempt_id}/grade — teacher essay grading."""
+    from flask import request
+
+    data = GradeAttemptEssaysSchema().load(request.get_json() or {})
+    return _svc().grade_attempt_essays(
+        test_id=test_id,
+        attempt_id=attempt_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        grades=data["answers"],
     ), 200
 
 

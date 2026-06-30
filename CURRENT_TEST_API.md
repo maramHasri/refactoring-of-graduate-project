@@ -129,14 +129,12 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
   "name": "امتحان الفصل الأول",
   "slug": "امتحان-الفصل-الاول",
   "description": "وصف اختياري",
-  "grading_mode": "AUTO",
   "subject_id": 1,
   "subject_name": "رياضيات",
   "status": "DRAFT",
   "total_score": 100,
   "passing_score": 50,
   "auto_distribute_scores": false,
-  "scoring_config": null,
   "settings_config": { "proctoring": { "enabled": true } },
   "availability_time_mode": "SCHEDULED",
   "starts_at": "2026-06-20T09:00:00+00:00",
@@ -158,14 +156,14 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 | `name` | اسم الاختبار |
 | `slug` | معرّف URL فريد على مستوى المنصة (يُولَّد تلقائياً من الاسم عند الإنشاء) |
 | `description` | وصف للمعلّم/الطالب |
-| `grading_mode` | نص حر (مثل `AUTO`) — **غير مُطبَّق بقوة** في التصحيح حالياً |
+| `grading_mode` | **محذوف** — التصحيح محدد في الكود وليس قابلاً للتكوين |
 | `subject_id` / `subject_name` | المادة المرتبطة |
 | `status` | `DRAFT` \| `SCHEDULED` \| `PUBLISHED` \| `CLOSED` \| `ARCHIVED` |
 | `total_score` | الدرجة الكلية المتوقعة |
 | `passing_score` | درجة النجاح (يجب ≤ `total_score`) |
 | `auto_distribute_scores` | يُعيَّن عند الإنشاء فقط — **لا يُحدَّث عبر PATCH** |
-| `scoring_config` | JSON اختياري — **يُخزَّن فقط**، لا يؤثر على التصحيح حالياً |
-| `settings_config` | JSON — الجزء المفعّل: `proctoring.enabled` |
+| `scoring_config` | **محذوف** — لا يُستخدم |
+| `settings_config` | JSON — **الحقل الفعّال الوحيد:** `proctoring.enabled` |
 | `availability_time_mode` | `SCHEDULED` \| `FLEXIBLE` |
 | `starts_at` | وقت فتح الامتحان (توقيت محلي `APP_TIMEZONE`) |
 | `duration_minutes` | مدة المحاولة بالدقائق |
@@ -273,7 +271,7 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 }
 ```
 
-> لا يُرجع حقول الإعدادات المتقدمة غير المُعيَّنة بعد الإنشاء (`scoring_config`, `settings_config`, `published_at`, …). استخدم `GET /tests/{test_id}` للتفاصيل الكاملة.
+> لا يُرجع حقول الإعدادات غير المُعيَّنة بعد الإنشاء (`settings_config`, `published_at`, …). استخدم `GET /tests/{test_id}` للتفاصيل الكاملة.
 
 ---
 
@@ -320,14 +318,12 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 {
   "name": "امتحان محدّث",
   "description": "وصف جديد",
-  "grading_mode": "AUTO",
   "total_score": 100,
   "passing_score": 60,
   "duration_minutes": 75,
   "availability_time_mode": "SCHEDULED",
   "starts_at": "2026-06-20T09:00:00Z",
   "entry_window_minutes": 30,
-  "scoring_config": {},
   "settings_config": {
     "proctoring": { "enabled": true }
   }
@@ -336,10 +332,9 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 | الحقل | الغرض |
 |-------|--------|
-| `scoring_config` | JSON اختياري — تخزين فقط حالياً |
-| `settings_config` | JSON — `proctoring.enabled: true` يفعّل المراقبة عند بدء المحاولة |
+| `settings_config` | يُخزَّن فقط `proctoring.enabled` — أي مفاتيح أخرى تُتجاهل |
 
-> **تنبيه:** إرسال `scoring_config` أو `settings_config` **يستبدل** القيمة بالكامل (ليس دمجاً).
+> **تنبيه:** إرسال `settings_config` **يستبدل** القيمة بالكامل (ليس دمجاً).
 
 **Response `200`:**
 
@@ -1033,10 +1028,45 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 }
 ```
 
-**التصحيح التلقائي:**
-- `MCQ`, `TRUE_FALSE`: خيار واحد صحيح
-- `MULTI_SELECT`: يجب تطابق كامل مع الخيارات الصحيحة
-- `ESSAY`: `status` يبقى `SUBMITTED` — `is_correct` = `null` (لا تصحيح يدوي بعد)
+**التصحيح (قواعد ثابتة في الكود):**
+
+| نوع السؤال | السلوك بعد التسليم |
+|------------|-------------------|
+| `MCQ`, `TRUE_FALSE`, `MULTI_SELECT` | تصحيح فوري — `grading_status: AUTO_GRADED` |
+| `ESSAY` | بدون درجة — `grading_status: PENDING_REVIEW`, `earned_score: null` |
+
+**حالة المحاولة:**
+- بدون أسئلة مقالية → `status: GRADED` مباشرة
+- مع أسئلة مقالية → `status: SUBMITTED` حتى يصححها المعلّم
+
+---
+
+#### `POST /tests/{test_id}/attempts/{attempt_id}/grade` — تصحيح المقالات (معلّم)
+
+```json
+{
+  "answers": [
+    { "test_question_id": 55, "earned_score": 8 },
+    { "test_question_id": 56, "earned_score": 0 }
+  ]
+}
+```
+
+**Response `200`:**
+
+```json
+{
+  "message": "Attempt fully graded",
+  "attempt": {
+    "status": "GRADED",
+    "requires_manual_grading": false,
+    "raw_score": 93,
+    "final_score": 93
+  }
+}
+```
+
+عند اكتمال تصحيح كل أسئلة `ESSAY` في الامتحان → `status` يصبح `GRADED`.
 
 ---
 
@@ -1086,6 +1116,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 | حقل المحاولة | الغرض |
 |--------------|--------|
 | `status` | `IN_PROGRESS` \| `SUBMITTED` \| `GRADED` |
+| `requires_manual_grading` | `true` إذا بقيت مقالات بانتظار التصحيح |
 | `expires_at` | نهاية الوقت المسموح |
 | `submission_source` | `STUDENT` \| `TIMEOUT` \| `FORCE` |
 | `raw_score` / `final_score` | الدرجة بعد التصحيح |
@@ -1094,6 +1125,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 |-------------|--------|
 | `selected_choice_indices` | الفهارس المختارة |
 | `answer_text` | نص المقال |
+| `grading_status` | `AUTO_GRADED` \| `PENDING_REVIEW` \| `MANUALLY_GRADED` |
 | `is_correct` | نتيجة التصحيح (`null` للمقالي) |
 | `earned_score` | الدرجة المكتسبة |
 
@@ -1324,10 +1356,8 @@ ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&worksp
 
 | الموضوع | الوضع الحالي |
 |---------|--------------|
-| `scoring_config` | يُخزَّن فقط — لا يغيّر التصحيح |
-| `grading_mode` | حقل نصي — غير مُطبَّق في المحرك |
 | `auto_distribute_scores` | لا يُحدَّث بعد الإنشاء |
-| تصحيح ESSAY يدوياً | غير موجود — لا API للمعلّم |
+| تصحيح ESSAY | `POST .../attempts/{id}/grade` |
 | `max_attempts` / إعادة المحاولة | محاولة واحدة مكتملة فقط |
 | خلط الأسئلة / التنقل | غير مُطبَّق من `settings_config` |
 | عتبات proctoring | ثابتة في الكود (`proctoring_violation_engine.py`) |

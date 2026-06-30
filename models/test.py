@@ -12,7 +12,6 @@ class Test(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(String(255), nullable=False)
     slug = db.Column(String(255), nullable=False, unique=True)
-    grading_mode = db.Column(String(50), nullable=True)
     description = db.Column(Text, nullable=True)
     subject_id = db.Column(
         db.Integer,
@@ -28,7 +27,6 @@ class Test(db.Model, TimestampMixin):
         default=False,
         server_default="false",
     )
-    scoring_config = db.Column(Text, nullable=True)
     settings_config = db.Column(Text, nullable=True)
     created_by_membership_id = db.Column(
         db.Integer,

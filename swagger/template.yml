@@ -1207,11 +1207,16 @@ paths:
               name: { type: string }
               slug: { type: string }
               description: { type: string }
-              grading_mode: { type: string }
               total_score: { type: number }
               passing_score: { type: number }
-              scoring_config: { type: object }
-              settings_config: { type: object }
+              settings_config:
+                type: object
+                description: Only proctoring.enabled is stored and applied
+                properties:
+                  proctoring:
+                    type: object
+                    properties:
+                      enabled: { type: boolean }
               availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
               starts_at: { type: string, format: date-time }
               duration_minutes: { type: integer }
@@ -1875,7 +1880,11 @@ paths:
     post:
       tags: [Student Exams]
       summary: Submit attempt (student)
-      description: Finalizes attempt, runs auto-grading for objective questions, sets status GRADED when fully auto-graded.
+      description: |
+        Finalizes attempt and runs deterministic auto-grading:
+        MCQ / TRUE_FALSE / MULTI_SELECT are graded immediately.
+        ESSAY answers stay PENDING_REVIEW; attempt status remains SUBMITTED until
+        a teacher grades essays via POST .../grade.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1891,6 +1900,41 @@ paths:
           description: Submitted
           schema:
             $ref: "#/definitions/SubmitAttemptResponse"
+  /tests/{test_id}/attempts/{attempt_id}/grade:
+    post:
+      tags: [Tests]
+      summary: Grade essay answers (teacher)
+      description: |
+        Teacher manually scores ESSAY questions. Recomputes attempt totals.
+        Sets attempt status to GRADED when every essay in the exam has been scored.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [answers]
+            properties:
+              answers:
+                type: array
+                items:
+                  type: object
+                  required: [test_question_id, earned_score]
+                  properties:
+                    test_question_id: { type: integer }
+                    earned_score: { type: number, minimum: 0 }
+      responses:
+        200:
+          description: Essay scores saved (attempt GRADED when complete)
   /tests/{test_id}/attempts/{attempt_id}/force-submit:
     post:
       tags: [Tests]
@@ -2363,6 +2407,9 @@ definitions:
       submission_source: { type: string, enum: [STUDENT, TIMEOUT, FORCE] }
       raw_score: { type: number }
       final_score: { type: number }
+      requires_manual_grading:
+        type: boolean
+        description: True when essay questions still need teacher grading
       availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
       global_end_at:
         type: string
@@ -2419,6 +2466,9 @@ definitions:
         items: { type: integer }
       is_correct: { type: boolean }
       earned_score: { type: number }
+      grading_status:
+        type: string
+        enum: [AUTO_GRADED, PENDING_REVIEW, MANUALLY_GRADED]
       updated_at: { type: string, format: date-time }
   RuntimeQuestion:
     type: object

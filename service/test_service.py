@@ -244,18 +244,14 @@ class TestService:
                 test.slug = slug
         if "description" in data:
             test.description = (data.get("description") or "").strip() or None
-        if "grading_mode" in data:
-            test.grading_mode = (data.get("grading_mode") or "").strip() or None
         if "total_score" in data:
             test.total_score = self._to_decimal(data.get("total_score"), "total_score")
         if "passing_score" in data:
             test.passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
         if test.total_score is not None and test.passing_score is not None and test.passing_score > test.total_score:
             raise ValidationError("passing_score cannot be greater than total_score")
-        if "scoring_config" in data:
-            test.scoring_config = self._dump_json(data.get("scoring_config"))
         if "settings_config" in data:
-            test.settings_config = self._dump_json(data.get("settings_config"))
+            test.settings_config = self._normalize_settings_config(data.get("settings_config"))
         if "availability_time_mode" in data:
             test.availability_time_mode = data.get("availability_time_mode")
         if "starts_at" in data:
@@ -882,14 +878,12 @@ class TestService:
             "name": test.name,
             "slug": test.slug,
             "description": test.description,
-            "grading_mode": test.grading_mode,
             "subject_id": test.subject_id,
             "subject_name": test.subject.name if test.subject else None,
             "status": test.status,
             "total_score": float(test.total_score) if test.total_score is not None else None,
             "passing_score": float(test.passing_score) if test.passing_score is not None else None,
             "auto_distribute_scores": bool(test.auto_distribute_scores),
-            "scoring_config": self._load_json(test.scoring_config),
             "settings_config": self._load_json(test.settings_config),
             "availability_time_mode": test.availability_time_mode,
             "starts_at": format_local_datetime(test.starts_at),
@@ -1102,6 +1096,17 @@ class TestService:
         if parsed < 0:
             raise ValidationError(f"{field_name} must be non-negative")
         return parsed
+
+    def _normalize_settings_config(self, value) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValidationError("settings_config must be an object")
+        proctoring = value.get("proctoring") or {}
+        if not isinstance(proctoring, dict):
+            raise ValidationError("settings_config.proctoring must be an object")
+        normalized = {"proctoring": {"enabled": bool(proctoring.get("enabled", False))}}
+        return self._dump_json(normalized)
 
     def _dump_json(self, value):
         if value is None:

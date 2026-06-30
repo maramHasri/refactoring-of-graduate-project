@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import ForeignKey, Index, Numeric, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from utils.db import db
@@ -33,6 +33,7 @@ class AttemptAnswer(db.Model, TimestampMixin):
     selected_choice_indices = db.Column(Text, nullable=True)
     is_correct = db.Column(db.Boolean, nullable=True)
     earned_score = db.Column(Numeric(6, 2), nullable=True)
+    grading_status = db.Column(String(30), nullable=True, index=True)
 
     attempt = relationship("TestAttempt", back_populates="answers")
     test_question = relationship("TestQuestion", back_populates="attempt_answers")

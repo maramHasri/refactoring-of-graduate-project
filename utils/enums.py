@@ -94,6 +94,14 @@ class AttemptSubmissionSource(str, enum.Enum):
     FORCE = "FORCE"
 
 
+class AnswerGradingStatus(str, enum.Enum):
+    """Per-answer grading lifecycle."""
+
+    AUTO_GRADED = "AUTO_GRADED"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    MANUALLY_GRADED = "MANUALLY_GRADED"
+
+
 class AvailabilityTimeMode(str, enum.Enum):
     SCHEDULED = "SCHEDULED"
     FLEXIBLE = "FLEXIBLE"
