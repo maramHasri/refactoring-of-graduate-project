@@ -134,7 +134,14 @@ class AttemptService:
                 }
 
         if self.attempts.find_completed_for_student(test.id, actor_membership.id):
-            raise ConflictError("You have already completed this test")
+            completed_count = self.attempts.count_completed_for_student(
+                test.id, actor_membership.id
+            )
+            max_attempts = self._max_attempts(test)
+            if completed_count >= max_attempts:
+                raise ConflictError(
+                    f"You have reached the maximum allowed attempts ({max_attempts})"
+                )
 
         self._ensure_test_takeable_for_first_attempt(test)
 
@@ -314,6 +321,7 @@ class AttemptService:
         self._check_and_apply_timeout(attempt, test)
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             raise ConflictError("Attempt is not in progress")
+        self._validate_submission_answer_rules(attempt, test)
 
         result = self._finalize_attempt(
             attempt, test, submission_source=submission_source
@@ -912,6 +920,51 @@ class AttemptService:
             "starts_at": format_local_datetime(test.starts_at),
             "published_at": format_local_datetime(test.published_at),
         }
+
+    def _max_attempts(self, test: Test) -> int:
+        settings = self._load_json(test.settings_config) or {}
+        attempt_settings = settings.get("attempt_settings") or {}
+        raw = attempt_settings.get("max_attempts")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 1
+        return max(1, value)
+
+    def _validate_submission_answer_rules(
+        self, attempt: TestAttempt, test: Test
+    ) -> None:
+        settings = self._load_json(test.settings_config) or {}
+        rules = settings.get("answer_rules") or {}
+        require_all = bool(rules.get("require_answer_all", False))
+        allow_skip = bool(rules.get("allow_skip_questions", True))
+        if not require_all and allow_skip:
+            return
+
+        question_rows = self.test_questions.list_active_for_test(test.id)
+        answer_map = {
+            answer.test_question_id: answer
+            for answer in self.answers.list_for_attempt(attempt.id)
+        }
+        missing_question_ids: list[int] = []
+        for question in question_rows:
+            answer = answer_map.get(question.id)
+            if not answer:
+                missing_question_ids.append(question.id)
+                continue
+            type_code = (question.snapshot_type_code or "").upper()
+            if type_code == "ESSAY":
+                if not (answer.answer_text or "").strip():
+                    missing_question_ids.append(question.id)
+                continue
+            if not answer.get_selected_indices():
+                missing_question_ids.append(question.id)
+
+        if missing_question_ids:
+            raise ValidationError(
+                "All questions must be answered before submission. "
+                f"Missing answers for question IDs: {missing_question_ids}"
+            )
 
     def _resolve_in_progress_attempt(
         self,

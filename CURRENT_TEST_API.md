@@ -310,7 +310,9 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 ### 5.4 `PATCH /tests/{test_id}` — تحديث الإعدادات
 
-**شرط:** `status` = `DRAFT` فقط.
+**شرط التعديل:**
+- `DRAFT`: مسموح دائماً.
+- `SCHEDULED`: مسموح فقط إذا كان وقت النشر المجدول بعد **30 دقيقة على الأقل** من الوقت الحالي.
 
 **Request (جزئي — أرسل ما تريد تغييره):**
 
@@ -325,14 +327,32 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
   "starts_at": "2026-06-20T09:00:00Z",
   "entry_window_minutes": 30,
   "settings_config": {
-    "proctoring": { "enabled": true }
+    "proctoring": { "enabled": true },
+    "attempt_settings": { "max_attempts": 2 },
+    "navigation_settings": {
+      "sequential_navigation": true,
+      "allow_back_navigation": false
+    },
+    "answer_rules": {
+      "require_answer_all": true,
+      "allow_skip_questions": false
+    },
+    "display_settings": {
+      "shuffle_questions": true,
+      "shuffle_choices": true
+    }
   }
 }
 ```
 
 | الحقل | الغرض |
 |-------|--------|
-| `settings_config` | يُخزَّن فقط `proctoring.enabled` — أي مفاتيح أخرى تُتجاهل |
+| `settings_config.proctoring.enabled` | تشغيل/إيقاف المراقبة |
+| `settings_config.attempt_settings.max_attempts` | عدد المحاولات المكتملة المسموح بها للطالب (افتراضي 1) |
+| `settings_config.navigation_settings.*` | إعدادات تنقّل (تخزين/تعريض للواجهة) |
+| `settings_config.answer_rules.require_answer_all` | عند `true` يُمنع التسليم إذا توجد أسئلة بلا إجابة |
+| `settings_config.answer_rules.allow_skip_questions` | خيار واجهة؛ إذا `require_answer_all=true` يتم فرضه `false` |
+| `settings_config.display_settings.*` | إعدادات العرض (تخزين/تعريض للواجهة) |
 
 > **تنبيه:** إرسال `settings_config` **يستبدل** القيمة بالكامل (ليس دمجاً).
 
@@ -1358,7 +1378,7 @@ ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&worksp
 |---------|--------------|
 | `auto_distribute_scores` | لا يُحدَّث بعد الإنشاء |
 | تصحيح ESSAY | `POST .../attempts/{id}/grade` |
-| `max_attempts` / إعادة المحاولة | محاولة واحدة مكتملة فقط |
+| `max_attempts` / إعادة المحاولة | مدعوم عبر `settings_config.attempt_settings.max_attempts` |
 | خلط الأسئلة / التنقل | غير مُطبَّق من `settings_config` |
 | عتبات proctoring | ثابتة في الكود (`proctoring_violation_engine.py`) |
 | مهمة timeout خلفية | Timeout يُطبَّق عند قراءة المحاولة (lazy) |

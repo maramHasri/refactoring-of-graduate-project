@@ -1192,7 +1192,11 @@ paths:
           description: Test detail
     patch:
       tags: [Tests]
-      summary: Update test (DRAFT only)
+      summary: Update test settings
+      description: |
+        Editing is allowed for:
+        - DRAFT tests
+        - SCHEDULED tests only when scheduled_publish_at is at least 30 minutes away.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1211,12 +1215,34 @@ paths:
               passing_score: { type: number }
               settings_config:
                 type: object
-                description: Only proctoring.enabled is stored and applied
+                description: |
+                  Exam control settings.
+                  Proctoring is active server-side via proctoring.enabled.
+                  Other keys are stored for exam runtime/front-end controls.
                 properties:
                   proctoring:
                     type: object
                     properties:
                       enabled: { type: boolean }
+                  attempt_settings:
+                    type: object
+                    properties:
+                      max_attempts: { type: integer, minimum: 1, default: 1 }
+                  navigation_settings:
+                    type: object
+                    properties:
+                      sequential_navigation: { type: boolean }
+                      allow_back_navigation: { type: boolean }
+                  answer_rules:
+                    type: object
+                    properties:
+                      require_answer_all: { type: boolean }
+                      allow_skip_questions: { type: boolean }
+                  display_settings:
+                    type: object
+                    properties:
+                      shuffle_questions: { type: boolean }
+                      shuffle_choices: { type: boolean }
               availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
               starts_at: { type: string, format: date-time }
               duration_minutes: { type: integer }

@@ -45,6 +45,25 @@ class TestAttemptRepository(BaseRepository):
             .order_by(TestAttempt.submitted_at.desc())
         ).scalar_one_or_none()
 
+    def count_completed_for_student(
+        self, test_id: int, student_membership_id: int
+    ) -> int:
+        return int(
+            db.session.execute(
+                db.select(db.func.count(TestAttempt.id)).where(
+                    TestAttempt.test_id == test_id,
+                    TestAttempt.student_membership_id == student_membership_id,
+                    TestAttempt.status.in_(
+                        [
+                            TestAttemptStatus.SUBMITTED.value,
+                            TestAttemptStatus.GRADED.value,
+                        ]
+                    ),
+                )
+            ).scalar_one()
+            or 0
+        )
+
     def list_for_test(self, test_id: int) -> list[TestAttempt]:
         return list(
             db.session.execute(

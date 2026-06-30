@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from flask import current_app
@@ -221,8 +221,7 @@ class TestService:
 
     def update_test(self, *, test_id: int, workspace_id: int, actor_membership, data: dict) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
-        if test.status != TestStatus.DRAFT.value:
-            raise ValidationError("Only DRAFT tests are editable")
+        self._ensure_test_editable_for_settings_update(test)
 
         if "name" in data and data["name"]:
             test.name = data["name"].strip()
@@ -1102,11 +1101,77 @@ class TestService:
             return None
         if not isinstance(value, dict):
             raise ValidationError("settings_config must be an object")
-        proctoring = value.get("proctoring") or {}
-        if not isinstance(proctoring, dict):
+        proctoring_raw = value.get("proctoring") or {}
+        if not isinstance(proctoring_raw, dict):
             raise ValidationError("settings_config.proctoring must be an object")
-        normalized = {"proctoring": {"enabled": bool(proctoring.get("enabled", False))}}
+
+        attempt_raw = value.get("attempt_settings") or {}
+        if not isinstance(attempt_raw, dict):
+            raise ValidationError("settings_config.attempt_settings must be an object")
+        max_attempts_raw = attempt_raw.get("max_attempts", 1)
+        try:
+            max_attempts = int(max_attempts_raw)
+        except (TypeError, ValueError):
+            raise ValidationError("settings_config.attempt_settings.max_attempts must be an integer")
+        if max_attempts < 1:
+            raise ValidationError("settings_config.attempt_settings.max_attempts must be >= 1")
+
+        navigation_raw = value.get("navigation_settings") or {}
+        if not isinstance(navigation_raw, dict):
+            raise ValidationError("settings_config.navigation_settings must be an object")
+
+        answer_rules_raw = value.get("answer_rules") or {}
+        if not isinstance(answer_rules_raw, dict):
+            raise ValidationError("settings_config.answer_rules must be an object")
+
+        display_raw = value.get("display_settings") or {}
+        if not isinstance(display_raw, dict):
+            raise ValidationError("settings_config.display_settings must be an object")
+
+        require_answer_all = bool(answer_rules_raw.get("require_answer_all", False))
+        allow_skip_questions = bool(answer_rules_raw.get("allow_skip_questions", True))
+        if require_answer_all and allow_skip_questions:
+            allow_skip_questions = False
+
+        normalized = {
+            "proctoring": {"enabled": bool(proctoring_raw.get("enabled", False))},
+            "attempt_settings": {
+                "max_attempts": max_attempts,
+            },
+            "navigation_settings": {
+                "sequential_navigation": bool(
+                    navigation_raw.get("sequential_navigation", False)
+                ),
+                "allow_back_navigation": bool(
+                    navigation_raw.get("allow_back_navigation", True)
+                ),
+            },
+            "answer_rules": {
+                "require_answer_all": require_answer_all,
+                "allow_skip_questions": allow_skip_questions,
+            },
+            "display_settings": {
+                "shuffle_questions": bool(display_raw.get("shuffle_questions", False)),
+                "shuffle_choices": bool(display_raw.get("shuffle_choices", False)),
+            },
+        }
         return self._dump_json(normalized)
+
+    def _ensure_test_editable_for_settings_update(self, test: Test) -> None:
+        if test.status == TestStatus.DRAFT.value:
+            return
+        if test.status != TestStatus.SCHEDULED.value:
+            raise ValidationError("Only DRAFT tests are editable")
+
+        if not test.scheduled_publish_at:
+            raise ValidationError("Scheduled test is missing scheduled_publish_at")
+        now = local_timezone_now()
+        publish_at = ensure_local_aware(test.scheduled_publish_at)
+        min_delta = timedelta(minutes=30)
+        if publish_at - now < min_delta:
+            raise ValidationError(
+                "Scheduled tests can only be edited at least 30 minutes before publish time"
+            )
 
     def _dump_json(self, value):
         if value is None:
