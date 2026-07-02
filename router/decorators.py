@@ -10,6 +10,7 @@ from marshmallow import ValidationError as MarshmallowValidationError
 
 from service.exceptions import ServiceError, UnauthorizedError
 from service.session_service import SessionService
+from utils.enums import MembershipRole, UserStatus
 from utils.jwt_tokens import decode_token
 from repositories.user_repository import UserRepository
 
@@ -105,6 +106,26 @@ def require_workspace_membership(f):
     return decorated
 
 
+def require_active_student(f):
+    """Requires active workspace student membership and active user account."""
+
+    @wraps(f)
+    @require_workspace_membership
+    def decorated(*args, **kwargs):
+        if g.current_user.is_superadmin:
+            return jsonify({"error": "Student access required"}), 403
+
+        if g.current_user.user_status != UserStatus.ACTIVE.value:
+            return jsonify({"error": "User account is not active"}), 403
+
+        if g.membership.role != MembershipRole.STUDENT.value:
+            return jsonify({"error": "Student access required"}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated
+
+
 def handle_service_errors(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -113,7 +134,18 @@ def handle_service_errors(f):
         except MarshmallowValidationError as exc:
             return jsonify({"errors": exc.messages}), 400
         except ServiceError as exc:
-            return jsonify({"error": exc.message}), exc.status_code
+            if getattr(exc, "error_code", None):
+                payload = {
+                    "error": exc.error_code,
+                    "message": exc.message,
+                }
+                if hasattr(exc, "conflicting_test_ids"):
+                    payload["conflicting_test_ids"] = exc.conflicting_test_ids
+                if hasattr(exc, "conflicting_test_id"):
+                    payload["conflicting_test_id"] = exc.conflicting_test_id
+            else:
+                payload = {"error": exc.message}
+            return jsonify(payload), exc.status_code
         except Exception:
             current_app.logger.exception("Unhandled error in %s", f.__name__)
             payload = {"error": "Internal server error"}

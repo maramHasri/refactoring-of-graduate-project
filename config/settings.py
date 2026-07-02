@@ -66,6 +66,13 @@ class Config:
         "PROCTORING_STORAGE_DIR",
         os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "proctoring"),
     )
+    QUESTION_IMAGE_STORAGE_DIR = os.getenv(
+        "QUESTION_IMAGE_STORAGE_DIR",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "questions"),
+    )
+    QUESTION_IMAGE_MAX_BYTES = int(
+        os.getenv("QUESTION_IMAGE_MAX_BYTES", str(5 * 1024 * 1024))
+    )
 
     SCHEDULED_TEST_PUBLISH_ENABLED = os.getenv(
         "SCHEDULED_TEST_PUBLISH_ENABLED", "true"

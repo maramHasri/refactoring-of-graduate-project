@@ -19,6 +19,8 @@ from service.exam_csv_import_parser import parse_exam_csv, read_csv_text
 from service.ai_question_service import AIQuestionService
 from service.email_delivery_service import EmailDeliveryError, EmailDeliveryService
 from service.question_bank_service import QuestionBankService
+from service.question_image_service import QuestionImageService
+from service.test_schedule_conflict_service import TestScheduleConflictService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import can_manage_subjects, verify_subject_teacher_access
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
@@ -50,9 +52,11 @@ class TestService:
         self.topics = TopicRepository()
         self.workspaces = WorkspaceRepository()
         self.bank_service = QuestionBankService()
+        self.images = QuestionImageService()
         self.email_delivery = EmailDeliveryService()
         self.ai_questions = AIQuestionService()
         self.exam_blueprint = ExamBlueprintService()
+        self.schedule_conflicts = TestScheduleConflictService()
 
     def assign_students_to_test(
         self,
@@ -95,6 +99,16 @@ class TestService:
                 )
             )
             created_count += 1
+
+        all_student_ids = list(
+            set(self.test_assignments.list_student_membership_ids_for_test(test.id))
+            | set(unique_ids)
+        )
+        self.schedule_conflicts.ensure_no_schedule_conflicts(
+            test=test,
+            workspace_id=workspace_id,
+            student_membership_ids=all_student_ids,
+        )
 
         db.session.commit()
         logger.info(
@@ -261,6 +275,11 @@ class TestService:
         if "entry_window_minutes" in data:
             test.entry_window_minutes = data.get("entry_window_minutes")
 
+        self.schedule_conflicts.ensure_no_schedule_conflicts(
+            test=test,
+            workspace_id=workspace_id,
+        )
+
         db.session.commit()
         return test
 
@@ -301,6 +320,7 @@ class TestService:
                 points=question.points or Decimal("1"),
                 snapshot_question_text=snapshot["snapshot_question_text"],
                 snapshot_explanation=snapshot["snapshot_explanation"],
+                snapshot_image_path=snapshot["snapshot_image_path"],
                 snapshot_type_code=snapshot["snapshot_type_code"],
                 snapshot_topic_id=snapshot["snapshot_topic_id"],
                 snapshot_topic_name=snapshot["snapshot_topic_name"],
@@ -439,6 +459,7 @@ class TestService:
                 points=question.points or Decimal("1"),
                 snapshot_question_text=snapshot["snapshot_question_text"],
                 snapshot_explanation=snapshot["snapshot_explanation"],
+                snapshot_image_path=snapshot["snapshot_image_path"],
                 snapshot_type_code=snapshot["snapshot_type_code"],
                 snapshot_topic_id=snapshot["snapshot_topic_id"],
                 snapshot_topic_name=snapshot["snapshot_topic_name"],
@@ -481,6 +502,7 @@ class TestService:
                 points=question.points or Decimal("1"),
                 snapshot_question_text=snapshot["snapshot_question_text"],
                 snapshot_explanation=snapshot["snapshot_explanation"],
+                snapshot_image_path=snapshot["snapshot_image_path"],
                 snapshot_type_code=snapshot["snapshot_type_code"],
                 snapshot_topic_id=snapshot["snapshot_topic_id"],
                 snapshot_topic_name=snapshot["snapshot_topic_name"],
@@ -565,6 +587,16 @@ class TestService:
             test, validated["topic_id"], workspace_id
         )
         row.snapshot_question_text = validated["body"]
+        if data.get("remove_image"):
+            self.images.delete_if_local(row.snapshot_image_path)
+            row.snapshot_image_path = None
+        elif "image_path" in data:
+            new_path = (data.get("image_path") or "").strip() or None
+            if row.snapshot_image_path and new_path != row.snapshot_image_path:
+                self.images.delete_if_local(row.snapshot_image_path)
+            row.snapshot_image_path = new_path
+        else:
+            row.snapshot_image_path = validated.get("image_path")
         row.snapshot_explanation = validated["explanation"]
         row.snapshot_type_code = validated["type_code"]
         row.snapshot_difficulty = validated["difficulty"]
@@ -594,6 +626,10 @@ class TestService:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
             raise ValidationError("Closed or archived tests cannot be published")
+        self.schedule_conflicts.ensure_no_schedule_conflicts(
+            test=test,
+            workspace_id=workspace_id,
+        )
         test.status = TestStatus.PUBLISHED.value
         test.published_at = local_timezone_now()
         test.scheduled_publish_at = None
@@ -637,6 +673,10 @@ class TestService:
             raise ValidationError("publish_at must be in the future")
         test.status = TestStatus.SCHEDULED.value
         test.scheduled_publish_at = publish_at
+        self.schedule_conflicts.ensure_no_schedule_conflicts(
+            test=test,
+            workspace_id=workspace_id,
+        )
         db.session.commit()
         logger.info(
             "event=exam_scheduled test_id=%s actor_membership_id=%s publish_at=%s result=success",
@@ -796,6 +836,7 @@ class TestService:
         current = {
             "type_code": row.snapshot_type_code,
             "body": row.snapshot_question_text,
+            "image_path": row.snapshot_image_path,
             "explanation": row.snapshot_explanation,
             "points": float(row.points) if row.points is not None else 1,
             "difficulty": row.snapshot_difficulty,
@@ -825,6 +866,7 @@ class TestService:
         return {
             "snapshot_question_text": question.question_text,
             "snapshot_explanation": question.explanation,
+            "snapshot_image_path": question.image_path,
             "snapshot_type_code": (
                 (question.question_type.code or question.question_type.name).upper()
                 if question.question_type
@@ -908,6 +950,8 @@ class TestService:
             "status": row.status,
             "snapshot_question_text": row.snapshot_question_text,
             "snapshot_explanation": row.snapshot_explanation,
+            "snapshot_image_path": row.snapshot_image_path,
+            "snapshot_image_url": self.images.build_public_url(row.snapshot_image_path),
             "snapshot_type_code": row.snapshot_type_code,
             "snapshot_topic_id": row.snapshot_topic_id,
             "snapshot_topic_name": row.snapshot_topic_name,
@@ -1007,6 +1051,7 @@ class TestService:
             source_bank_id=None,
             points=validated["points"],
             snapshot_question_text=validated["body"],
+            snapshot_image_path=validated.get("image_path"),
             snapshot_explanation=validated["explanation"],
             snapshot_type_code=validated["type_code"],
             snapshot_topic_id=validated["topic_id"],
@@ -1058,6 +1103,7 @@ class TestService:
             "type_code": type_code,
             "body": body,
             "explanation": (payload.get("explanation") or "").strip() or None,
+            "image_path": (payload.get("image_path") or "").strip() or None,
             "points": points_value,
             "difficulty": difficulty,
             "topic_id": topic_id,

@@ -1,4 +1,7 @@
+from sqlalchemy.orm import joinedload
+
 from models import AttemptAnswer, Test, TestAttempt, TestQuestion, TestStudentAssignment
+from models.workspace import Membership
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import TestAttemptStatus, TestStatus
@@ -85,6 +88,10 @@ class TestAttemptRepository(BaseRepository):
                     TestStudentAssignment,
                     TestStudentAssignment.test_id == Test.id,
                 )
+                .options(
+                    joinedload(Test.subject),
+                    joinedload(Test.created_by).joinedload(Membership.user),
+                )
                 .where(
                     Test.subject_id.in_(subject_ids),
                     Test.status == TestStatus.PUBLISHED.value,
@@ -92,7 +99,62 @@ class TestAttemptRepository(BaseRepository):
                     TestStudentAssignment.student_membership_id == student_membership_id,
                 )
                 .order_by(Test.published_at.desc().nullslast(), Test.id.desc())
-            ).scalars().all()
+            ).scalars().unique().all()
+        )
+
+    def find_test_ids_with_attempt_statuses(
+        self,
+        test_ids: list[int],
+        student_membership_id: int,
+        statuses: list[str],
+    ) -> set[int]:
+        if not test_ids:
+            return set()
+        rows = db.session.execute(
+            db.select(TestAttempt.test_id)
+            .where(
+                TestAttempt.test_id.in_(test_ids),
+                TestAttempt.student_membership_id == student_membership_id,
+                TestAttempt.status.in_(statuses),
+            )
+            .distinct()
+        ).scalars().all()
+        return set(rows)
+
+    def list_graded_for_student(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+    ) -> list[TestAttempt]:
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(
+                    joinedload(TestAttempt.test).joinedload(Test.subject),
+                    joinedload(TestAttempt.test)
+                    .joinedload(Test.created_by)
+                    .joinedload(Membership.user),
+                )
+                .where(
+                    TestAttempt.student_membership_id == student_membership_id,
+                    TestAttempt.user_id == student_user_id,
+                    TestAttempt.status == TestAttemptStatus.GRADED.value,
+                    Test.status == TestStatus.PUBLISHED.value,
+                    Test.archived_at.is_(None),
+                    Test.created_by.has(workspace_id=workspace_id),
+                )
+                .order_by(
+                    TestAttempt.graded_at.desc().nullslast(),
+                    TestAttempt.submitted_at.desc().nullslast(),
+                    TestAttempt.id.desc(),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
         )
 
     def list_in_progress_on_published_tests(self) -> list[TestAttempt]:

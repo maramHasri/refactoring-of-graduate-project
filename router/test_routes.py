@@ -13,7 +13,9 @@ from schemas.test_schema import (
     UpdateTestSchema,
     UpdateTestQuestionSchema,
 )
+from schemas.question_schema import CreateQuestionInBankItemSchema
 from service.test_service import TestService
+from service.exceptions import ValidationError
 
 test_bp = Blueprint("tests", __name__)
 _svc = lambda: TestService()
@@ -98,7 +100,15 @@ def add_questions_to_test(test_id):
 @require_workspace_membership
 @handle_service_errors
 def add_manual_questions_to_test(test_id):
-    data = AddManualQuestionsToTestSchema().load(request.get_json() or {})
+    payload = request.get_json(silent=True)
+    if payload is None and request.form.get("payload"):
+        import json
+
+        try:
+            payload = json.loads(request.form.get("payload") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Invalid JSON in multipart payload") from exc
+    data = AddManualQuestionsToTestSchema().load(payload or {})
     items = _svc().add_manual_questions(
         test_id=test_id,
         workspace_id=g.workspace_id,
@@ -106,6 +116,26 @@ def add_manual_questions_to_test(test_id):
         questions=data["questions"],
     )
     return {"message": "Manual questions added", "questions": items, "count": len(items)}, 201
+
+
+@test_bp.route("/<int:test_id>/questions/manual/single", methods=["POST"])
+@require_workspace_membership
+@handle_service_errors
+def add_single_manual_question_to_test(test_id):
+    """
+    POST /tests/{test_id}/questions/manual/single
+    Convenience endpoint for one manual question (JSON body).
+    """
+    payload = request.get_json(silent=True)
+    item = CreateQuestionInBankItemSchema().load(payload or {})
+
+    items = _svc().add_manual_questions(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        questions=[item],
+    )
+    return {"message": "Manual question added", "question": items[0]}, 201
 
 
 @test_bp.route("/<int:test_id>/questions/import-csv", methods=["POST"])
@@ -217,7 +247,15 @@ def remove_assigned_student(test_id, membership_id):
 @require_workspace_membership
 @handle_service_errors
 def update_test_question(test_id, test_question_id):
-    data = UpdateTestQuestionSchema().load(request.get_json() or {}, partial=True)
+    payload = request.get_json(silent=True)
+    if payload is None and request.form.get("payload"):
+        import json
+
+        try:
+            payload = json.loads(request.form.get("payload") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Invalid JSON in multipart payload") from exc
+    data = UpdateTestQuestionSchema().load(payload or {}, partial=True)
     item = _svc().update_test_question(
         test_id=test_id,
         test_question_id=test_question_id,

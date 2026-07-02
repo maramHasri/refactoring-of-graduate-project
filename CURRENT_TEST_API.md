@@ -421,7 +421,41 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 ---
 
+---
+
+#### `POST /uploads/images` — رفع صورة (خدمة مستقلة)
+
+**Headers:** `Authorization`, `X-Workspace-Id`  
+**Content-Type:** `multipart/form-data`
+
+| الحقل | مطلوب؟ | الغرض |
+|-------|---------|--------|
+| `image` | نعم | ملف صورة (`JPG`, `JPEG`, `PNG`, `WEBP`) — حد أقصى 5MB |
+
+**Response `201`:**
+
+```json
+{
+  "message": "Image uploaded",
+  "success": true,
+  "image_path": "questions/1/8/abc123def456.png",
+  "file_name": "abc123def456.png",
+  "image_url": "http://127.0.0.1:5000/uploads/questions/1/8/abc123def456.png"
+}
+```
+
+**تسلسل العمل مع الأسئلة:**
+
+1. ارفع الصورة عبر `POST /uploads/images`.
+2. استخدم `image_path` المعاد في `POST /question-banks/{bank_id}/questions` أو `POST /tests/{test_id}/questions/manual`.
+
+> لا تُرفع الصورة داخل APIs إنشاء/تحديث السؤال — المرجع الوحيد لرفع الصور هو هذا الـ endpoint.
+
+---
+
 #### `POST /tests/{test_id}/questions/manual` — أسئلة يدوية
+
+**Content-Type:** `application/json`
 
 ```json
 {
@@ -460,19 +494,12 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 |------------|--------|
 | `type_code` | `MCQ` \| `TRUE_FALSE` \| `MULTI_SELECT` \| `ESSAY` |
 | `body` | نص السؤال |
+| `image_path` | مسار صورة اختياري (من `POST /uploads/images`) |
 | `explanation` | تفسير الإجابة (اختياري) |
 | `points` | الدرجة (افتراضي 1) |
 | `difficulty` | `EASY` \| `MEDIUM` \| `HARD` |
 | `topic_id` | موضوع ضمن المادة (اختياري) |
 | `choices` | مطلوب لـ MCQ/TRUE_FALSE/MULTI_SELECT — **ممنوع** لـ ESSAY |
-
-**حقول الخيار:**
-
-| الحقل | الغرض |
-|-------|--------|
-| `body` | نص الخيار |
-| `is_correct` | هل صحيح؟ |
-| `order_index` | ترتيب العرض |
 
 ---
 
@@ -736,6 +763,7 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
   - `role=STUDENT` و `status=ACTIVE`
   - مسجل في نفس مادة الاختبار (`subject_memberships`)
 - يحفظهم في whitelist
+- يتحقق من عدم تعارض المواعيد مع اختبارات أخرى للطلاب المعيّنين (انظر §5.8)
 
 **Response `201`:**
 
@@ -757,6 +785,36 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 ---
 
 ### 5.8 النشر والجدولة والإغلاق
+
+#### قاعدة منع تعارض المواعيد (Schedule Conflict)
+
+عند اختبار مع `availability_time_mode = SCHEDULED` و`starts_at` + `duration_minutes`، تُطبَّق قاعدتان مستقلتان:
+
+**1) تعارض الطلاب (`SCHEDULE_CONFLICT`)** — عند `status` = `SCHEDULED` أو `PUBLISHED` ووجود طلاب معيّنين:
+
+```json
+{
+  "error": "SCHEDULE_CONFLICT",
+  "message": "This exam overlaps with another scheduled exam for one or more students.",
+  "conflicting_test_ids": [12, 15]
+}
+```
+
+**2) تعارض المعلّم (`TEACHER_SCHEDULE_CONFLICT`)** — نفس المعلّم (منشئ الاختبار) لا يمكنه امتلاك اختبارين متداخلين زمنياً، حتى لو كانت المواد أو مجموعات الطلاب مختلفة (يشمل `DRAFT` إذا وُجدت أوقات جدولة):
+
+```json
+{
+  "error": "TEACHER_SCHEDULE_CONFLICT",
+  "message": "The teacher already has another scheduled exam during this time.",
+  "conflicting_test_id": 42
+}
+```
+
+**يُطبَّق عند:** `PATCH /tests/{id}`، `POST .../assign-students`، `POST .../schedule-publication`، `POST .../publish-now`.
+
+**لا يُطبَّق على:** اختبارات `FLEXIBLE`.
+
+---
 
 #### `POST /tests/{test_id}/publish-now` — نشر فوري
 
@@ -843,7 +901,81 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ## 6. APIs الطالب — المحاولات
 
-### 6.1 `GET /tests/available` — الاختبارات المتاحة
+### 6.1 `GET /student/tests/upcoming` — الاختبارات القادمة
+
+**Headers:** `Authorization`, `X-Workspace-Id`
+
+**الصلاحيات:** طالب فقط (`MembershipRole=STUDENT`) مع عضوية نشطة (`MembershipStatus=ACTIVE`) وحساب مستخدم نشط (`UserStatus=ACTIVE`). أي حالة أخرى → `403`.
+
+**Response `200`:** مصفوفة JSON مباشرة (ليست داخل كائن):
+
+```json
+[
+  {
+    "test_id": 1,
+    "title": "Database Midterm",
+    "subject": "Database",
+    "teacher_name": "John Doe",
+    "status": "PUBLISHED",
+    "availability_time_mode": "SCHEDULED",
+    "start_time": "2026-07-05T10:00:00",
+    "end_time": "2026-07-05T11:30:00",
+    "time_until_start_seconds": 86400,
+    "time_until_start_human": "1 day left"
+  }
+]
+```
+
+**معايير الظهور:**
+- `status = PUBLISHED` وليس `ARCHIVED`
+- الطالب مسجل بمادة الاختبار وموجود في whitelist
+- لا توجد محاولة للطالب على نفس الاختبار بحالة `IN_PROGRESS` أو `SUBMITTED` أو `GRADED`
+- الاختبار لم ينتهِ بعد (انتهاء النافذة الزمنية للـ `SCHEDULED` أو `closed_at` للـ `FLEXIBLE`)
+
+**`SCHEDULED`:** يتضمن `start_time`, `end_time`, `time_until_start_seconds`, `time_until_start_human`  
+**`FLEXIBLE`:** `start_time = null`, `starts_on_entry = true`, `availability_note = "Starts on entry"`, و`availability_window` إن وُجدت
+
+---
+
+### 6.2 `GET /student/tests/results` — نتائج الاختبارات المصحّحة (تبويب Results)
+
+**Headers:** `Authorization`, `X-Workspace-Id`
+
+**الصلاحيات:** نفس `require_active_student` — طالب نشط فقط، ويرى نتائجه الخاصة فقط.
+
+**Response `200`:** مصفوفة JSON مباشرة:
+
+```json
+[
+  {
+    "test_id": 1,
+    "attempt_id": 10,
+    "title": "Database Midterm",
+    "subject": "Database",
+    "teacher_name": "John Doe",
+    "score": 85,
+    "max_score": 100,
+    "percentage": 85,
+    "status": "GRADED",
+    "graded_at": "2026-07-01T10:00:00"
+  }
+]
+```
+
+**يشمل فقط:**
+- محاولات بحالة `GRADED`
+- اختبارات `PUBLISHED` وغير `ARCHIVED`
+- محاولات الطالب الحالي في الـ workspace
+
+**لا يشمل:** `SUBMITTED`, `IN_PROGRESS`, اختبارات `DRAFT`/`ARCHIVED`
+
+**الترتيب:** `graded_at` تنازلياً، ثم `submitted_at` عند غياب `graded_at`
+
+> للتفاصيل الكاملة لمحاولة واحدة (ملخص التصحيح، إجابات، إلخ) استخدم `GET /tests/{test_id}/attempts/{attempt_id}/grading/result`.
+
+---
+
+### 6.3 `GET /tests/available` — الاختبارات المتاحة
 
 **Response `200`:**
 
@@ -874,7 +1006,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.2 `POST /tests/{test_id}/attempts` — بدء أو استئناف محاولة
+### 6.4 `POST /tests/{test_id}/attempts` — بدء أو استئناف محاولة
 
 **Request:** بدون body.
 
@@ -921,7 +1053,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.3 `GET /tests/{test_id}/attempts/current` — المحاولة الجارية
+### 6.5 `GET /tests/{test_id}/attempts/current` — المحاولة الجارية
 
 **Response `200`:**
 
@@ -933,7 +1065,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.4 `GET /tests/{test_id}/attempts/{attempt_id}` — تفاصيل محاولة
+### 6.6 `GET /tests/{test_id}/attempts/{attempt_id}` — تفاصيل محاولة
 
 **Response `200`:**
 
@@ -947,7 +1079,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.5 `GET /tests/{test_id}/attempts` — قائمة المحاولات (معلّم)
+### 6.7 `GET /tests/{test_id}/attempts` — قائمة المحاولات (معلّم)
 
 **Response `200`:**
 
@@ -960,7 +1092,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.6 حفظ الإجابات
+### 6.8 حفظ الإجابات
 
 #### `PUT /tests/{test_id}/attempts/{attempt_id}/answers` — حفظ دفعة
 
@@ -1028,7 +1160,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.7 إنهاء المحاولة
+### 6.9 إنهاء المحاولة
 
 #### `POST /tests/{test_id}/attempts/{attempt_id}/submit` — تسليم الطالب
 
@@ -1062,7 +1194,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.7.1 التصحيح — قسم Grading (Swagger)
+### 6.9.1 التصحيح — قسم Grading (Swagger)
 
 #### `POST /tests/{test_id}/attempts/{attempt_id}/grading/manual` — تصحيح يدوي (معلّم)
 
@@ -1131,6 +1263,12 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
+#### `GET /student/tests/results` — قائمة النتائج المصحّحة (لوحة الطالب / Grading)
+
+انظر **§6.2** — مصفوفة بكل المحاولات `GRADED` للطالب (بدون `SUBMITTED` أو `IN_PROGRESS`).
+
+---
+
 #### `POST /tests/{test_id}/attempts/{attempt_id}/force-submit` — إجبار التسليم (معلّم)
 
 نفس استجابة `submit` مع `submission_source: "FORCE"`.
@@ -1143,7 +1281,7 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
 
 ---
 
-### 6.8 كائن `attempt` (ملخص الحقول)
+### 6.10 كائن `attempt` (ملخص الحقول)
 
 ```json
 {
@@ -1163,6 +1301,8 @@ SCHEDULED_TEST_PUBLISH_INTERVAL_SECONDS=5
     {
       "test_question_id": 42,
       "snapshot_question_text": "...",
+      "snapshot_image_path": "questions/1/8/abc123.png",
+      "snapshot_image_url": "http://127.0.0.1:5000/uploads/questions/1/8/abc123.png",
       "snapshot_type_code": "MCQ",
       "choices": [
         { "index": 0, "body": "خيار أ", "order_index": 0 }
@@ -1423,6 +1563,7 @@ ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&worksp
 | `auto_distribute_scores` | لا يُحدَّث بعد الإنشاء |
 | تصحيح يدوي | `POST .../attempts/{id}/grading/manual` |
 | نتيجة التصحيح | `GET .../attempts/{id}/grading/result` |
+| نتائج الطالب (مصفوفة GRADED) | `GET /student/tests/results` |
 | `max_attempts` / إعادة المحاولة | مدعوم عبر `settings_config.attempt_settings.max_attempts` |
 | خلط الأسئلة / التنقل | غير مُطبَّق من `settings_config` |
 | عتبات proctoring | ثابتة في الكود (`proctoring_violation_engine.py`) |

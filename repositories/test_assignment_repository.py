@@ -43,6 +43,15 @@ class TestStudentAssignmentRepository(BaseRepository):
             for assignment, membership, user in rows
         ]
 
+    def list_student_membership_ids_for_test(self, test_id: int) -> list[int]:
+        return list(
+            db.session.execute(
+                db.select(TestStudentAssignment.student_membership_id)
+                .where(TestStudentAssignment.test_id == test_id)
+                .order_by(TestStudentAssignment.student_membership_id)
+            ).scalars().all()
+        )
+
     def list_pending_invites_for_test(self, test_id: int) -> list[TestStudentAssignment]:
         return list(
             db.session.execute(

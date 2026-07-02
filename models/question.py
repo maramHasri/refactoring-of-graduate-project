@@ -114,6 +114,7 @@ class Question(db.Model, TimestampMixin):
         index=True,
     )
     question_text = db.Column(Text, nullable=False)
+    image_path = db.Column(String(512), nullable=True)
     explanation = db.Column(Text, nullable=True)
     question_type_id = db.Column(
         db.Integer,
@@ -194,6 +195,7 @@ class TestQuestion(db.Model, TimestampMixin):
     source_bank_id = db.Column(db.Integer, nullable=True)
     points = db.Column(Numeric(6, 2), nullable=False)
     snapshot_question_text = db.Column(Text, nullable=False)
+    snapshot_image_path = db.Column(String(512), nullable=True)
     snapshot_explanation = db.Column(Text, nullable=True)
     snapshot_type_code = db.Column(String(50), nullable=False)
     snapshot_topic_id = db.Column(db.Integer, nullable=True)

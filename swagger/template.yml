@@ -38,9 +38,11 @@ tags:
   - name: Proctoring
     description: Teacher/proctor — monitor sessions, review violations, and audit logs
   - name: Grading
-    description: Teacher — manual grading of pending answers and grading results; students may view their own results
+    description: Teacher — manual grading and results; students — graded results dashboard and per-attempt grading outcome
   - name: Invites
   - name: Join codes
+  - name: Uploads
+    description: Reusable file upload services (images, etc.)
 paths:
   /:
     get:
@@ -70,6 +72,45 @@ paths:
       responses:
         200:
           description: Enum reference
+  /uploads/images:
+    post:
+      tags: [Uploads]
+      summary: Upload image file
+      description: |
+        Standalone image upload for reuse across the platform (question banks, tests, etc.).
+
+        **Workflow:** upload the image here first, then pass returned `image_path` to
+        question create/update APIs (`POST /question-banks/{bank_id}/questions`, etc.).
+
+        Supported formats: JPG, JPEG, PNG, WEBP. Max size defaults to 5MB.
+      consumes: [multipart/form-data]
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: image
+          in: formData
+          type: file
+          required: true
+          description: Image file (JPG, JPEG, PNG, WEBP)
+      responses:
+        201:
+          description: Image uploaded
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: Image uploaded }
+              success: { type: boolean, example: true }
+              image_path:
+                type: string
+                example: questions/1/8/abc123def456.png
+                description: Relative path — pass to question APIs as image_path
+              file_name:
+                type: string
+                example: abc123def456.png
+              image_url:
+                type: string
+                example: http://127.0.0.1:5000/uploads/questions/1/8/abc123def456.png
+        400:
+          description: Validation error (missing file, wrong type, or too large)
   /auth/register:
     post:
       tags: [Auth]
@@ -924,6 +965,7 @@ paths:
         (list topics via GET /subjects/{subject_id}/topics).
         Requires TEACHER assignment on the bank's subject (or workspace admin/owner).
       security: [{ Bearer: [], WorkspaceId: [] }]
+      consumes: [application/json]
       parameters:
         - name: bank_id
           in: path
@@ -947,6 +989,9 @@ paths:
                       type: string
                       enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
                     body: { type: string }
+                    image_path:
+                      type: string
+                      description: Optional image path from POST /uploads/images
                     explanation: { type: string }
                     points: { type: number }
                     difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
@@ -966,6 +1011,7 @@ paths:
               questions:
                 - type_code: MCQ
                   body: "What is 2 + 2?"
+                  image_path: "questions/12/33/abc123.png"
                   topic_id: 11
                   points: 2
                   difficulty: EASY
@@ -1006,6 +1052,7 @@ paths:
         Partial update for one question. Requires TEACHER assignment on the bank's subject
         (or workspace admin/owner). Supported type_code values: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
       security: [{ Bearer: [], WorkspaceId: [] }]
+      consumes: [application/json]
       parameters:
         - name: bank_id
           in: path
@@ -1024,6 +1071,10 @@ paths:
                 type: string
                 enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY]
               body: { type: string }
+              image_path:
+                type: string
+                description: Optional image path from POST /uploads/images (set null/empty with remove_image=true to clear)
+              remove_image: { type: boolean, default: false }
               explanation: { type: string }
               points: { type: number }
               difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
@@ -1252,6 +1303,14 @@ paths:
       responses:
         200:
           description: Test updated (excludes published_at, closed_at, archived_at)
+        409:
+          description: Scheduled exam time conflict (student or teacher)
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                enum: [SCHEDULE_CONFLICT, TEACHER_SCHEDULE_CONFLICT]
     delete:
       tags: [Tests]
       summary: Delete test (creator only)
@@ -1304,6 +1363,7 @@ paths:
     post:
       tags: [Tests]
       summary: Add manual questions to exam
+      consumes: [application/json]
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -1325,6 +1385,9 @@ paths:
                   properties:
                     type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
                     body: { type: string }
+                    image_path:
+                      type: string
+                      description: Optional image path from POST /uploads/images
                     explanation: { type: string }
                     points: { type: number }
                     difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
@@ -1528,6 +1591,7 @@ paths:
         Partial update of a test_questions snapshot row. Allowed only while test is DRAFT
         and no student attempts exist. Does not modify the source question bank.
       security: [{ Bearer: [], WorkspaceId: [] }]
+      consumes: [application/json]
       parameters:
         - name: test_id
           in: path
@@ -1544,6 +1608,10 @@ paths:
             properties:
               type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
               body: { type: string }
+              image_path:
+                type: string
+                description: Optional image path from POST /uploads/images
+              remove_image: { type: boolean, default: false }
               explanation: { type: string }
               points: { type: number }
               difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
@@ -1611,6 +1679,10 @@ paths:
       responses:
         201:
           description: Students assigned successfully
+        409:
+          description: Scheduled exam time conflict for assigned students
+          schema:
+            $ref: "#/definitions/ScheduleConflictError"
   /tests/{test_id}/assigned-students:
     get:
       tags: [Tests]
@@ -1654,6 +1726,10 @@ paths:
       responses:
         200:
           description: Test published
+        409:
+          description: Scheduled exam time conflict
+          schema:
+            $ref: "#/definitions/ScheduleConflictError"
   /tests/{test_id}/schedule-publication:
     post:
       tags: [Tests]
@@ -1684,6 +1760,10 @@ paths:
       responses:
         200:
           description: Test scheduled
+        409:
+          description: Scheduled exam time conflict for assigned students
+          schema:
+            $ref: "#/definitions/ScheduleConflictError"
   /tests/{test_id}/close:
     post:
       tags: [Tests]
@@ -1711,6 +1791,34 @@ paths:
         200:
           description: Test archived
   # ── Student Exams — runtime (take exam, attempts, submit) ───────────────
+  /student/tests/upcoming:
+    get:
+      tags: [Student Exams]
+      summary: List upcoming tests for the authenticated student
+      description: |
+        Returns published exams assigned to the student that have not been started or submitted yet.
+
+        **Access:** active user with `MembershipRole=STUDENT` and `MembershipStatus=ACTIVE`.
+        Teachers/admins receive 403.
+
+        **Includes:**
+        - `PUBLISHED` tests only (not archived)
+        - Student must be enrolled in the subject and on the exam whitelist
+        - Excludes tests with any attempt in `IN_PROGRESS`, `SUBMITTED`, or `GRADED`
+
+        **Scheduling:**
+        - `SCHEDULED` — fixed `start_time`, `end_time`, countdown fields
+        - `FLEXIBLE` — `start_time` is null, `availability_note` is "Starts on entry"
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Upcoming tests (JSON array)
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/UpcomingTest"
+        403:
+          description: Not an active student
   /tests/available:
     get:
       tags: [Student Exams]
@@ -2000,6 +2108,28 @@ paths:
               grading_summary: { type: object }
               submitted_at: { type: string, format: date-time }
               graded_at: { type: string, format: date-time }
+  /student/tests/results:
+    get:
+      tags: [Grading]
+      summary: List graded test results for student dashboard
+      description: |
+        Returns ONLY fully graded attempts (`TestAttemptStatus=GRADED`) for the authenticated
+        student in the current workspace.
+
+        **Strict exclusions:** `SUBMITTED`, `IN_PROGRESS`, draft/archived tests, and other
+        students' attempts are never included.
+
+        Sorted by `graded_at` descending, then `submitted_at` as fallback.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Graded results (JSON array)
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/StudentGradedResult"
+        403:
+          description: Not an active student
   /tests/{test_id}/attempts/{attempt_id}/grade:
     post:
       tags: [Grading]
@@ -2480,6 +2610,53 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/TopicSummary"
+  UpcomingTest:
+    type: object
+    properties:
+      test_id: { type: integer }
+      title: { type: string }
+      subject: { type: string }
+      teacher_name: { type: string }
+      status: { type: string, example: PUBLISHED }
+      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+      start_time: { type: string, format: date-time }
+      end_time: { type: string, format: date-time }
+      time_until_start_seconds: { type: integer }
+      time_until_start_human: { type: string, example: "1 day left" }
+      starts_on_entry: { type: boolean }
+      availability_note: { type: string, example: "Starts on entry" }
+      availability_window:
+        type: object
+        properties:
+          available_from: { type: string, format: date-time }
+          available_until: { type: string, format: date-time }
+  StudentGradedResult:
+    type: object
+    properties:
+      test_id: { type: integer }
+      attempt_id: { type: integer }
+      title: { type: string }
+      subject: { type: string }
+      teacher_name: { type: string }
+      score: { type: number }
+      max_score: { type: number }
+      percentage: { type: number }
+      status: { type: string, example: GRADED }
+      graded_at: { type: string, format: date-time }
+  ScheduleConflictError:
+    type: object
+    properties:
+      error: { type: string, example: SCHEDULE_CONFLICT }
+      message: { type: string }
+      conflicting_test_ids:
+        type: array
+        items: { type: integer }
+  TeacherScheduleConflictError:
+    type: object
+    properties:
+      error: { type: string, example: TEACHER_SCHEDULE_CONFLICT }
+      message: { type: string }
+      conflicting_test_id: { type: integer, example: 42 }
   TestSummary:
     type: object
     properties:
@@ -2574,6 +2751,8 @@ definitions:
     properties:
       test_question_id: { type: integer }
       snapshot_question_text: { type: string }
+      snapshot_image_path: { type: string }
+      snapshot_image_url: { type: string }
       snapshot_type_code: { type: string, example: MCQ }
       points: { type: number }
       choices:

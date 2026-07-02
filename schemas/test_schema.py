@@ -167,6 +167,8 @@ class UpdateTestQuestionSchema(Schema):
 
     type_code = fields.Str(validate=validate.Length(min=2, max=50))
     body = fields.Str(validate=validate.Length(min=1))
+    image_path = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    remove_image = fields.Bool(load_default=False)
     explanation = fields.Str(allow_none=True)
     points = fields.Float(allow_none=True, validate=validate.Range(min=0))
     difficulty = fields.Str(

@@ -1,12 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import or_, select, update
 
-from models import Test, TestQuestion
+from models import Test, TestQuestion, TestStudentAssignment
 from repositories.base_repository import BaseRepository
-from utils.app_timezone import local_timezone_now
+from utils.app_timezone import ensure_local_aware, local_timezone_now
 from utils.db import db
-from utils.enums import TestStatus
+from utils.enums import AvailabilityTimeMode, TestStatus
 
 
 class TestRepository(BaseRepository):
@@ -60,6 +60,107 @@ class TestRepository(BaseRepository):
         if published_ids:
             db.session.commit()
         return published_ids
+
+    def _find_time_overlapping_scheduled_test_ids(
+        self,
+        *,
+        workspace_id: int,
+        window_start: datetime,
+        window_end: datetime,
+        exclude_test_id: int | None = None,
+        teacher_membership_id: int | None = None,
+    ) -> list[int]:
+        stmt = (
+            select(Test.id, Test.starts_at, Test.duration_minutes)
+            .where(
+                Test.created_by.has(workspace_id=workspace_id),
+                Test.status.in_(
+                    [TestStatus.SCHEDULED.value, TestStatus.PUBLISHED.value]
+                ),
+                Test.archived_at.is_(None),
+                Test.starts_at.is_not(None),
+                Test.duration_minutes.is_not(None),
+                Test.starts_at < window_end,
+                or_(
+                    Test.availability_time_mode.is_(None),
+                    Test.availability_time_mode != AvailabilityTimeMode.FLEXIBLE.value,
+                ),
+            )
+        )
+        if exclude_test_id is not None:
+            stmt = stmt.where(Test.id != exclude_test_id)
+        if teacher_membership_id is not None:
+            stmt = stmt.where(Test.created_by_membership_id == teacher_membership_id)
+
+        candidate_rows = db.session.execute(stmt).all()
+        overlapping_ids: list[int] = []
+        for test_id, starts_at, duration_minutes in candidate_rows:
+            if not starts_at or not duration_minutes:
+                continue
+            start = ensure_local_aware(starts_at)
+            end = start + timedelta(minutes=int(duration_minutes))
+            if start < window_end and end > window_start:
+                overlapping_ids.append(int(test_id))
+        return sorted(overlapping_ids)
+
+    def find_conflicting_teacher_scheduled_test_id(
+        self,
+        *,
+        workspace_id: int,
+        teacher_membership_id: int,
+        window_start: datetime,
+        window_end: datetime,
+        exclude_test_id: int | None = None,
+    ) -> int | None:
+        overlapping_ids = self._find_time_overlapping_scheduled_test_ids(
+            workspace_id=workspace_id,
+            window_start=window_start,
+            window_end=window_end,
+            exclude_test_id=exclude_test_id,
+            teacher_membership_id=teacher_membership_id,
+        )
+        return overlapping_ids[0] if overlapping_ids else None
+
+    def find_conflicting_scheduled_test_ids(
+        self,
+        *,
+        workspace_id: int,
+        window_start: datetime,
+        window_end: datetime,
+        student_membership_ids: list[int],
+        exclude_test_id: int | None = None,
+    ) -> list[int]:
+        """
+        Return test IDs that overlap [window_start, window_end) and share
+        at least one assigned student with student_membership_ids.
+        """
+        if not student_membership_ids:
+            return []
+
+        overlapping_ids = self._find_time_overlapping_scheduled_test_ids(
+            workspace_id=workspace_id,
+            window_start=window_start,
+            window_end=window_end,
+            exclude_test_id=exclude_test_id,
+        )
+        if not overlapping_ids:
+            return []
+
+        return list(
+            db.session.execute(
+                select(TestStudentAssignment.test_id)
+                .where(
+                    TestStudentAssignment.test_id.in_(overlapping_ids),
+                    TestStudentAssignment.student_membership_id.in_(
+                        student_membership_ids
+                    ),
+                )
+                .distinct()
+                .order_by(TestStudentAssignment.test_id)
+            )
+            .scalars()
+            .all()
+        )
 
 
 class TestQuestionRepository(BaseRepository):

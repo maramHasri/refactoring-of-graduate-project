@@ -7,6 +7,7 @@ from models import Question, QuestionBank, QuestionChoice
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.topic_repository import TopicRepository
 from service.exceptions import NotFoundError, ValidationError
+from service.question_image_service import QuestionImageService
 from service.question_bank_service import QuestionBankService
 from utils.db import db
 from utils.enums import Difficulty, QuestionStatus
@@ -19,6 +20,7 @@ class QuestionService:
         self.question_types = QuestionTypeRepository()
         self.topics = TopicRepository()
         self.bank_service = QuestionBankService()
+        self.images = QuestionImageService()
 
     def create_questions_in_bank(
         self,
@@ -106,6 +108,7 @@ class QuestionService:
         question = Question(
             bank_id=bank.id,
             question_text=payload["body"].strip(),
+            image_path=(payload.get("image_path") or "").strip() or None,
             explanation=(payload.get("explanation") or "").strip() or None,
             question_type_id=question_type.id,
             owner_user_id=owner_user_id,
@@ -188,6 +191,14 @@ class QuestionService:
 
         if "body" in data and data["body"]:
             question.question_text = data["body"].strip()
+        if data.get("remove_image"):
+            self.images.delete_if_local(question.image_path)
+            question.image_path = None
+        if "image_path" in data:
+            new_path = (data.get("image_path") or "").strip() or None
+            if question.image_path and new_path != question.image_path:
+                self.images.delete_if_local(question.image_path)
+            question.image_path = new_path
         if "explanation" in data:
             question.explanation = (data.get("explanation") or "").strip() or None
         if "topic_id" in data:
@@ -290,6 +301,8 @@ class QuestionService:
                 else None
             ),
             "body": question.question_text,
+            "image_path": question.image_path,
+            "image_url": self.images.build_public_url(question.image_path),
             "explanation": question.explanation,
             "points": float(question.points) if question.points is not None else None,
             "difficulty": question.difficulty,

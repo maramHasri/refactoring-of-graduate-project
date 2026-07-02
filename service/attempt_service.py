@@ -85,6 +85,62 @@ class AttemptService:
 
         return [self._serialize_test_summary(test) for test in rows]
 
+    def list_upcoming_tests(
+        self, *, workspace_id: int, actor_membership
+    ) -> list[dict]:
+        subject_ids = self._student_subject_ids(actor_membership.id, workspace_id)
+        rows = self.attempts.list_published_for_subjects(
+            subject_ids,
+            workspace_id,
+            actor_membership.id,
+        )
+        if not rows:
+            return []
+
+        test_ids = [test.id for test in rows]
+        blocked_ids = self.attempts.find_test_ids_with_attempt_statuses(
+            test_ids,
+            actor_membership.id,
+            [
+                TestAttemptStatus.IN_PROGRESS.value,
+                TestAttemptStatus.SUBMITTED.value,
+                TestAttemptStatus.GRADED.value,
+            ],
+        )
+
+        now = local_timezone_now()
+        upcoming: list[tuple[tuple, dict]] = []
+        for test in rows:
+            if test.id in blocked_ids:
+                continue
+            if test.status != TestStatus.PUBLISHED.value or test.archived_at is not None:
+                continue
+            if self._is_upcoming_window_closed(test, now):
+                continue
+            payload = self._serialize_upcoming_test(test, now)
+            upcoming.append((self._upcoming_sort_key(test, now), payload))
+
+        upcoming.sort(key=lambda item: item[0])
+        return [payload for _, payload in upcoming]
+
+    def list_student_graded_results(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+    ) -> list[dict]:
+        attempts = self.attempts.list_graded_for_student(
+            workspace_id=workspace_id,
+            student_membership_id=actor_membership.id,
+            student_user_id=actor_user_id,
+        )
+        return [
+            self._serialize_student_graded_result(attempt)
+            for attempt in attempts
+            if attempt.test is not None
+        ]
+
     def start_or_resume_attempt(
         self,
         *,
@@ -789,6 +845,8 @@ class AttemptService:
             "source_type": row.source_type,
             "points": float(row.points) if row.points is not None else None,
             "snapshot_question_text": row.snapshot_question_text,
+            "snapshot_image_path": row.snapshot_image_path,
+            "snapshot_image_url": self._build_image_url(row.snapshot_image_path),
             "snapshot_type_code": row.snapshot_type_code,
             "snapshot_topic_name": row.snapshot_topic_name,
             "snapshot_difficulty": row.snapshot_difficulty,
@@ -830,6 +888,124 @@ class AttemptService:
             "starts_at": format_local_datetime(test.starts_at),
             "published_at": format_local_datetime(test.published_at),
         }
+
+    def _serialize_upcoming_test(self, test: Test, now: datetime) -> dict:
+        mode = self._availability_mode(test)
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+
+        payload: dict = {
+            "test_id": test.id,
+            "title": test.name,
+            "subject": test.subject.name if test.subject else None,
+            "teacher_name": teacher_name,
+            "status": test.status,
+            "availability_time_mode": mode,
+        }
+
+        if self._is_flexible(test):
+            payload["start_time"] = None
+            payload["starts_on_entry"] = True
+            payload["availability_note"] = "Starts on entry"
+            payload["end_time"] = format_local_datetime(test.closed_at)
+            window: dict = {}
+            if test.published_at:
+                window["available_from"] = format_local_datetime(test.published_at)
+            if test.closed_at:
+                window["available_until"] = format_local_datetime(test.closed_at)
+            if window:
+                payload["availability_window"] = window
+            return payload
+
+        start = ensure_local_aware(test.starts_at) if test.starts_at else None
+        global_end = self._scheduled_global_end_time(test)
+        payload["start_time"] = format_local_datetime(test.starts_at)
+        payload["end_time"] = format_local_datetime(global_end)
+
+        if start:
+            seconds_until = int((start - now).total_seconds())
+            if seconds_until > 0:
+                payload["time_until_start_seconds"] = seconds_until
+                payload["time_until_start_human"] = self._format_countdown(seconds_until)
+            else:
+                payload["time_until_start_seconds"] = 0
+                payload["time_until_start_human"] = "Available now"
+        else:
+            payload["time_until_start_seconds"] = None
+            payload["time_until_start_human"] = None
+
+        return payload
+
+    def _serialize_student_graded_result(self, attempt: TestAttempt) -> dict:
+        test = attempt.test
+        max_score = self.grading.maximum_score(test)
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+
+        score = attempt.final_score
+        if score is not None:
+            score = float(score)
+        percentage = attempt.percentage
+        if percentage is not None:
+            percentage = float(percentage)
+
+        return {
+            "test_id": test.id,
+            "attempt_id": attempt.id,
+            "title": test.name,
+            "subject": test.subject.name if test.subject else None,
+            "teacher_name": teacher_name,
+            "score": score,
+            "max_score": max_score,
+            "percentage": percentage,
+            "status": attempt.status,
+            "graded_at": format_local_datetime(attempt.graded_at),
+        }
+
+    def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:
+        if self._is_flexible(test):
+            if test.closed_at and now >= ensure_local_aware(test.closed_at):
+                return True
+            return False
+
+        global_end = self._scheduled_global_end_time(test)
+        if global_end and now >= global_end:
+            return True
+        return False
+
+    def _upcoming_sort_key(self, test: Test, now: datetime) -> tuple:
+        if self._is_flexible(test):
+            published = ensure_local_aware(test.published_at) if test.published_at else now
+            return (2, published, test.id)
+
+        if not test.starts_at:
+            return (1, now, test.id)
+
+        start = ensure_local_aware(test.starts_at)
+        tier = 0 if start > now else 1
+        return (tier, start, test.id)
+
+    @staticmethod
+    def _format_countdown(total_seconds: int) -> str:
+        if total_seconds <= 0:
+            return "Available now"
+
+        days, remainder = divmod(total_seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, _ = divmod(remainder, 60)
+
+        if days > 0:
+            label = "day" if days == 1 else "days"
+            return f"{days} {label} left"
+        if hours > 0 and minutes > 0:
+            return f"{hours}h {minutes}m left"
+        if hours > 0:
+            return f"{hours}h left"
+        if minutes > 0:
+            return f"{minutes}m left"
+        return f"{total_seconds}s left"
 
     def _max_attempts(self, test: Test) -> int:
         settings = self._load_json(test.settings_config) or {}
@@ -1028,3 +1204,9 @@ class AttemptService:
             return json.loads(value)
         except (TypeError, json.JSONDecodeError):
             return None
+
+    def _build_image_url(self, image_path: str | None) -> str | None:
+        if not image_path:
+            return None
+        base_url = current_app.config.get("API_URL", "").rstrip("/")
+        return f"{base_url}/uploads/{image_path}"

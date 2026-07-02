@@ -4,13 +4,17 @@ Question bank APIs — subject-centered content with visibility rules.
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
-from schemas.question_schema import CreateQuestionsInBankSchema, UpdateQuestionInBankSchema
+from schemas.question_schema import (
+    CreateQuestionsInBankSchema,
+    UpdateQuestionInBankSchema,
+)
 from schemas.subject_schema import (
     CreateQuestionBankSchema,
     QuestionBankListQuerySchema,
     UpdateQuestionBankSchema,
 )
 from service.question_bank_service import QuestionBankService
+from service.exceptions import ValidationError
 from service.question_service import QuestionService
 
 question_bank_bp = Blueprint("question_banks", __name__)
@@ -101,7 +105,15 @@ def create_question_in_bank(bank_id):
     POST /question-banks/{bankId}/questions — save one or many questions in one request.
     Body must always be { "questions": [ ... ] }.
     """
-    data = CreateQuestionsInBankSchema().load(request.get_json() or {})
+    payload = request.get_json(silent=True)
+    if payload is None and request.form.get("payload"):
+        import json
+
+        try:
+            payload = json.loads(request.form.get("payload") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Invalid JSON in multipart payload") from exc
+    data = CreateQuestionsInBankSchema().load(payload or {})
     svc = QuestionService()
     rows = svc.create_questions_in_bank(
         bank_id=bank_id,
@@ -135,7 +147,15 @@ def list_questions_in_bank(bank_id):
 @handle_service_errors
 def update_question_in_bank(bank_id, question_id):
     """PATCH /question-banks/{bankId}/questions/{questionId} — update one question."""
-    data = UpdateQuestionInBankSchema().load(request.get_json() or {}, partial=True)
+    payload = request.get_json(silent=True)
+    if payload is None and request.form.get("payload"):
+        import json
+
+        try:
+            payload = json.loads(request.form.get("payload") or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValidationError("Invalid JSON in multipart payload") from exc
+    data = UpdateQuestionInBankSchema().load(payload or {}, partial=True)
     svc = QuestionService()
     question = svc.update_question_in_bank(
         bank_id=bank_id,
@@ -193,3 +213,5 @@ def delete_question_bank(bank_id):
         "message": "Question bank archived",
         "question_bank": _svc()._serialize_bank(bank),
     }, 200
+
+

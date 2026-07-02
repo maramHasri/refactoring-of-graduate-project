@@ -14,6 +14,7 @@ class CreateQuestionInBankItemSchema(Schema):
 
     type_code = fields.Str(required=True, validate=validate.Length(min=2, max=50))
     body = fields.Str(required=True, validate=validate.Length(min=1))
+    image_path = fields.Str(allow_none=True, validate=validate.Length(max=512))
     explanation = fields.Str(allow_none=True)
     points = fields.Float(allow_none=True, validate=validate.Range(min=0))
     difficulty = fields.Str(
@@ -47,6 +48,8 @@ class UpdateQuestionInBankSchema(Schema):
 
     type_code = fields.Str(validate=validate.Length(min=2, max=50))
     body = fields.Str(validate=validate.Length(min=1))
+    image_path = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    remove_image = fields.Bool(load_default=False)
     explanation = fields.Str(allow_none=True)
     points = fields.Float(allow_none=True, validate=validate.Range(min=0))
     difficulty = fields.Str(
@@ -93,6 +96,8 @@ class QuestionSchema(Schema):
     bank_id = fields.Int(allow_none=True)
     type_code = fields.Str()
     body = fields.Str()
+    image_path = fields.Str(allow_none=True)
+    image_url = fields.Str(allow_none=True)
     explanation = fields.Str(allow_none=True)
     points = fields.Float(allow_none=True)
     difficulty = fields.Str(allow_none=True)
