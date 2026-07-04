@@ -7,7 +7,7 @@ class UserSchema(Schema):
     id = fields.Int(dump_only=True)
     full_name = fields.Str(required=True)
     email = fields.Email(required=True)
-    avatar_url = fields.Str(allow_none=True)
+    profile_image_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
     phone_number = fields.Str(allow_none=True)
     user_status = fields.Str(dump_only=True)
     email_verified = fields.Bool(dump_only=True)
@@ -37,9 +37,18 @@ class ResendOtpSchema(Schema):
 ResendVerificationSchema = ResendOtpSchema
 
 
+class UpdateUserProfileSchema(Schema):
+    """PATCH /users/me — self-service profile fields only."""
+
+    full_name = fields.Str(allow_none=True, validate=validate.Length(min=1, max=255))
+    phone_number = fields.Str(allow_none=True, validate=validate.Length(max=20))
+    avatar_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+
+
 class UpdateUserSchema(Schema):
     full_name = fields.Str(validate=validate.Length(min=2, max=255))
-    avatar_url = fields.Str(allow_none=True)
+    avatar_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    profile_image_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
     phone_number = fields.Str(allow_none=True, validate=validate.Length(max=20))
     user_status = fields.Str(
         validate=validate.OneOf([s.value for s in UserStatus]),

@@ -21,6 +21,7 @@ def create_workspace():
         name=payload["name"],
         kind=payload["kind"],
         slug=payload.get("slug"),
+        logo_url=payload.get("logo_url"),
     )
     return {"message": "Workspace created", **result}, 201
 

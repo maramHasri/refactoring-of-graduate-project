@@ -13,7 +13,7 @@ class User(db.Model, TimestampMixin):
     full_name = db.Column(String(255), nullable=False)
     email = db.Column(String(255), nullable=False, unique=True)
     password_hash = db.Column(String(255), nullable=False)
-    avatar_url = db.Column(String(255), nullable=True)
+    profile_image_url = db.Column(String(512), nullable=True)
     phone_number = db.Column(String(20), nullable=True)
     user_status = db.Column(
         String(30),

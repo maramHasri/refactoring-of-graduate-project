@@ -592,7 +592,8 @@ class AuthService:
             "id": user.id,
             "email": user.email,
             "full_name": user.full_name,
-            "avatar_url": user.avatar_url,
+            "profile_image_url": user.profile_image_url,
+            "avatar_url": user.profile_image_url,
             "phone_number": user.phone_number,
             "user_status": user.user_status,
             "email_verified": user.email_verified,
@@ -619,6 +620,7 @@ class AuthService:
                         "slug": workspace.slug,
                         "kind": workspace.kind,
                         "status": workspace.status,
+                        "logo_url": workspace.logo_url,
                     },
                 }
             )

@@ -18,6 +18,7 @@ class WorkspaceSchema(Schema):
     status = fields.Str()
     subject_assignment_mode = fields.Str(allow_none=True)
     is_verified_by_superadmin = fields.Bool()
+    logo_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
     created_at = fields.DateTime(dump_only=True)
     updated_at = fields.DateTime(dump_only=True)
 
@@ -31,6 +32,7 @@ class CreateWorkspaceSchema(Schema):
         required=True,
         validate=validate.OneOf([k.value for k in WorkspaceKind]),
     )
+    logo_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
 
 
 class UpdateWorkspaceSchema(Schema):
@@ -40,6 +42,7 @@ class UpdateWorkspaceSchema(Schema):
     status = fields.Str(validate=validate.OneOf([s.value for s in WorkspaceStatus]))
     subject_assignment_mode = fields.Str(allow_none=True, validate=validate.Length(max=30))
     is_verified_by_superadmin = fields.Bool()
+    logo_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
 
 
 class WorkspaceTeacherSchema(Schema):

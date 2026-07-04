@@ -323,6 +323,45 @@ paths:
       responses:
         200:
           description: Changed
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      description: Returns the authenticated user's profile. User is resolved from JWT only.
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Profile
+          schema:
+            $ref: "#/definitions/UserProfile"
+    patch:
+      tags: [Users]
+      summary: Update current user profile
+      description: |
+        Update `full_name`, `phone_number`, and/or `avatar_url` only.
+        `avatar_url` is the URL returned from the upload API (not a file upload).
+        `email` and other internal fields cannot be changed (unknown fields return 400).
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              full_name: { type: string, example: "Ahmed Ali" }
+              phone_number: { type: string, example: "+9639xxxxxxx" }
+              avatar_url:
+                type: string
+                example: "https://cdn.example.com/avatars/user123.png"
+      responses:
+        200:
+          description: Profile updated
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Profile updated successfully" }
+              user:
+                $ref: "#/definitions/UserProfile"
   /workspaces:
     get:
       tags: [Workspaces]
@@ -344,6 +383,7 @@ paths:
               name: { type: string }
               kind: { type: string, enum: [SOLO, INSTITUTION] }
               slug: { type: string }
+              logo_url: { type: string, example: "https://cdn.example.com/logos/school.png" }
       responses:
         201:
           description: Created
@@ -398,6 +438,14 @@ paths:
           in: path
           type: integer
           required: true
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name: { type: string }
+              slug: { type: string }
+              logo_url: { type: string, example: "https://cdn.example.com/logos/school.png" }
       responses:
         200:
           description: Updated
@@ -2803,6 +2851,18 @@ definitions:
       user_id: { type: integer, example: 42 }
       full_name: { type: string, example: "Jane Doe" }
       email: { type: string, example: "jane@school.edu" }
+  UserProfile:
+    type: object
+    properties:
+      id: { type: integer, example: 15 }
+      full_name: { type: string, example: "Ahmed Ali" }
+      email: { type: string, example: "ahmed@example.com" }
+      phone_number: { type: string, example: "+9639xxxxxxx" }
+      avatar_url: { type: string, example: "https://cdn.example.com/avatars/user123.png" }
+      email_verified: { type: boolean, example: true }
+      last_login_at: { type: string, format: date-time }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
   StudentGroupDetail:
     type: object
     properties:

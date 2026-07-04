@@ -34,6 +34,7 @@ class WorkspaceService:
         name: str,
         kind: str,
         slug: str | None = None,
+        logo_url: str | None = None,
     ) -> dict:
         """
         Purpose: Authenticated user creates a new workspace (owner onboarding).
@@ -52,6 +53,7 @@ class WorkspaceService:
             kind=kind,
             owner_user_id=user_id,
             join_code=self._unique_join_code(),
+            logo_url=(logo_url or "").strip() or None,
         )
         self.workspaces.add(workspace)
         db.session.flush()
@@ -155,6 +157,9 @@ class WorkspaceService:
             if field in data and data[field] is not None:
                 setattr(workspace, field, data[field])
 
+        if "logo_url" in data:
+            workspace.logo_url = (data.get("logo_url") or "").strip() or None
+
         if "slug" in data and data["slug"]:
             existing = self.workspaces.find_by_slug(data["slug"])
             if existing and existing.id != workspace.id:
@@ -217,6 +222,7 @@ class WorkspaceService:
             "kind": workspace.kind,
             "status": workspace.status,
             "join_code": workspace.join_code,
+            "logo_url": workspace.logo_url,
             "membership_id": membership_id,
             "role": role,
             "is_owner": workspace.owner_membership_id == membership_id,
@@ -230,6 +236,7 @@ class WorkspaceService:
             "kind": workspace.kind,
             "status": workspace.status,
             "join_code": workspace.join_code,
+            "logo_url": workspace.logo_url,
             "owner_user_id": workspace.owner_user_id,
             "owner_membership_id": workspace.owner_membership_id,
             "subject_assignment_mode": workspace.subject_assignment_mode,
