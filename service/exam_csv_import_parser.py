@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any
+from urllib.parse import urlparse
 
 from repositories.topic_repository import TopicRepository
 from service.exceptions import ValidationError
@@ -34,6 +35,7 @@ TEACHER_HEADERS = (
     "Topic ID",
     *CHOICE_HEADERS,
     "Correct Answers",
+    "image_url",
 )
 
 
@@ -173,7 +175,7 @@ def _parse_legacy_row(row: dict[str, str], *, row_number: int) -> dict:
                 f"Row {row_number}: choices must be valid JSON array"
             ) from exc
 
-    return {
+    payload = {
         "type_code": type_code,
         "body": body,
         "explanation": _cell(row, "explanation") or None,
@@ -182,6 +184,10 @@ def _parse_legacy_row(row: dict[str, str], *, row_number: int) -> dict:
         "topic_id": _cell(row, "topic_id") or None,
         "choices": choices,
     }
+    image_path = _parse_image_url_cell(row, row_number=row_number)
+    if image_path:
+        payload["image_path"] = image_path
+    return payload
 
 
 def _parse_teacher_row(
@@ -249,12 +255,14 @@ def _parse_teacher_row(
     correct_raw = _cell(row, "Correct Answers", "correct answers").upper().replace(",", "")
     correct_letters = _parse_correct_letters(correct_raw, row_number=row_number)
 
+    image_path = _parse_image_url_cell(row, row_number=row_number)
+
     if type_code == "ESSAY":
         if correct_raw:
             raise ValidationError(
                 f"Row {row_number}: ESSAY questions must leave Correct Answers empty"
             )
-        return {
+        payload = {
             "type_code": type_code,
             "body": body,
             "explanation": _cell(row, "Explanation", "explanation") or None,
@@ -263,6 +271,9 @@ def _parse_teacher_row(
             "topic_id": topic_id,
             "choices": [],
         }
+        if image_path:
+            payload["image_path"] = image_path
+        return payload
 
     choices = _build_choices(
         choice_texts,
@@ -271,7 +282,7 @@ def _parse_teacher_row(
         row_number=row_number,
     )
 
-    return {
+    payload = {
         "type_code": type_code,
         "body": body,
         "explanation": _cell(row, "Explanation", "explanation") or None,
@@ -280,6 +291,61 @@ def _parse_teacher_row(
         "topic_id": topic_id,
         "choices": choices,
     }
+    if image_path:
+        payload["image_path"] = image_path
+    return payload
+
+
+def _parse_image_url_cell(row: dict[str, str], *, row_number: int) -> str | None:
+    """
+    Resolve optional image_url / image_path CSV cell to stored image_path.
+
+    Accepts:
+      - empty (no image)
+      - relative path from POST /uploads/images (questions/...)
+      - full public URL containing /uploads/ (image_url from upload response)
+    """
+    raw = _cell(row, "image_url", "Image URL", "image_path", "image path")
+    if not raw:
+        return None
+
+    value = raw.strip()
+    if len(value) > 512:
+        raise ValidationError(
+            f"Row {row_number}: image_url must be at most 512 characters"
+        )
+
+    if value.startswith("questions/"):
+        return value
+
+    uploads_marker = "/uploads/"
+    if uploads_marker in value:
+        path = value.split(uploads_marker, 1)[1].lstrip("/")
+        if not path:
+            raise ValidationError(
+                f"Row {row_number}: invalid image_url (empty path after /uploads/)"
+            )
+        if len(path) > 512:
+            raise ValidationError(
+                f"Row {row_number}: image_url must be at most 512 characters"
+            )
+        return path
+
+    if value.startswith(("http://", "https://")):
+        parsed = urlparse(value)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValidationError(
+                f"Row {row_number}: invalid image_url (malformed URL)"
+            )
+        raise ValidationError(
+            f"Row {row_number}: image_url must be a questions/... path or a URL "
+            "from POST /uploads/images (containing /uploads/)"
+        )
+
+    raise ValidationError(
+        f"Row {row_number}: image_url must be a questions/... path or a URL "
+        "from POST /uploads/images (containing /uploads/)"
+    )
 
 
 def _parse_correct_letters(raw: str, *, row_number: int) -> list[str]:

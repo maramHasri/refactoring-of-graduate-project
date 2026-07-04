@@ -710,6 +710,178 @@ paths:
       responses:
         200:
           description: Removed
+  /subjects/{subject_id}/groups:
+    get:
+      tags: [Student Groups]
+      summary: List student groups for a subject
+      description: |
+        Subject teachers and workspace admins only.
+        Returns group summaries with `student_count`.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Groups in subject
+          schema:
+            type: object
+            properties:
+              count: { type: integer, example: 2 }
+              groups:
+                type: array
+                items:
+                  $ref: "#/definitions/StudentGroupSummary"
+    post:
+      tags: [Student Groups]
+      summary: Create student group
+      description: |
+        Subject teachers and workspace admins only.
+        Group names must be unique within the subject (duplicate names across different subjects are allowed).
+        Students are added separately via POST /groups/{group_id}/members.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, example: "Section A" }
+              description: { type: string, example: "Morning students" }
+      responses:
+        201:
+          description: Group created
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Group created successfully" }
+              group:
+                $ref: "#/definitions/StudentGroup"
+  /groups/{group_id}:
+    get:
+      tags: [Student Groups]
+      summary: Get student group details
+      description: Returns group metadata, subject info, member count, and enrolled students.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: group_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Group details
+          schema:
+            $ref: "#/definitions/StudentGroupDetail"
+    put:
+      tags: [Student Groups]
+      summary: Update student group
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: group_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            properties:
+              name: { type: string, example: "Section B" }
+              description: { type: string, example: "Updated description" }
+      responses:
+        200:
+          description: Group updated
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Group updated successfully" }
+              group:
+                $ref: "#/definitions/StudentGroup"
+    delete:
+      tags: [Student Groups]
+      summary: Delete student group
+      description: Deletes the group and its memberships only. Does not remove students from the subject.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: group_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Group deleted
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Group deleted successfully" }
+  /groups/{group_id}/members:
+    post:
+      tags: [Student Groups]
+      summary: Add students to group
+      description: |
+        Each `student_id` is the workspace **membership id** of an active student
+        already enrolled in the group's subject. Duplicate IDs in the request and
+        students already in the group are skipped (`skipped_count`).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: group_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [student_ids]
+            properties:
+              student_ids:
+                type: array
+                items: { type: integer }
+                example: [12, 15, 19]
+      responses:
+        200:
+          description: Members added (partial skip possible)
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Group members updated" }
+              added_count: { type: integer, example: 2 }
+              skipped_count: { type: integer, example: 1 }
+  /groups/{group_id}/members/{student_id}:
+    delete:
+      tags: [Student Groups]
+      summary: Remove student from group
+      description: |
+        `student_id` is the workspace membership id. Removes only the group membership;
+        subject enrollment is unchanged.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: group_id
+          in: path
+          type: integer
+          required: true
+        - name: student_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Member removed
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Member removed from group" }
   /subjects/{subject_id}/topics:
     get:
       tags: [Subjects]
@@ -1222,6 +1394,12 @@ paths:
                   status: { type: string, example: DRAFT }
                   slug: { type: string }
                   created_at: { type: string, format: date-time }
+                  test_link:
+                    type: string
+                    example: "http://localhost:5173/tests/15"
+                    description: |
+                      Shareable student access URL (derived from FRONTEND_BASE_URL + test_id).
+                      Not stored in the database.
   /tests/my:
     get:
       tags: [Tests]
@@ -1405,7 +1583,11 @@ paths:
         GET /templates/exam-questions-csv.
 
         **Columns:** Question Type, Question, Explanation, Difficulty, Points, Topic ID,
-        Choice A–F, Correct Answers (letters A–F, e.g. `B` or `ABD`).
+        Choice A–F, Correct Answers (letters A–F, e.g. `B` or `ABD`), image_url (optional).
+
+        **image_url (optional):** relative `questions/...` path or full URL from
+        `POST /uploads/images` (`image_url` response field). Leave empty for no image.
+        Older CSV files without this column remain supported.
 
         **Supported types:** MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY.
 
@@ -1447,6 +1629,7 @@ paths:
       summary: Download exam questions CSV template
       description: |
         Returns a UTF-8 CSV template with example rows for MCQ, TRUE_FALSE, MULTI_SELECT, and ESSAY.
+        Includes optional trailing column `image_url` for question images (from POST /uploads/images).
         Use this file in Excel or Google Sheets before uploading via POST /tests/{test_id}/questions/import-csv.
       produces: [text/csv]
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -2594,6 +2777,53 @@ definitions:
       workspace_id: { type: integer }
       created_at: { type: string, format: date-time }
       updated_at: { type: string, format: date-time }
+  StudentGroupSummary:
+    type: object
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Section A" }
+      description: { type: string, example: "Morning students" }
+      student_count: { type: integer, example: 18 }
+      created_at: { type: string, format: date-time }
+  StudentGroup:
+    type: object
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Section A" }
+      description: { type: string, example: "Morning students" }
+      subject_id: { type: integer, example: 3 }
+      workspace_id: { type: integer, example: 1 }
+      created_by_membership_id: { type: integer, example: 4 }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+  StudentGroupMember:
+    type: object
+    properties:
+      id: { type: integer, description: "Workspace membership id", example: 12 }
+      user_id: { type: integer, example: 42 }
+      full_name: { type: string, example: "Jane Doe" }
+      email: { type: string, example: "jane@school.edu" }
+  StudentGroupDetail:
+    type: object
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Section A" }
+      description: { type: string, example: "Morning students" }
+      subject_id: { type: integer, example: 3 }
+      workspace_id: { type: integer, example: 1 }
+      created_by_membership_id: { type: integer, example: 4 }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+      subject:
+        type: object
+        properties:
+          id: { type: integer, example: 3 }
+          name: { type: string, example: "Cybersecurity" }
+      member_count: { type: integer, example: 3 }
+      students:
+        type: array
+        items:
+          $ref: "#/definitions/StudentGroupMember"
   SubjectWithTopics:
     type: object
     properties:

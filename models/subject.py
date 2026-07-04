@@ -56,6 +56,12 @@ class Subject(db.Model, TimestampMixin):
         back_populates="subject",
         lazy="dynamic",
     )
+    student_groups = relationship(
+        "StudentGroup",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
+    )
 
     __table_args__ = (
         Index("ix_subjects_workspace_name", "workspace_id", "name"),

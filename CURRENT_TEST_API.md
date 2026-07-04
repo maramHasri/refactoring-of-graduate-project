@@ -266,10 +266,13 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
     "auto_distribute_scores": true,
     "status": "DRAFT",
     "slug": "midterm-exam",
-    "created_at": "2026-06-17T10:00:00+00:00"
+    "created_at": "2026-06-17T10:00:00+00:00",
+    "test_link": "http://localhost:5173/tests/8"
   }
 }
 ```
+
+`test_link` يُولَّد ديناميكياً من `FRONTEND_BASE_URL` + `/tests/{test_id}` (نفس صيغة روابط دعوة الامتحان في البريد). لا يُخزَّن في قاعدة البيانات.
 
 > لا يُرجع حقول الإعدادات غير المُعيَّنة بعد الإنشاء (`settings_config`, `published_at`, …). استخدم `GET /tests/{test_id}` للتفاصيل الكاملة.
 
@@ -507,7 +510,7 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 **Headers:** `Authorization`, `X-Workspace-Id`
 
-يعيد ملف `exam_questions_template.csv` جاهزاً للتحرير في Excel. يحتوي على أمثلة لأنواع MCQ و TRUE_FALSE و MULTI_SELECT و ESSAY.
+يعيد ملف `exam_questions_template.csv` جاهزاً للتحرير في Excel. يحتوي على أمثلة لأنواع MCQ و TRUE_FALSE و MULTI_SELECT و ESSAY، مع عمود اختياري `image_url` في النهاية.
 
 ---
 
@@ -531,6 +534,7 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 | `Topic ID` | لا | معرف موضوع ضمن مادة الاختبار |
 | `Choice A` … `Choice F` | حسب النوع | نص الخيارات (اترك فارغاً لـ ESSAY) |
 | `Correct Answers` | حسب النوع | حروف A–F بدون فواصل، مثال: `B` أو `ABD` |
+| `image_url` | لا | مسار الصورة (`questions/...`) أو الرابط الكامل من `POST /uploads/images` — اتركه فارغاً بدون صورة |
 
 **قواعد الإجابات الصحيحة:**
 
@@ -558,7 +562,16 @@ DRAFT ──► SCHEDULED ──► PUBLISHED ──► CLOSED ──► ARCHIVE
 
 `failed_rows` و `failed_count` يظهران فقط عند وجود صفوف فاشلة (استيراد جزئي). الصفوف الصالحة تُنشأ؛ الفاشلة تُتخطى.
 
-**التوافق مع الصيغة القديمة:** ما زال مقبولاً ملف بأعمدة `type_code`, `body`, `choices` (JSON في الخلية).
+**التوافق مع الصيغة القديمة:** ما زال مقبولاً ملف بأعمدة `type_code`, `body`, `choices` (JSON في الخلية). عمود `image_url` اختياري في كلا الصيغتين؛ الملفات القديمة بدون هذا العمود تعمل كما هي.
+
+**قواعد `image_url`:**
+
+| الحالة | السلوك |
+|--------|--------|
+| فارغ أو غير موجود | يُستورد السؤال بدون صورة |
+| `questions/1/8/abc.png` | يُخزَّن كـ `image_path` (مثل إنشاء السؤال عبر API) |
+| `http://host/uploads/questions/1/8/abc.png` | يُستخرج المسار النسبي `questions/1/8/abc.png` |
+| قيمة غير صالحة | خطأ تحقق واضح في `failed_rows` |
 
 ---
 

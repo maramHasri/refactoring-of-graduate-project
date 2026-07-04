@@ -77,6 +77,12 @@ class Workspace(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
+    student_groups = relationship(
+        "StudentGroup",
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
+    )
     workspace_subscriptions = relationship(
         "WorkspaceSubscription",
         back_populates="workspace",

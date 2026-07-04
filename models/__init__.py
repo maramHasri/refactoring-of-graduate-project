@@ -12,6 +12,7 @@ from models.workspace import (
     WorkspaceProfile,
 )
 from models.subject import MembershipSubject, Subject, SubjectMembership
+from models.student_group import StudentGroup, StudentGroupMember
 from models.test import Test, TestAttempt
 from models.test_assignment import TestStudentAssignment
 from models.topic import Topic
@@ -53,6 +54,8 @@ __all__ = [
     "Subject",
     "MembershipSubject",
     "SubjectMembership",
+    "StudentGroup",
+    "StudentGroupMember",
     "Topic",
     "Test",
     "TestAttempt",

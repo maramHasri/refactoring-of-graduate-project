@@ -95,6 +95,17 @@ def can_enroll_students_in_subject(
     return verify_subject_teacher_access(actor_subject_link)
 
 
+def can_manage_student_groups(
+    workspace: Workspace,
+    actor: Membership | None,
+    actor_subject_link: SubjectMembership | None,
+) -> bool:
+    """Subject teachers and workspace admins may manage student groups."""
+    if can_manage_subjects(workspace, actor):
+        return True
+    return verify_subject_teacher_access(actor_subject_link)
+
+
 def can_view_question_bank(
     bank_visibility: str,
     *,

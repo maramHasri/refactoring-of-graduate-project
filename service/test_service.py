@@ -904,6 +904,7 @@ class TestService:
             "status": test.status,
             "slug": test.slug,
             "created_at": format_local_datetime(test.created_at),
+            "test_link": self._build_exam_link(test.id),
         }
 
     def serialize_test_updated(self, test: Test) -> dict:
