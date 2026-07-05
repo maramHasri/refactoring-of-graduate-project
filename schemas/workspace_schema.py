@@ -44,6 +44,7 @@ class UpdateWorkspaceSchema(Schema):
     subject_assignment_mode = fields.Str(allow_none=True, validate=validate.Length(max=30))
     is_verified_by_superadmin = fields.Bool()
     logo_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    description = fields.Str(allow_none=True)
 
 
 class WorkspaceTeacherSchema(Schema):

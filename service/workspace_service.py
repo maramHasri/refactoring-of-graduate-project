@@ -72,12 +72,7 @@ class WorkspaceService:
 
         description_value = (description or "").strip() or None
         if description_value:
-            self.workspaces.add(
-                WorkspaceProfile(
-                    workspace_id=workspace.id,
-                    description=description_value,
-                )
-            )
+            self._set_workspace_description(workspace, description_value)
 
         db.session.commit()
 
@@ -171,6 +166,12 @@ class WorkspaceService:
         if "logo_url" in data:
             workspace.logo_url = (data.get("logo_url") or "").strip() or None
 
+        if "description" in data:
+            self._set_workspace_description(
+                workspace,
+                (data.get("description") or "").strip() or None,
+            )
+
         if "slug" in data and data["slug"]:
             existing = self.workspaces.find_by_slug(data["slug"])
             if existing and existing.id != workspace.id:
@@ -210,6 +211,20 @@ class WorkspaceService:
             if not self.workspaces.find_by_join_code(code):
                 return code
         raise ConflictError("Could not generate unique join code")
+
+    def _set_workspace_description(
+        self, workspace: Workspace, description: str | None
+    ) -> None:
+        if workspace.profile:
+            workspace.profile.description = description
+            return
+        if description:
+            self.workspaces.add(
+                WorkspaceProfile(
+                    workspace_id=workspace.id,
+                    description=description,
+                )
+            )
 
     def _serialize_workspace_teacher(self, membership: Membership, user) -> dict:
         return {
