@@ -33,6 +33,7 @@ class CreateWorkspaceSchema(Schema):
         validate=validate.OneOf([k.value for k in WorkspaceKind]),
     )
     logo_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    description = fields.Str(allow_none=True)
 
 
 class UpdateWorkspaceSchema(Schema):

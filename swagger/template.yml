@@ -384,6 +384,7 @@ paths:
               kind: { type: string, enum: [SOLO, INSTITUTION] }
               slug: { type: string }
               logo_url: { type: string, example: "https://cdn.example.com/logos/school.png" }
+              description: { type: string, example: "Independent teacher workspace" }
       responses:
         201:
           description: Created

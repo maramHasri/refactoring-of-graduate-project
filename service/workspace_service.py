@@ -8,7 +8,7 @@ Owner vs admin:
 """
 import re
 
-from models import Membership, Workspace
+from models import Membership, Workspace, WorkspaceProfile
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.db import db
@@ -35,6 +35,7 @@ class WorkspaceService:
         kind: str,
         slug: str | None = None,
         logo_url: str | None = None,
+        description: str | None = None,
     ) -> dict:
         """
         Purpose: Authenticated user creates a new workspace (owner onboarding).
@@ -68,6 +69,16 @@ class WorkspaceService:
         db.session.flush()
 
         workspace.owner_membership_id = membership.id
+
+        description_value = (description or "").strip() or None
+        if description_value:
+            self.workspaces.add(
+                WorkspaceProfile(
+                    workspace_id=workspace.id,
+                    description=description_value,
+                )
+            )
+
         db.session.commit()
 
         return {
