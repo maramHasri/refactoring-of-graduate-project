@@ -47,6 +47,14 @@ class UpdateWorkspaceSchema(Schema):
     description = fields.Str(allow_none=True)
 
 
+class WorkspaceMembersListQuerySchema(Schema):
+    """GET /workspaces/teachers | /workspaces/students query params."""
+
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))
+    search = fields.Str(allow_none=True, validate=validate.Length(max=255))
+
+
 class WorkspaceTeacherSchema(Schema):
     """Teacher member in the active institution workspace."""
 

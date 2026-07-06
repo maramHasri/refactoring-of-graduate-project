@@ -1,7 +1,9 @@
-from models import Membership, User, Workspace
+from sqlalchemy import func, or_
+
+from models import Membership, Subject, SubjectMembership, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import MembershipRole
+from utils.enums import MembershipRole, SubjectMembershipStatus
 
 
 class WorkspaceRepository(BaseRepository):
@@ -71,3 +73,88 @@ class MembershipRepository(BaseRepository):
                 .order_by(User.full_name, User.id)
             ).all()
         )
+
+    def list_active_members_by_role_with_subject_counts(
+        self,
+        workspace_id: int,
+        role: str,
+        *,
+        subject_role: str,
+        search: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+        enrolled_in_subjects_only: bool = False,
+    ) -> tuple[list[tuple[Membership, User, int]], int]:
+        """
+        Active workspace members of a role with per-member subject assignment counts.
+        Counts active subject_memberships in this workspace for the given subject_role.
+
+        When enrolled_in_subjects_only is True, only members with at least one
+        active subject enrollment in this workspace are returned (solo teacher view).
+        """
+        membership_filters = [
+            Membership.workspace_id == workspace_id,
+            Membership.role == role,
+            Membership.status == "ACTIVE",
+        ]
+        if search:
+            term = f"%{search.strip()}%"
+            membership_filters.append(
+                or_(User.full_name.ilike(term), User.email.ilike(term))
+            )
+
+        subject_counts = (
+            db.select(
+                SubjectMembership.membership_id.label("membership_id"),
+                func.count(SubjectMembership.id).label("subject_count"),
+            )
+            .join(Subject, Subject.id == SubjectMembership.subject_id)
+            .where(
+                SubjectMembership.deleted_at.is_(None),
+                SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                SubjectMembership.subject_role == subject_role,
+                Subject.workspace_id == workspace_id,
+                Subject.deleted_at.is_(None),
+            )
+            .group_by(SubjectMembership.membership_id)
+            .subquery()
+        )
+
+        enrollment_filter = []
+        if enrolled_in_subjects_only:
+            enrollment_filter.append(
+                func.coalesce(subject_counts.c.subject_count, 0) > 0
+            )
+
+        total = (
+            db.session.execute(
+                db.select(func.count())
+                .select_from(Membership)
+                .join(User, User.id == Membership.user_id)
+                .outerjoin(
+                    subject_counts,
+                    subject_counts.c.membership_id == Membership.id,
+                )
+                .where(*membership_filters, *enrollment_filter)
+            ).scalar_one()
+            or 0
+        )
+
+        rows = db.session.execute(
+            db.select(
+                Membership,
+                User,
+                func.coalesce(subject_counts.c.subject_count, 0),
+            )
+            .join(User, User.id == Membership.user_id)
+            .outerjoin(
+                subject_counts,
+                subject_counts.c.membership_id == Membership.id,
+            )
+            .where(*membership_filters, *enrollment_filter)
+            .order_by(User.full_name, User.id)
+            .offset(offset)
+            .limit(limit)
+        ).all()
+
+        return [(membership, user, int(count)) for membership, user, count in rows], total

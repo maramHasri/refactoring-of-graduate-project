@@ -12,9 +12,13 @@ from models import Membership, Workspace, WorkspaceProfile
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.db import db
-from utils.enums import MembershipRole, WorkspaceKind
-from utils.rbac import can_list_institution_workspace_teachers
+from utils.enums import MembershipRole, SubjectRole, WorkspaceKind
+from utils.rbac import (
+    can_list_institution_workspace_teachers,
+    can_list_workspace_students,
+)
 from utils.join_code import generate_workspace_join_code
+from utils.pagination import build_pagination_meta, normalize_pagination
 
 
 def _slugify(name: str) -> str:
@@ -83,30 +87,185 @@ class WorkspaceService:
         }
 
     def list_institution_workspace_teachers(
-        self, workspace_id: int, actor_membership: Membership
-    ) -> list[dict]:
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        search: str | None = None,
+    ) -> dict:
         """
         GET /workspaces/teachers — active TEACHER memberships in the institution workspace.
         Caller must be institution owner or workspace ADMIN (X-Workspace-Id context).
         """
-        workspace = self.workspaces.get_by_id(workspace_id)
-        if not workspace:
-            raise NotFoundError("Workspace not found")
+        result = self._list_institution_workspace_members(
+            workspace_id,
+            actor_membership,
+            role=MembershipRole.TEACHER.value,
+            subject_role=SubjectRole.TEACHER.value,
+            subject_count_field="assigned_subjects_count",
+            page=page,
+            per_page=per_page,
+            search=search,
+        )
+        items = result["items"]
+        return {
+            "success": True,
+            "teachers": items,
+            "data": items,
+            "count": result["count"],
+            **result["pagination"],
+        }
 
+    def list_institution_workspace_students(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        search: str | None = None,
+    ) -> dict:
+        """
+        GET /workspaces/students — students in the active workspace.
+
+        INSTITUTION: all active STUDENT workspace memberships.
+        SOLO: students enrolled in at least one subject in this workspace.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        self._ensure_workspace_student_list_access(workspace, actor_membership)
+
+        enrolled_only = workspace.kind == WorkspaceKind.SOLO.value
+        result = self._list_workspace_students(
+            workspace_id,
+            page=page,
+            per_page=per_page,
+            search=search,
+            enrolled_in_subjects_only=enrolled_only,
+        )
+        items = result["items"]
+        return {
+            "success": True,
+            "students": items,
+            "count": result["count"],
+            **result["pagination"],
+        }
+
+    def _list_workspace_students(
+        self,
+        workspace_id: int,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        search: str | None = None,
+        enrolled_in_subjects_only: bool = False,
+    ) -> dict:
+        page, per_page, offset = normalize_pagination(page, per_page)
+        search_term = (search or "").strip() or None
+
+        rows, total = self.memberships.list_active_members_by_role_with_subject_counts(
+            workspace_id,
+            MembershipRole.STUDENT.value,
+            subject_role=SubjectRole.STUDENT.value,
+            search=search_term,
+            offset=offset,
+            limit=per_page,
+            enrolled_in_subjects_only=enrolled_in_subjects_only,
+        )
+        items = [
+            self._serialize_workspace_member(
+                membership,
+                user,
+                subject_count=subject_count,
+                subject_count_field="enrolled_subjects_count",
+            )
+            for membership, user, subject_count in rows
+        ]
+        return {
+            "items": items,
+            "count": len(items),
+            "pagination": build_pagination_meta(
+                total=total, page=page, per_page=per_page
+            ),
+        }
+
+    def _list_institution_workspace_members(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        role: str,
+        subject_role: str,
+        subject_count_field: str,
+        page: int | None = None,
+        per_page: int | None = None,
+        search: str | None = None,
+    ) -> dict:
+        self._ensure_institution_admin_member_list_access(
+            workspace_id, actor_membership
+        )
+        page, per_page, offset = normalize_pagination(page, per_page)
+        search_term = (search or "").strip() or None
+
+        rows, total = self.memberships.list_active_members_by_role_with_subject_counts(
+            workspace_id,
+            role,
+            subject_role=subject_role,
+            search=search_term,
+            offset=offset,
+            limit=per_page,
+        )
+        items = [
+            self._serialize_workspace_member(
+                membership,
+                user,
+                subject_count=subject_count,
+                subject_count_field=subject_count_field,
+            )
+            for membership, user, subject_count in rows
+        ]
+        return {
+            "items": items,
+            "count": len(items),
+            "pagination": build_pagination_meta(
+                total=total, page=page, per_page=per_page
+            ),
+        }
+
+    def _ensure_institution_admin_member_list_access(
+        self, workspace_id: int, actor_membership: Membership
+    ) -> Workspace:
+        workspace = self._get_workspace_or_404(workspace_id)
         if workspace.kind != WorkspaceKind.INSTITUTION.value:
             raise ForbiddenError(
                 "This endpoint is only available for institution workspaces"
             )
-
         if not can_list_institution_workspace_teachers(workspace, actor_membership):
             raise ForbiddenError(
-                "Only the institution owner or workspace admin can list teachers"
+                "Only the institution owner or workspace admin can list workspace members"
+            )
+        return workspace
+
+    def _ensure_workspace_student_list_access(
+        self, workspace: Workspace, actor_membership: Membership
+    ) -> None:
+        if workspace.kind not in (
+            WorkspaceKind.INSTITUTION.value,
+            WorkspaceKind.SOLO.value,
+        ):
+            raise ForbiddenError("Unsupported workspace type for student listing")
+
+        if not can_list_workspace_students(workspace, actor_membership):
+            raise ForbiddenError(
+                "Only the workspace owner or admin can list students"
             )
 
-        rows = self.memberships.list_active_members_by_role(
-            workspace_id, MembershipRole.TEACHER.value
-        )
-        return [self._serialize_workspace_teacher(m, user) for m, user in rows]
+    def _get_workspace_or_404(self, workspace_id: int) -> Workspace:
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not workspace:
+            raise NotFoundError("Workspace not found")
+        return workspace
 
     def list_accessible_workspaces(self, user_id: int, *, is_superadmin: bool) -> list[dict]:
         """
@@ -226,17 +385,37 @@ class WorkspaceService:
                 )
             )
 
-    def _serialize_workspace_teacher(self, membership: Membership, user) -> dict:
-        return {
-            "membership_id": membership.id,
+    def _serialize_workspace_member(
+        self,
+        membership: Membership,
+        user,
+        *,
+        subject_count: int,
+        subject_count_field: str,
+    ) -> dict:
+        payload = {
             "user_id": user.id,
+            "membership_id": membership.id,
             "full_name": user.full_name,
             "email": user.email,
+            "avatar_url": user.profile_image_url,
+            "user_status": user.user_status,
+            "workspace_role": membership.role,
             "membership_role": membership.role,
             "created_at": membership.created_at.isoformat()
             if membership.created_at
             else None,
+            subject_count_field: subject_count,
         }
+        return payload
+
+    def _serialize_workspace_teacher(self, membership: Membership, user) -> dict:
+        return self._serialize_workspace_member(
+            membership,
+            user,
+            subject_count=0,
+            subject_count_field="assigned_subjects_count",
+        )
 
     def _serialize_workspace(
         self, workspace: Workspace, *, role: str | None, membership_id: int | None

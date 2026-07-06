@@ -38,6 +38,20 @@ def can_list_institution_workspace_teachers(
     return can_manage_workspace_settings(workspace, membership)
 
 
+def can_list_workspace_students(
+    workspace: Workspace, membership: Membership | None
+) -> bool:
+    """
+    Institution: owner or ADMIN (same as teachers list).
+    Solo (independent teacher): owner or ADMIN of the workspace.
+    """
+    if workspace.kind == WorkspaceKind.INSTITUTION.value:
+        return can_list_institution_workspace_teachers(workspace, membership)
+    if workspace.kind == WorkspaceKind.SOLO.value:
+        return can_manage_workspace_settings(workspace, membership)
+    return False
+
+
 def can_invite_with_role(
     inviter_role: str | None, assigned_role: str, *, is_superadmin: bool = False
 ) -> bool:

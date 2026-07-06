@@ -1,7 +1,11 @@
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
-from schemas.workspace_schema import CreateWorkspaceSchema, UpdateWorkspaceSchema
+from schemas.workspace_schema import (
+    CreateWorkspaceSchema,
+    UpdateWorkspaceSchema,
+    WorkspaceMembersListQuerySchema,
+)
 from service.workspace_service import WorkspaceService
 
 workspace_bp = Blueprint("workspaces", __name__)
@@ -50,11 +54,32 @@ def list_institution_workspace_teachers():
     GET /workspaces/teachers — teachers in the active institution workspace.
     Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
     """
-    items = WorkspaceService().list_institution_workspace_teachers(
+    query = WorkspaceMembersListQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().list_institution_workspace_teachers(
         g.workspace_id,
         g.membership,
-    )
-    return {"success": True, "data": items, "count": len(items)}, 200
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        search=query.get("search"),
+    ), 200
+
+
+@workspace_bp.route("/students", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_institution_workspace_students():
+    """
+    GET /workspaces/students — students in the active institution workspace.
+    Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
+    """
+    query = WorkspaceMembersListQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().list_institution_workspace_students(
+        g.workspace_id,
+        g.membership,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        search=query.get("search"),
+    ), 200
 
 
 @workspace_bp.route("/<int:workspace_id>", methods=["GET"])
