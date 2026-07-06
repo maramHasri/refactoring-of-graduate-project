@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from models import Membership, TestStudentAssignment, User
+from models import Membership, Subject, Test, TestStudentAssignment, User
 from repositories.base_repository import BaseRepository
 from utils.db import db
 
@@ -73,3 +73,18 @@ class TestStudentAssignmentRepository(BaseRepository):
 
     def delete(self, row: TestStudentAssignment) -> None:
         db.session.delete(row)
+
+    def delete_for_student_in_workspace(
+        self, student_membership_id: int, workspace_id: int
+    ) -> None:
+        rows = db.session.execute(
+            db.select(TestStudentAssignment)
+            .join(Test, Test.id == TestStudentAssignment.test_id)
+            .join(Subject, Subject.id == Test.subject_id)
+            .where(
+                TestStudentAssignment.student_membership_id == student_membership_id,
+                Subject.workspace_id == workspace_id,
+            )
+        ).scalars().all()
+        for row in rows:
+            db.session.delete(row)

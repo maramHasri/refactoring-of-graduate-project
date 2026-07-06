@@ -95,3 +95,17 @@ class StudentGroupRepository(BaseRepository):
 
     def delete_group(self, group: StudentGroup) -> None:
         db.session.delete(group)
+
+    def delete_members_for_student_in_workspace(
+        self, student_membership_id: int, workspace_id: int
+    ) -> None:
+        rows = db.session.execute(
+            db.select(StudentGroupMember)
+            .join(StudentGroup, StudentGroup.id == StudentGroupMember.group_id)
+            .where(
+                StudentGroupMember.student_membership_id == student_membership_id,
+                StudentGroup.workspace_id == workspace_id,
+            )
+        ).scalars().all()
+        for row in rows:
+            db.session.delete(row)

@@ -38,6 +38,13 @@ def can_list_institution_workspace_teachers(
     return can_manage_workspace_settings(workspace, membership)
 
 
+def can_manage_workspace_members(
+    workspace: Workspace, membership: Membership | None
+) -> bool:
+    """Workspace owner or ADMIN may remove teachers/students from the workspace."""
+    return can_manage_workspace_settings(workspace, membership)
+
+
 def can_list_workspace_students(
     workspace: Workspace, membership: Membership | None
 ) -> bool:

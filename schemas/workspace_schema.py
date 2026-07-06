@@ -55,6 +55,12 @@ class WorkspaceMembersListQuerySchema(Schema):
     search = fields.Str(allow_none=True, validate=validate.Length(max=255))
 
 
+class WorkspaceMemberRemoveQuerySchema(Schema):
+    """DELETE /workspaces/teachers | /workspaces/students — membership_id query param."""
+
+    membership_id = fields.Int(required=True)
+
+
 class WorkspaceTeacherSchema(Schema):
     """Teacher member in the active institution workspace."""
 

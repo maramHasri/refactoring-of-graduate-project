@@ -4,6 +4,7 @@ from router.decorators import handle_service_errors, require_auth, require_works
 from schemas.workspace_schema import (
     CreateWorkspaceSchema,
     UpdateWorkspaceSchema,
+    WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
 )
 from service.workspace_service import WorkspaceService
@@ -64,6 +65,22 @@ def list_institution_workspace_teachers():
     ), 200
 
 
+@workspace_bp.route("/teachers", methods=["DELETE"])
+@require_workspace_membership
+@handle_service_errors
+def remove_institution_workspace_teacher():
+    """
+    DELETE /workspaces/teachers?membership_id= — remove teacher from institution workspace.
+    Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
+    """
+    query = WorkspaceMemberRemoveQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().remove_teacher_from_workspace(
+        g.workspace_id,
+        g.membership,
+        query["membership_id"],
+    ), 200
+
+
 @workspace_bp.route("/students", methods=["GET"])
 @require_workspace_membership
 @handle_service_errors
@@ -79,6 +96,22 @@ def list_institution_workspace_students():
         page=query.get("page"),
         per_page=query.get("per_page"),
         search=query.get("search"),
+    ), 200
+
+
+@workspace_bp.route("/students", methods=["DELETE"])
+@require_workspace_membership
+@handle_service_errors
+def remove_workspace_student():
+    """
+    DELETE /workspaces/students?membership_id= — remove student from active workspace.
+    Requires X-Workspace-Id. Workspace owner or ADMIN only.
+    """
+    query = WorkspaceMemberRemoveQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().remove_student_from_workspace(
+        g.workspace_id,
+        g.membership,
+        query["membership_id"],
     ), 200
 
 

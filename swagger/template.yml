@@ -434,6 +434,41 @@ paths:
                   $ref: "#/definitions/WorkspaceTeacherMember"
         403:
           description: Forbidden (not owner/admin, or not an institution workspace)
+    delete:
+      tags: [Workspaces]
+      summary: Remove teacher from institution workspace
+      description: |
+        Removes a TEACHER membership from the workspace selected via X-Workspace-Id.
+        Institution workspaces only. Caller must be workspace owner or ADMIN.
+
+        **Swagger:** run `GET /workspaces/teachers` first, copy `membership_id` from a teacher
+        row, then pass it as the query parameter below.
+
+        Cleans up teacher subject assignments in this workspace, then deletes the membership.
+        Does not delete the user account or memberships in other workspaces.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: query
+          type: integer
+          required: true
+          example: 45
+          description: Workspace membership id of the teacher (from GET /workspaces/teachers)
+      responses:
+        200:
+          description: Teacher removed
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Teacher removed from workspace successfully.
+        403:
+          description: Forbidden (not owner/admin, cannot remove owner)
+        404:
+          description: Membership not found in this workspace
+        422:
+          description: Membership is not a teacher or not active
   /workspaces/students:
     get:
       tags: [Workspaces]
@@ -481,6 +516,42 @@ paths:
                   $ref: "#/definitions/WorkspaceStudentMember"
         403:
           description: Forbidden (not owner/admin, or not an institution workspace)
+    delete:
+      tags: [Workspaces]
+      summary: Remove student from workspace
+      description: |
+        Removes a STUDENT membership from the workspace selected via X-Workspace-Id.
+        Institution or SOLO workspace. Caller must be workspace owner or ADMIN.
+
+        **Swagger:** run `GET /workspaces/students` first, copy `membership_id` from a student
+        row, then pass it as the query parameter below.
+
+        Cleans up subject enrollments, student group memberships, and test assignments
+        in this workspace, then deletes the membership.
+        Does not delete the user account or memberships in other workspaces.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: query
+          type: integer
+          required: true
+          example: 45
+          description: Workspace membership id of the student (from GET /workspaces/students)
+      responses:
+        200:
+          description: Student removed
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Student removed from workspace successfully.
+        403:
+          description: Forbidden (not owner/admin, cannot remove owner)
+        404:
+          description: Membership not found in this workspace
+        422:
+          description: Membership is not a student or not active
   /workspaces/{workspace_id}:
     get:
       tags: [Workspaces]

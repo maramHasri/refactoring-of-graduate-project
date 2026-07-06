@@ -1,6 +1,6 @@
 from sqlalchemy.orm import joinedload
 
-from models import AttemptAnswer, Test, TestAttempt, TestQuestion, TestStudentAssignment
+from models import AttemptAnswer, Subject, Test, TestAttempt, TestQuestion, TestStudentAssignment
 from models.workspace import Membership
 from repositories.base_repository import BaseRepository
 from utils.db import db
@@ -183,6 +183,21 @@ class TestAttemptRepository(BaseRepository):
                 )
             ).scalars().all()
         )
+
+    def delete_for_student_in_workspace(
+        self, student_membership_id: int, workspace_id: int
+    ) -> None:
+        rows = db.session.execute(
+            db.select(TestAttempt)
+            .join(Test, Test.id == TestAttempt.test_id)
+            .join(Subject, Subject.id == Test.subject_id)
+            .where(
+                TestAttempt.student_membership_id == student_membership_id,
+                Subject.workspace_id == workspace_id,
+            )
+        ).scalars().all()
+        for row in rows:
+            db.session.delete(row)
 
 
 class AttemptAnswerRepository(BaseRepository):

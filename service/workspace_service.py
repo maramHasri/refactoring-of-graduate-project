@@ -9,6 +9,10 @@ Owner vs admin:
 import re
 
 from models import Membership, Workspace, WorkspaceProfile
+from repositories.attempt_repository import TestAttemptRepository
+from repositories.student_group_repository import StudentGroupRepository
+from repositories.subject_repository import SubjectMembershipRepository
+from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.db import db
@@ -30,6 +34,10 @@ class WorkspaceService:
     def __init__(self):
         self.workspaces = WorkspaceRepository()
         self.memberships = MembershipRepository()
+        self.subject_memberships = SubjectMembershipRepository()
+        self.student_groups = StudentGroupRepository()
+        self.test_assignments = TestStudentAssignmentRepository()
+        self.test_attempts = TestAttemptRepository()
 
     def create_workspace(
         self,
@@ -151,6 +159,99 @@ class WorkspaceService:
             "count": result["count"],
             **result["pagination"],
         }
+
+    def remove_teacher_from_workspace(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        membership_id: int,
+    ) -> dict:
+        """
+        DELETE /workspaces/teachers?membership_id= — remove teacher from institution workspace.
+        Cleans up subject teacher assignments in this workspace, then deletes the membership.
+        """
+        workspace = self._ensure_institution_admin_member_list_access(
+            workspace_id, actor_membership
+        )
+        target = self._get_removable_workspace_member(
+            workspace,
+            membership_id,
+            expected_role=MembershipRole.TEACHER.value,
+        )
+        self._cleanup_teacher_workspace_relationships(membership_id, workspace_id)
+        db.session.delete(target)
+        db.session.commit()
+        return {"message": "Teacher removed from workspace successfully."}
+
+    def remove_student_from_workspace(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        membership_id: int,
+    ) -> dict:
+        """
+        DELETE /workspaces/students?membership_id= — remove student from active workspace.
+        Cleans up enrollments, groups, and test assignments in this workspace, then membership.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        self._ensure_workspace_student_list_access(workspace, actor_membership)
+        target = self._get_removable_workspace_member(
+            workspace,
+            membership_id,
+            expected_role=MembershipRole.STUDENT.value,
+        )
+        self._cleanup_student_workspace_relationships(membership_id, workspace_id)
+        db.session.delete(target)
+        db.session.commit()
+        return {"message": "Student removed from workspace successfully."}
+
+    def _get_removable_workspace_member(
+        self,
+        workspace: Workspace,
+        membership_id: int,
+        *,
+        expected_role: str,
+    ) -> Membership:
+        target = self.memberships.get_by_id(membership_id)
+        if not target or target.workspace_id != workspace.id:
+            raise NotFoundError("Membership not found in this workspace")
+        if target.status != "ACTIVE":
+            raise ValidationError("Membership is not active")
+        if target.role != expected_role:
+            raise ValidationError(
+                f"Membership is not a workspace {expected_role.lower()}"
+            )
+        if workspace.owner_membership_id == target.id:
+            raise ForbiddenError("Cannot remove the workspace owner")
+        return target
+
+    def _cleanup_teacher_workspace_relationships(
+        self, membership_id: int, workspace_id: int
+    ) -> None:
+        links = self.subject_memberships.list_teacher_assignments_for_membership(
+            membership_id, workspace_id
+        )
+        for link in links:
+            self.subject_memberships.soft_remove(link)
+
+    def _cleanup_student_workspace_relationships(
+        self, membership_id: int, workspace_id: int
+    ) -> None:
+        enrollments = self.subject_memberships.list_student_assignments_for_membership(
+            membership_id, workspace_id
+        )
+        for link in enrollments:
+            self.subject_memberships.soft_remove(link)
+
+        self.student_groups.delete_members_for_student_in_workspace(
+            membership_id, workspace_id
+        )
+        self.test_assignments.delete_for_student_in_workspace(
+            membership_id, workspace_id
+        )
+        self.test_attempts.delete_for_student_in_workspace(
+            membership_id, workspace_id
+        )
 
     def _list_workspace_students(
         self,
