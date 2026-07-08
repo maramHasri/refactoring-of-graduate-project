@@ -20,8 +20,10 @@ class Config:
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    # AI question generation: auto | gemini | qwen | huggingface | placeholder
+    # AI question generation: auto | gemini | openrouter | qwen | huggingface | placeholder
     AI_QUESTION_PROVIDER = os.getenv("AI_QUESTION_PROVIDER", "auto")
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("openRouter_API_KEY")
+    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o")
     DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
     QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-turbo")
     HF_TOKEN = os.getenv("HF_TOKEN")
@@ -29,6 +31,7 @@ class Config:
     AI_FALLBACK_TO_PLACEHOLDER = os.getenv(
         "AI_FALLBACK_TO_PLACEHOLDER", "false"
     ).lower() in ("1", "true", "yes")
+    AI_MAX_OUTPUT_TOKENS = int(os.getenv("AI_MAX_OUTPUT_TOKENS", "2000"))
     GMAIL_USER = os.getenv("GMAIL_USER")
     GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
     SHAM_CASH_API_KEY = os.getenv("SHAM_CASH_API_KEY")

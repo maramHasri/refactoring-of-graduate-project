@@ -3,16 +3,18 @@ AI-backed exam question generation.
 
 Providers (AI_QUESTION_PROVIDER):
   - gemini       — Google Gemini (GEMINI_API_KEY)
+  - openrouter   — OpenRouter (OPENROUTER_API_KEY + OPENROUTER_MODEL)
   - qwen         — Alibaba DashScope (DASHSCOPE_API_KEY) or HuggingFace Qwen (HF_TOKEN)
   - huggingface  — HuggingFace Inference router (HF_TOKEN + HF_QWEN_MODEL)
   - placeholder  — local draft questions (no external API)
-  - auto         — first available: gemini → qwen (dashscope) → huggingface → placeholder
+  - auto         — first available: gemini → openrouter → qwen (dashscope) → huggingface → placeholder
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -67,6 +69,8 @@ class AIQuestionService:
 
         gemini_key = (cfg.get("GEMINI_API_KEY") or "").strip()
         gemini_model = cfg.get("GEMINI_MODEL", "gemini-2.5-flash")
+        openrouter_key = (cfg.get("OPENROUTER_API_KEY") or "").strip()
+        openrouter_model = cfg.get("OPENROUTER_MODEL", "openai/gpt-4o")
         dashscope_key = (cfg.get("DASHSCOPE_API_KEY") or "").strip()
         qwen_model = cfg.get("QWEN_MODEL", "qwen-turbo")
         hf_token = (cfg.get("HF_TOKEN") or "").strip()
@@ -83,6 +87,13 @@ class AIQuestionService:
                 gemini_model,
                 {"api_key": gemini_key, "model": gemini_model},
             )
+
+        if mode == "openrouter":
+            if not openrouter_key:
+                raise ValidationError(
+                    "OPENROUTER_API_KEY is required when AI_QUESTION_PROVIDER=openrouter"
+                )
+            return self._openrouter_provider(openrouter_key, openrouter_model)
 
         if mode == "qwen":
             if dashscope_key:
@@ -132,6 +143,8 @@ class AIQuestionService:
                 gemini_model,
                 {"api_key": gemini_key, "model": gemini_model},
             )
+        if openrouter_key:
+            return self._openrouter_provider(openrouter_key, openrouter_model)
         if dashscope_key:
             return (
                 "openai_chat",
@@ -156,6 +169,19 @@ class AIQuestionService:
             )
         return None
 
+    @staticmethod
+    def _openrouter_provider(api_key: str, model: str) -> tuple[str, str, dict]:
+        return (
+            "openai_chat",
+            f"openrouter:{model}",
+            {
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": api_key,
+                "model": model,
+                "provider_label": "OpenRouter",
+            },
+        )
+
     def _should_fallback_to_placeholder(self, exc: BaseException) -> bool:
         if not current_app.config.get("AI_FALLBACK_TO_PLACEHOLDER"):
             return False
@@ -163,6 +189,12 @@ class AIQuestionService:
         return any(
             token in message
             for token in (
+                # Network / connectivity (local dev, offline, DNS issues)
+                "Could not reach AI API",
+                "getaddrinfo failed",
+                "Name or service not known",
+                "Temporary failure in name resolution",
+                "Connection timed out",
                 "401",
                 "403",
                 "429",
@@ -262,10 +294,15 @@ class AIQuestionService:
     ) -> list[dict]:
         prompt = self.build_prompt(request_body)
         url = f"{base_url.rstrip('/')}/chat/completions"
+        max_tokens = int(
+            current_app.config.get("AI_MAX_OUTPUT_TOKENS", 2000) or 2000
+        )
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
         }
         raw = self._http_post_json(
             url,
@@ -292,25 +329,52 @@ class AIQuestionService:
             headers=headers,
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            label = "API"
-            if "generativelanguage.googleapis.com" in url:
-                label = "Gemini API"
-            elif "huggingface.co" in url:
-                label = "HuggingFace Inference"
-                if exc.code in (401, 403):
-                    detail = (
-                        f"{detail} — Check HF_TOKEN: use a fine-grained token with "
-                        '"Make calls to Inference Providers" permission and remaining credits. '
-                        "Or set AI_QUESTION_PROVIDER=placeholder in .env for local testing."
-                    )
-            raise ValidationError(f"{label} error ({exc.code}): {detail}") from exc
-        except urllib.error.URLError as exc:
-            raise ValidationError(f"Could not reach AI API: {exc.reason}") from exc
+        max_attempts = 3 if "generativelanguage.googleapis.com" in url else 1
+        retry_delays = (1.0, 2.0)
+
+        for attempt in range(max_attempts):
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                label = "API"
+                if "generativelanguage.googleapis.com" in url:
+                    label = "Gemini API"
+                    if (
+                        exc.code == 503
+                        and attempt < max_attempts - 1
+                        and "UNAVAILABLE" in detail
+                    ):
+                        time.sleep(retry_delays[attempt])
+                        continue
+                elif "huggingface.co" in url:
+                    label = "HuggingFace Inference"
+                    if exc.code in (401, 403):
+                        detail = (
+                            f"{detail} — Check HF_TOKEN: use a fine-grained token with "
+                            '"Make calls to Inference Providers" permission and remaining credits. '
+                            "Or set AI_QUESTION_PROVIDER=placeholder in .env for local testing."
+                        )
+                elif "openrouter.ai" in url:
+                    label = "OpenRouter"
+                    if exc.code == 402:
+                        raise ValidationError(
+                            "OpenRouter error (402): insufficient credits for this model. "
+                            "Use a free model (set OPENROUTER_MODEL to a ':free' model such as "
+                            "'meta-llama/llama-3.3-70b-instruct:free'), lower AI_MAX_OUTPUT_TOKENS, "
+                            "or add credits at https://openrouter.ai/settings/credits."
+                        ) from exc
+                if "generativelanguage.googleapis.com" in url and exc.code == 503:
+                    raise ValidationError(
+                        "Gemini API is temporarily busy (503 UNAVAILABLE). "
+                        "Please retry in a few seconds."
+                    ) from exc
+                raise ValidationError(f"{label} error ({exc.code}): {detail}") from exc
+            except urllib.error.URLError as exc:
+                raise ValidationError(f"Could not reach AI API: {exc.reason}") from exc
+
+        raise ValidationError("Gemini API is temporarily busy. Please retry shortly.")
 
     def _normalize_questions_from_json(
         self, text: str, request_body: dict
