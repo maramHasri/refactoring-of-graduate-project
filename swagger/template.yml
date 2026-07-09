@@ -26,6 +26,7 @@ tags:
   - name: Meta
   - name: Auth
   - name: Super Admin
+  - name: Super Admin Management
   - name: Workspaces
     description: Workspace management and student subject assignments
   - name: Subjects
@@ -3151,6 +3152,263 @@ paths:
             type: object
             properties:
               success: { type: boolean, example: true }
+  /api/super-admin/dashboard:
+    get:
+      tags: [Super Admin]
+      summary: Global platform dashboard for super admins
+      description: |
+        Returns platform-wide aggregated statistics across all organizations.
+        Access: Super Admin only.
+
+        Reports section is mapped from current proctoring violation statuses:
+        OPEN -> pending, REVIEWED -> under_review, CONFIRMED -> resolved, DISMISSED -> rejected.
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Dashboard metrics
+          schema:
+            type: object
+            properties:
+              users:
+                type: object
+                properties:
+                  total: { type: integer, example: 5200 }
+                  students: { type: integer, example: 4300 }
+                  teachers: { type: integer, example: 700 }
+                  organization_admins: { type: integer, example: 120 }
+                  super_admins: { type: integer, example: 3 }
+                  active_today: { type: integer, example: 310 }
+                  active_week: { type: integer, example: 1420 }
+                  active_month: { type: integer, example: 3180 }
+                  new_this_month: { type: integer, example: 260 }
+              organizations:
+                type: object
+                properties:
+                  total: { type: integer, example: 48 }
+                  active: { type: integer, example: 44 }
+                  suspended: { type: integer, example: 2 }
+                  new_this_month: { type: integer, example: 4 }
+                  most_active:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        organization_id: { type: integer, example: 6 }
+                        organization_name: { type: string, example: "AYAAHT Academy" }
+                        active_users: { type: integer, example: 120 }
+                        tests_count: { type: integer, example: 35 }
+                        attempts_count: { type: integer, example: 450 }
+              content:
+                type: object
+                properties:
+                  subjects: { type: integer, example: 220 }
+                  topics: { type: integer, example: 1450 }
+                  questions: { type: integer, example: 31200 }
+                  tests: { type: integer, example: 5800 }
+              tests:
+                type: object
+                properties:
+                  total_tests: { type: integer, example: 5800 }
+                  total_attempts: { type: integer, example: 102000 }
+                  attempts_today: { type: integer, example: 1400 }
+                  attempts_week: { type: integer, example: 9300 }
+                  attempts_month: { type: integer, example: 37600 }
+                  average_score: { type: number, example: 74.3 }
+              reports:
+                type: object
+                properties:
+                  total: { type: integer, example: 980 }
+                  pending: { type: integer, example: 120 }
+                  under_review: { type: integer, example: 210 }
+                  resolved: { type: integer, example: 520 }
+                  rejected: { type: integer, example: 130 }
+        403:
+          description: Super admin access required
+        401:
+          description: Missing or invalid token
+  /api/super-admin/institutions/{institution_id}/suspend:
+    patch:
+      tags: [Super Admin Management]
+      summary: Suspend an institution
+      description: |
+        Suspends an institution workspace (`kind = INSTITUTION`). Data and memberships are preserved.
+        Sets workspace status to SUSPENDED and records suspension metadata.
+        SOLO workspaces cannot be suspended via this endpoint.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: institution_id
+          in: path
+          type: integer
+          required: true
+          description: Institution workspace id (`workspaces.kind = INSTITUTION`)
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                example: "Violation of platform policies"
+      responses:
+        200:
+          description: Institution suspended
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Institution suspended successfully" }
+              institution:
+                type: object
+                properties:
+                  id: { type: integer, example: 1 }
+                  name: { type: string, example: "ABC Academy" }
+                  kind: { type: string, example: INSTITUTION }
+                  status: { type: string, example: SUSPENDED }
+                  suspended_at: { type: string, format: date-time }
+                  suspension_reason: { type: string, example: "Violation of platform policies" }
+                  students_count: { type: integer, example: 500 }
+                  teachers_count: { type: integer, example: 35 }
+                  tests_count: { type: integer, example: 120 }
+        404:
+          description: Institution not found
+        409:
+          description: Institution is already suspended
+        422:
+          description: Validation error (e.g. workspace is SOLO, not INSTITUTION)
+        403:
+          description: Super admin access required
+  /api/super-admin/users/{user_id}/suspend:
+    patch:
+      tags: [Super Admin Management]
+      summary: Suspend a user account
+      description: |
+        Suspends a user account without deleting data or memberships.
+        Sets user status to SUSPENDED, records suspension metadata, and revokes active sessions.
+        Super admins cannot suspend their own account.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason:
+                type: string
+                example: "Repeated policy violations"
+      responses:
+        200:
+          description: User suspended
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "User suspended successfully" }
+              user:
+                type: object
+                properties:
+                  id: { type: integer, example: 15 }
+                  name: { type: string, example: "Ahmed Ali" }
+                  email: { type: string, example: "user@example.com" }
+                  status: { type: string, example: SUSPENDED }
+                  suspended_at: { type: string, format: date-time }
+                  suspension_reason: { type: string, example: "Repeated policy violations" }
+                  roles:
+                    type: array
+                    items: { type: string }
+                    example: [TEACHER]
+                  institutions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer, example: 2 }
+                        name: { type: string, example: "ABC Academy" }
+                        kind: { type: string, example: INSTITUTION }
+        403:
+          description: Forbidden (e.g. self-suspension)
+        404:
+          description: User not found
+        409:
+          description: User is already suspended
+        422:
+          description: Validation error
+  /api/super-admin/users:
+    get:
+      tags: [Super Admin Management]
+      summary: List all platform users with memberships and roles
+      description: |
+        Platform-wide user listing for Super Admin user management.
+        Supports pagination and filtering by role, institution, status, and search.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+        - name: role
+          in: query
+          type: string
+          enum: [ADMIN, TEACHER, STUDENT, SUPER_ADMIN]
+        - name: institution_id
+          in: query
+          type: integer
+          description: Filter users by institution workspace id
+        - name: status
+          in: query
+          type: string
+          enum: [PENDING_VERIFICATION, PENDING_APPROVAL, REGISTRATION_REJECTED, ACTIVE, SUSPENDED, DISABLED]
+        - name: search
+          in: query
+          type: string
+          description: Search by user name or email
+      responses:
+        200:
+          description: Paginated user list
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer, example: 15 }
+                    name: { type: string, example: "Ahmed Ali" }
+                    email: { type: string, example: "user@example.com" }
+                    status: { type: string, example: ACTIVE }
+                    created_at: { type: string, format: date-time }
+                    suspended_at: { type: string, format: date-time }
+                    suspension_reason: { type: string }
+                    roles:
+                      type: array
+                      items: { type: string }
+                      example: [TEACHER]
+                    organizations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id: { type: integer, example: 2 }
+                          name: { type: string, example: "ABC Academy" }
+              total: { type: integer, example: 120 }
+              page: { type: integer, example: 1 }
+              per_page: { type: integer, example: 20 }
+              pages: { type: integer, example: 6 }
+        403:
+          description: Super admin access required
 
 definitions:
   TopicSummary:

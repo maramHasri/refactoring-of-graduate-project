@@ -24,6 +24,8 @@ class User(db.Model, TimestampMixin):
     email_verified = db.Column(Boolean, nullable=False, default=False)
     is_superadmin = db.Column(Boolean, nullable=False, default=False)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    suspended_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    suspension_reason = db.Column(db.Text, nullable=True)
 
     password_reset_codes = relationship(
         "PasswordResetCode",

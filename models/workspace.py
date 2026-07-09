@@ -35,6 +35,8 @@ class Workspace(db.Model, TimestampMixin):
     subject_assignment_mode = db.Column(String(30), nullable=True)
     is_verified_by_superadmin = db.Column(Boolean, nullable=False, default=False)
     rejection_reason = db.Column(Text, nullable=True)
+    suspended_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    suspension_reason = db.Column(Text, nullable=True)
     logo_url = db.Column(String(512), nullable=True)
 
     owner = relationship(
