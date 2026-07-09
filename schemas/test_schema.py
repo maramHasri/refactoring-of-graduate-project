@@ -1,7 +1,7 @@
 from marshmallow import Schema, fields, pre_load, validate
 
 from schemas.app_timezone_fields import LocalDateTime
-from schemas.question_schema import CreateQuestionInBankItemSchema, QuestionChoiceInputSchema
+from schemas.question_schema import QuestionChoiceInputSchema
 from utils.enums import (
     AvailabilityTimeMode,
     Difficulty,
@@ -89,9 +89,26 @@ class ScheduleTestSchema(Schema):
     publish_at = LocalDateTime(required=True)
 
 
+class ManualTestQuestionItemSchema(Schema):
+    type_code = fields.Str(required=True, validate=validate.Length(min=2, max=50))
+    body = fields.Str(required=True, validate=validate.Length(min=1))
+    image_path = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    explanation = fields.Str(allow_none=True)
+    points = fields.Float(allow_none=True, validate=validate.Range(min=0))
+    difficulty = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf([d.value for d in Difficulty]),
+    )
+    topic_id = fields.Int(required=True, validate=validate.Range(min=1))
+    choices = fields.List(
+        fields.Nested(QuestionChoiceInputSchema),
+        load_default=list,
+    )
+
+
 class AddManualQuestionsToTestSchema(Schema):
     questions = fields.List(
-        fields.Nested(CreateQuestionInBankItemSchema),
+        fields.Nested(ManualTestQuestionItemSchema),
         required=True,
         validate=validate.Length(min=1),
     )
@@ -141,13 +158,17 @@ class ExamBlueprintSchema(Schema):
 
 
 class AIGenerateQuestionsSchema(Schema):
+    topic_ids = fields.List(
+        fields.Int(validate=validate.Range(min=1)),
+        required=True,
+        validate=validate.Length(min=1),
+    )
     count = fields.Int(required=True, validate=validate.Range(min=1, max=50))
     type_code = fields.Str(load_default="MCQ", validate=validate.Length(min=2, max=50))
     difficulty = fields.Str(
         allow_none=True,
         validate=validate.OneOf(["EASY", "MEDIUM", "HARD"]),
     )
-    topics = fields.List(fields.Str(validate=validate.Length(min=1)), load_default=list)
     learning_objectives = fields.List(
         fields.Str(validate=validate.Length(min=1)), load_default=list
     )

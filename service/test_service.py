@@ -345,7 +345,8 @@ class TestService:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         created = [
             self._create_snapshot_row_from_payload(
-                test_id=test.id,
+                test=test,
+                workspace_id=workspace_id,
                 payload=payload,
                 source_type=TestQuestionSourceType.MANUAL.value,
             )
@@ -389,7 +390,8 @@ class TestService:
         created = []
         for payload in payloads:
             row = self._create_snapshot_row_from_payload(
-                test_id=test.id,
+                test=test,
+                workspace_id=workspace_id,
                 payload=payload,
                 source_type=TestQuestionSourceType.IMPORT.value,
             )
@@ -528,10 +530,10 @@ class TestService:
         test_id: int,
         workspace_id: int,
         actor_membership,
+        topic_ids: list[int],
         count: int,
         type_code: str,
         difficulty: str | None = None,
-        topics: list[str] | None = None,
         learning_objectives: list[str] | None = None,
         additional_instructions: str | None = None,
     ) -> tuple[list[dict], str, str]:
@@ -540,7 +542,12 @@ class TestService:
             raise ValidationError("Test must have a subject for AI question generation")
 
         subject_name = test.subject.name
-        topics = topics or []
+        topic_rows = self._resolve_topics_for_test(
+            test=test,
+            workspace_id=workspace_id,
+            topic_ids=topic_ids,
+        )
+        topic_names = [topic.name for topic in topic_rows]
         learning_objectives = learning_objectives or []
 
         ai_request = self.ai_questions.build_request_body(
@@ -549,7 +556,7 @@ class TestService:
             count=count,
             type_code=type_code,
             difficulty=difficulty,
-            topics=topics,
+            topics=topic_names,
             learning_objectives=learning_objectives,
             additional_instructions=additional_instructions,
         )
@@ -558,11 +565,17 @@ class TestService:
         )
 
         created = []
-        for payload in payloads:
+        for idx, payload in enumerate(payloads):
+            selected_topic = topic_rows[idx % len(topic_rows)]
+            payload_with_topic = {
+                **payload,
+                "topic_id": selected_topic.id,
+            }
             created.append(
                 self._create_snapshot_row_from_payload(
-                    test_id=test.id,
-                    payload=payload,
+                    test=test,
+                    workspace_id=workspace_id,
+                    payload=payload_with_topic,
                     source_type=TestQuestionSourceType.AI.value,
                 )
             )
@@ -862,6 +875,38 @@ class TestService:
             )
         return topic.id, topic.name
 
+    def _resolve_topics_for_test(
+        self, *, test: Test, workspace_id: int, topic_ids: list[int]
+    ) -> list:
+        if not topic_ids:
+            raise ValidationError("topic_ids must contain at least one topic")
+        unique_topic_ids = []
+        seen = set()
+        for topic_id in topic_ids:
+            tid = int(topic_id)
+            if tid <= 0:
+                raise ValidationError("topic_ids must contain positive integers")
+            if tid in seen:
+                continue
+            seen.add(tid)
+            unique_topic_ids.append(tid)
+
+        rows = []
+        missing = []
+        for topic_id in unique_topic_ids:
+            topic = self.topics.get_in_subject(
+                topic_id, subject_id=test.subject_id, workspace_id=workspace_id
+            )
+            if not topic:
+                missing.append(topic_id)
+                continue
+            rows.append(topic)
+        if missing:
+            raise ValidationError(
+                f"topic_id(s) do not belong to the exam subject: {missing}"
+            )
+        return rows
+
     def _snapshot_from_source_question(self, question) -> dict:
         return {
             "snapshot_question_text": question.question_text,
@@ -1041,11 +1086,14 @@ class TestService:
             counter += 1
 
     def _create_snapshot_row_from_payload(
-        self, *, test_id: int, payload: dict, source_type: str
+        self, *, test: Test, workspace_id: int, payload: dict, source_type: str
     ) -> TestQuestion:
         validated = self._validate_and_normalize_payload(payload)
+        topic_id, topic_name = self._resolve_topic_snapshot(
+            test, validated["topic_id"], workspace_id
+        )
         row = TestQuestion(
-            test_id=test_id,
+            test_id=test.id,
             question_id=None,
             kind=source_type,
             source_type=source_type,
@@ -1055,8 +1103,8 @@ class TestService:
             snapshot_image_path=validated.get("image_path"),
             snapshot_explanation=validated["explanation"],
             snapshot_type_code=validated["type_code"],
-            snapshot_topic_id=validated["topic_id"],
-            snapshot_topic_name=None,
+            snapshot_topic_id=topic_id,
+            snapshot_topic_name=topic_name,
             snapshot_difficulty=validated["difficulty"],
             snapshot_points=validated["points"],
             snapshot_choices_json=json.dumps(validated["choices"]),

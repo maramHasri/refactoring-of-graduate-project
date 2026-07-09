@@ -1,10 +1,19 @@
+from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
-from models import AttemptAnswer, Subject, Test, TestAttempt, TestQuestion, TestStudentAssignment
+from models import (
+    AttemptAnswer,
+    Subject,
+    Test,
+    TestAttempt,
+    TestQuestion,
+    TestStudentAssignment,
+    Topic,
+)
 from models.workspace import Membership
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import TestAttemptStatus, TestStatus
+from utils.enums import QuestionStatus, TestAttemptStatus, TestStatus
 
 
 class TestAttemptRepository(BaseRepository):
@@ -156,6 +165,137 @@ class TestAttemptRepository(BaseRepository):
             .unique()
             .all()
         )
+
+    def find_graded_for_student_test(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+        test_id: int,
+    ) -> TestAttempt | None:
+        return db.session.execute(
+            db.select(TestAttempt)
+            .join(Test, Test.id == TestAttempt.test_id)
+            .options(joinedload(TestAttempt.test).joinedload(Test.subject))
+            .where(
+                TestAttempt.test_id == test_id,
+                TestAttempt.student_membership_id == student_membership_id,
+                TestAttempt.user_id == student_user_id,
+                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                Test.created_by.has(workspace_id=workspace_id),
+            )
+            .order_by(TestAttempt.graded_at.desc().nullslast(), TestAttempt.id.desc())
+        ).scalars().first()
+
+    def list_topic_weighted_rows_for_course(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+        course_id: int,
+    ) -> list[tuple[int | None, str | None, float, float]]:
+        difficulty_weight = case(
+            (TestQuestion.snapshot_difficulty == "HARD", 2.0),
+            (TestQuestion.snapshot_difficulty == "MEDIUM", 1.5),
+            else_=1.0,
+        )
+        rows = db.session.execute(
+            db.select(
+                TestQuestion.snapshot_topic_id.label("topic_id"),
+                func.coalesce(
+                    TestQuestion.snapshot_topic_name,
+                    Topic.name,
+                    "General",
+                ).label("topic_name"),
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).label("weighted_earned"),
+                func.sum(
+                    func.coalesce(TestQuestion.points, TestQuestion.snapshot_points, 0.0)
+                    * difficulty_weight
+                ).label("weighted_possible"),
+            )
+            .select_from(AttemptAnswer)
+            .join(TestAttempt, TestAttempt.id == AttemptAnswer.attempt_id)
+            .join(Test, Test.id == TestAttempt.test_id)
+            .join(TestQuestion, TestQuestion.id == AttemptAnswer.test_question_id)
+            .outerjoin(Topic, Topic.id == TestQuestion.snapshot_topic_id)
+            .where(
+                TestAttempt.student_membership_id == student_membership_id,
+                TestAttempt.user_id == student_user_id,
+                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                Test.subject_id == course_id,
+                Test.created_by.has(workspace_id=workspace_id),
+                TestQuestion.status == QuestionStatus.ACTIVE.value,
+            )
+            .group_by(TestQuestion.snapshot_topic_id, TestQuestion.snapshot_topic_name, Topic.name)
+            .order_by(
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).desc()
+            )
+        ).all()
+        return [
+            (
+                topic_id,
+                topic_name,
+                float(weighted_earned or 0.0),
+                float(weighted_possible or 0.0),
+            )
+            for topic_id, topic_name, weighted_earned, weighted_possible in rows
+        ]
+
+    def list_topic_weighted_rows_for_attempt(
+        self,
+        *,
+        attempt_id: int,
+    ) -> list[tuple[int | None, str | None, float, float]]:
+        difficulty_weight = case(
+            (TestQuestion.snapshot_difficulty == "HARD", 2.0),
+            (TestQuestion.snapshot_difficulty == "MEDIUM", 1.5),
+            else_=1.0,
+        )
+        rows = db.session.execute(
+            db.select(
+                TestQuestion.snapshot_topic_id.label("topic_id"),
+                func.coalesce(
+                    TestQuestion.snapshot_topic_name,
+                    Topic.name,
+                    "General",
+                ).label("topic_name"),
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).label("weighted_earned"),
+                func.sum(
+                    func.coalesce(TestQuestion.points, TestQuestion.snapshot_points, 0.0)
+                    * difficulty_weight
+                ).label("weighted_possible"),
+            )
+            .select_from(AttemptAnswer)
+            .join(TestQuestion, TestQuestion.id == AttemptAnswer.test_question_id)
+            .outerjoin(Topic, Topic.id == TestQuestion.snapshot_topic_id)
+            .where(
+                AttemptAnswer.attempt_id == attempt_id,
+                TestQuestion.status == QuestionStatus.ACTIVE.value,
+            )
+            .group_by(TestQuestion.snapshot_topic_id, TestQuestion.snapshot_topic_name, Topic.name)
+            .order_by(
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).desc()
+            )
+        ).all()
+        return [
+            (
+                topic_id,
+                topic_name,
+                float(weighted_earned or 0.0),
+                float(weighted_possible or 0.0),
+            )
+            for topic_id, topic_name, weighted_earned, weighted_possible in rows
+        ]
 
     def list_in_progress_on_published_tests(self) -> list[TestAttempt]:
         return list(

@@ -5,6 +5,7 @@ from flask import Blueprint, g, jsonify
 
 from router.decorators import handle_service_errors, require_active_student
 from service.attempt_service import AttemptService
+from service.student_analytics_service import StudentAnalyticsService
 
 student_bp = Blueprint("student", __name__)
 
@@ -32,3 +33,31 @@ def list_graded_test_results():
         actor_user_id=g.current_user.id,
     )
     return jsonify(items), 200
+
+
+@student_bp.route("/courses/<int:course_id>/analytics", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def get_course_analytics(course_id):
+    """GET /student/courses/{course_id}/analytics — topic performance for graded attempts."""
+    data = StudentAnalyticsService().get_course_analytics(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+        course_id=course_id,
+    )
+    return jsonify(data), 200
+
+
+@student_bp.route("/tests/<int:test_id>/analytics", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def get_test_analytics(test_id):
+    """GET /student/tests/{test_id}/analytics — topic mastery for one graded attempt."""
+    data = StudentAnalyticsService().get_test_analytics(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+        test_id=test_id,
+    )
+    return jsonify(data), 200

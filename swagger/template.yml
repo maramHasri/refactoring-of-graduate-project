@@ -1744,7 +1744,7 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [type_code, body]
+                  required: [type_code, body, topic_id]
                   properties:
                     type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
                     body: { type: string }
@@ -1754,7 +1754,9 @@ paths:
                     explanation: { type: string }
                     points: { type: number }
                     difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
-                    topic_id: { type: integer }
+                    topic_id:
+                      type: integer
+                      description: Required. Must belong to the same subject as the test.
                     choices: { type: array, items: { type: object } }
       responses:
         201:
@@ -1913,13 +1915,15 @@ paths:
       tags: [Tests]
       summary: Generate and add AI questions to exam
       description: |
-        Subject name is taken from the exam's linked subject and included in the AI prompt.
+        Subject name and selected topic names are taken from the exam context and included in the AI prompt.
+        `topic_ids` is required and every topic must belong to the exam subject.
         Provider is selected via AI_QUESTION_PROVIDER (.env):
         - `qwen` — Alibaba DashScope (DASHSCOPE_API_KEY) or HuggingFace Qwen (HF_TOKEN)
         - `gemini` — Google Gemini (GEMINI_API_KEY, default model gemini-2.5-flash)
+        - `openrouter` — OpenRouter chat models (OPENROUTER_API_KEY + OPENROUTER_MODEL)
         - `huggingface` — HF router (HF_TOKEN + HF_QWEN_MODEL)
         - `placeholder` — local draft questions without external API
-        - `auto` — gemini → qwen → huggingface → placeholder (first available)
+        - `auto` — gemini → openrouter → qwen → huggingface → placeholder (first available)
         In development, AI_FALLBACK_TO_PLACEHOLDER=true uses placeholders on quota/404 errors.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
@@ -1932,12 +1936,15 @@ paths:
           required: true
           schema:
             type: object
-            required: [count]
+            required: [topic_ids, count]
             properties:
+              topic_ids:
+                type: array
+                items: { type: integer }
+                minItems: 1
               count: { type: integer, example: 10 }
               type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY], default: MCQ }
               difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
-              topics: { type: array, items: { type: string } }
               learning_objectives: { type: array, items: { type: string } }
               additional_instructions: { type: string }
       responses:
@@ -2496,6 +2503,94 @@ paths:
             type: array
             items:
               $ref: "#/definitions/StudentGradedResult"
+        403:
+          description: Not an active student
+  /student/courses/{course_id}/analytics:
+    get:
+      tags: [Student Exams]
+      summary: Course performance analytics for authenticated student
+      description: |
+        Topic-based course analytics computed from already graded attempts only.
+        Includes weighted topic performance using difficulty weights:
+        EASY=1.0, MEDIUM=1.5, HARD=2.0.
+
+        Excludes in-progress, submitted-only, draft, and ungraded attempts.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: course_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Course analytics
+          schema:
+            type: object
+            properties:
+              course_id: { type: integer }
+              course_name: { type: string }
+              overall_performance: { type: number }
+              student: { type: object }
+              topics:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    topic_id: { type: integer, nullable: true }
+                    topic_name: { type: string }
+                    performance: { type: number }
+                    classification: { type: string }
+                    weighted_earned_points: { type: number }
+                    weighted_possible_points: { type: number }
+              strengths:
+                type: array
+                items:
+                  type: object
+              weaknesses:
+                type: array
+                items:
+                  type: object
+        404:
+          description: Course not found or student not enrolled in course
+        403:
+          description: Not an active student
+  /student/tests/{test_id}/analytics:
+    get:
+      tags: [Student Exams]
+      summary: Topic mastery for one graded test result
+      description: |
+        Returns topic-level mastery for the student's own graded attempt of this test.
+        Uses stored grading scores; does not recalculate grading from scratch.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Test analytics
+          schema:
+            type: object
+            properties:
+              test_id: { type: integer }
+              test_title: { type: string }
+              final_score: { type: number }
+              percentage: { type: number }
+              attempt_id: { type: integer }
+              topics:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    topic_id: { type: integer, nullable: true }
+                    topic_name: { type: string }
+                    mastery_percentage: { type: number }
+                    classification: { type: string }
+                    weighted_earned_points: { type: number }
+                    weighted_possible_points: { type: number }
+        404:
+          description: Graded test result not found
         403:
           description: Not an active student
   /tests/{test_id}/attempts/{attempt_id}/grade:

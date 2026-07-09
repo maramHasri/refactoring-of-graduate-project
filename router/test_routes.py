@@ -9,11 +9,11 @@ from schemas.test_schema import (
     AssignStudentsToTestSchema,
     CreateTestSchema,
     ExamBlueprintSchema,
+    ManualTestQuestionItemSchema,
     ScheduleTestSchema,
     UpdateTestSchema,
     UpdateTestQuestionSchema,
 )
-from schemas.question_schema import CreateQuestionInBankItemSchema
 from service.test_service import TestService
 from service.exceptions import ValidationError
 
@@ -127,7 +127,7 @@ def add_single_manual_question_to_test(test_id):
     Convenience endpoint for one manual question (JSON body).
     """
     payload = request.get_json(silent=True)
-    item = CreateQuestionInBankItemSchema().load(payload or {})
+    item = ManualTestQuestionItemSchema().load(payload or {})
 
     items = _svc().add_manual_questions(
         test_id=test_id,
@@ -188,10 +188,10 @@ def add_ai_questions_to_test(test_id):
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
+        topic_ids=data["topic_ids"],
         count=data["count"],
         type_code=data["type_code"],
         difficulty=data.get("difficulty"),
-        topics=data.get("topics"),
         learning_objectives=data.get("learning_objectives"),
         additional_instructions=data.get("additional_instructions"),
     )
