@@ -7,6 +7,11 @@ from decimal import Decimal
 from flask import current_app
 
 from models import Membership, Test, TestQuestion, TestStudentAssignment
+from models.ai_generation import AIGeneratedQuestion, AIGenerationRequest
+from repositories.ai_generation_repository import (
+    AIGeneratedQuestionRepository,
+    AIGenerationRequestRepository,
+)
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
@@ -26,6 +31,8 @@ from utils.academic_rbac import can_manage_subjects, verify_subject_teacher_acce
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
 from utils.enums import (
+    AIGeneratedQuestionStatus,
+    AIGenerationRequestStatus,
     Difficulty,
     MembershipRole,
     MembershipStatus,
@@ -57,6 +64,8 @@ class TestService:
         self.ai_questions = AIQuestionService()
         self.exam_blueprint = ExamBlueprintService()
         self.schedule_conflicts = TestScheduleConflictService()
+        self.ai_generation_requests = AIGenerationRequestRepository()
+        self.ai_generated_questions = AIGeneratedQuestionRepository()
 
     def assign_students_to_test(
         self,
@@ -536,7 +545,7 @@ class TestService:
         difficulty: str | None = None,
         learning_objectives: list[str] | None = None,
         additional_instructions: str | None = None,
-    ) -> tuple[list[dict], str, str]:
+    ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         if not test.subject:
             raise ValidationError("Test must have a subject for AI question generation")
@@ -560,27 +569,224 @@ class TestService:
             learning_objectives=learning_objectives,
             additional_instructions=additional_instructions,
         )
-        payloads, model_name = self.ai_questions.generate_questions(
-            request_body=ai_request
+        request_row = AIGenerationRequest(
+            test_id=test.id,
+            created_by_membership_id=actor_membership.id,
+            topic_ids_json=json.dumps([topic.id for topic in topic_rows]),
+            learning_objectives_json=json.dumps(learning_objectives),
+            count=count,
+            difficulty=difficulty,
+            type_code=type_code,
+            additional_instructions=(additional_instructions or "").strip() or None,
+            status=AIGenerationRequestStatus.PENDING.value,
         )
+        self.ai_generation_requests.add(request_row)
+        db.session.flush()
+
+        try:
+            payloads, model_name = self.ai_questions.generate_questions(
+                request_body=ai_request
+            )
+            created: list[AIGeneratedQuestion] = []
+            for idx, payload in enumerate(payloads):
+                selected_topic = topic_rows[idx % len(topic_rows)]
+                normalized = self._validate_and_normalize_payload(
+                    {
+                        **payload,
+                        "topic_id": selected_topic.id,
+                    }
+                )
+                row = AIGeneratedQuestion(
+                    generation_request_id=request_row.id,
+                    question_text=normalized["body"],
+                    type_code=normalized["type_code"],
+                    options_json=json.dumps(normalized["choices"]),
+                    correct_answer_json=json.dumps(
+                        self._extract_correct_answer(normalized["choices"])
+                    ),
+                    explanation=normalized["explanation"],
+                    difficulty=normalized["difficulty"],
+                    topic_id=selected_topic.id,
+                    topic_name=selected_topic.name,
+                    points=normalized["points"],
+                    status=AIGeneratedQuestionStatus.PENDING_REVIEW.value,
+                )
+                self.ai_generated_questions.add(row)
+                created.append(row)
+            request_row.status = AIGenerationRequestStatus.COMPLETED.value
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            request_row = AIGenerationRequest(
+                test_id=test.id,
+                created_by_membership_id=actor_membership.id,
+                topic_ids_json=json.dumps([topic.id for topic in topic_rows]),
+                learning_objectives_json=json.dumps(learning_objectives),
+                count=count,
+                difficulty=difficulty,
+                type_code=type_code,
+                additional_instructions=(additional_instructions or "").strip() or None,
+                status=AIGenerationRequestStatus.FAILED.value,
+                error_message=str(exc),
+            )
+            self.ai_generation_requests.add(request_row)
+            db.session.commit()
+            raise
+
+        return {
+            "generation_request_id": request_row.id,
+            "generation_status": request_row.status,
+            "ai_model": model_name,
+            "subject_name": subject_name,
+            "count": len(created),
+            "generated_questions": [
+                self.serialize_ai_generated_question(row) for row in created
+            ],
+        }
+
+    def get_ai_generation_request(
+        self,
+        *,
+        request_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        request_row = self._get_ai_generation_request_or_404(request_id)
+        self._ensure_can_manage_ai_request(
+            request_row=request_row,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        questions = self.ai_generation_requests.list_questions(request_id)
+        return {
+            "request": self.serialize_ai_generation_request(request_row),
+            "generated_questions": [
+                self.serialize_ai_generated_question(row) for row in questions
+            ],
+            "count": len(questions),
+        }
+
+    def update_ai_generated_question(
+        self,
+        *,
+        generated_question_id: int,
+        workspace_id: int,
+        actor_membership,
+        data: dict,
+    ) -> dict:
+        row = self._get_ai_generated_question_or_404(generated_question_id)
+        request_row = self._get_ai_generation_request_or_404(row.generation_request_id)
+        self._ensure_can_manage_ai_request(
+            request_row=request_row,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        if row.status != AIGeneratedQuestionStatus.PENDING_REVIEW.value:
+            raise ValidationError("Only pending review AI questions can be edited")
+
+        payload = {
+            "type_code": data.get("type_code", row.type_code),
+            "body": data.get("question_text", row.question_text),
+            "explanation": data.get("explanation", row.explanation),
+            "points": data.get("points", float(row.points) if row.points is not None else 1),
+            "difficulty": data.get("difficulty", row.difficulty),
+            "topic_id": data.get("topic_id", row.topic_id),
+            "choices": data.get("options", self._load_json(row.options_json) or []),
+        }
+        normalized = self._validate_and_normalize_payload(payload)
+        test = self.tests.get_by_id(request_row.test_id)
+        topic_id, topic_name = self._resolve_topic_snapshot(test, normalized["topic_id"], workspace_id)
+
+        row.question_text = normalized["body"]
+        row.type_code = normalized["type_code"]
+        row.options_json = json.dumps(normalized["choices"])
+        row.correct_answer_json = json.dumps(
+            self._extract_correct_answer(normalized["choices"])
+        )
+        row.explanation = normalized["explanation"]
+        row.difficulty = normalized["difficulty"]
+        row.points = normalized["points"]
+        row.topic_id = topic_id
+        row.topic_name = topic_name
+        db.session.commit()
+        return self.serialize_ai_generated_question(row)
+
+    def delete_ai_generated_question(
+        self,
+        *,
+        generated_question_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> None:
+        row = self._get_ai_generated_question_or_404(generated_question_id)
+        request_row = self._get_ai_generation_request_or_404(row.generation_request_id)
+        self._ensure_can_manage_ai_request(
+            request_row=request_row,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        db.session.delete(row)
+        db.session.commit()
+
+    def import_ai_generated_questions(
+        self,
+        *,
+        test_id: int,
+        request_id: int,
+        question_ids: list[int],
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
+        request_row = self._get_ai_generation_request_or_404(request_id)
+        self._ensure_can_manage_ai_request(
+            request_row=request_row,
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        if request_row.test_id != test.id:
+            raise ValidationError("request_id does not belong to this test")
+        if request_row.status != AIGenerationRequestStatus.COMPLETED.value:
+            raise ValidationError("Only completed generation requests can be imported")
+        if not question_ids:
+            raise ValidationError("question_ids must contain at least one id")
+
+        rows = self.ai_generated_questions.list_by_ids_for_request(request_id, question_ids)
+        if len(rows) != len(set(question_ids)):
+            raise ValidationError("Some question_ids do not belong to the generation request")
 
         created = []
-        for idx, payload in enumerate(payloads):
-            selected_topic = topic_rows[idx % len(topic_rows)]
-            payload_with_topic = {
-                **payload,
-                "topic_id": selected_topic.id,
-            }
-            created.append(
-                self._create_snapshot_row_from_payload(
+        try:
+            for row in rows:
+                if row.status != AIGeneratedQuestionStatus.PENDING_REVIEW.value:
+                    raise ValidationError(f"AI question {row.id} already imported")
+                payload = {
+                    "type_code": row.type_code,
+                    "body": row.question_text,
+                    "explanation": row.explanation,
+                    "points": float(row.points) if row.points is not None else 1,
+                    "difficulty": row.difficulty,
+                    "topic_id": row.topic_id,
+                    "choices": self._load_json(row.options_json) or [],
+                }
+                created_row = self._create_snapshot_row_from_payload(
                     test=test,
                     workspace_id=workspace_id,
-                    payload=payload_with_topic,
+                    payload=payload,
                     source_type=TestQuestionSourceType.AI.value,
                 )
-            )
-        db.session.commit()
-        return [self.serialize_test_question(row) for row in created], model_name, subject_name
+                row.status = AIGeneratedQuestionStatus.IMPORTED.value
+                created.append(created_row)
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+        return {
+            "message": "AI questions imported into test",
+            "count": len(created),
+            "questions": [self.serialize_test_question(row) for row in created],
+        }
 
     def update_test_question(
         self,
@@ -934,6 +1140,79 @@ class TestService:
             ),
         }
 
+    @staticmethod
+    def _extract_correct_answer(choices: list[dict]) -> list[int]:
+        return [
+            int(choice.get("order_index", idx))
+            for idx, choice in enumerate(choices)
+            if choice.get("is_correct")
+        ]
+
+    def _get_ai_generation_request_or_404(
+        self, request_id: int
+    ) -> AIGenerationRequest:
+        row = self.ai_generation_requests.get_by_id(request_id)
+        if not row:
+            raise NotFoundError("AI generation request not found")
+        return row
+
+    def _get_ai_generated_question_or_404(
+        self, generated_question_id: int
+    ) -> AIGeneratedQuestion:
+        row = self.ai_generated_questions.get_by_id(generated_question_id)
+        if not row:
+            raise NotFoundError("AI generated question not found")
+        return row
+
+    def _ensure_can_manage_ai_request(
+        self,
+        *,
+        request_row: AIGenerationRequest,
+        workspace_id: int,
+        actor_membership,
+    ) -> None:
+        test = self.tests.get_by_id(request_row.test_id)
+        if not test:
+            raise NotFoundError("Test not found")
+        self._resolve_test_access(test.id, workspace_id, actor_membership)
+        if request_row.created_by_membership_id != actor_membership.id:
+            raise ForbiddenError("You can only manage your own AI generation requests")
+
+    def serialize_ai_generation_request(self, row: AIGenerationRequest) -> dict:
+        return {
+            "id": row.id,
+            "test_id": row.test_id,
+            "created_by_membership_id": row.created_by_membership_id,
+            "topic_ids": self._load_json(row.topic_ids_json) or [],
+            "learning_objectives": self._load_json(row.learning_objectives_json) or [],
+            "count": row.count,
+            "difficulty": row.difficulty,
+            "type_code": row.type_code,
+            "additional_instructions": row.additional_instructions,
+            "status": row.status,
+            "error_message": row.error_message,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    def serialize_ai_generated_question(self, row: AIGeneratedQuestion) -> dict:
+        return {
+            "id": row.id,
+            "generation_request_id": row.generation_request_id,
+            "question_text": row.question_text,
+            "type_code": row.type_code,
+            "options": self._load_json(row.options_json) or [],
+            "correct_answer": self._load_json(row.correct_answer_json) or [],
+            "explanation": row.explanation,
+            "difficulty": row.difficulty,
+            "topic_id": row.topic_id,
+            "topic_name": row.topic_name,
+            "points": float(row.points) if row.points is not None else None,
+            "status": row.status,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
     def serialize_test_created(self, test: Test) -> dict:
         """Payload for POST /tests — essential fields only (no lifecycle/config nulls)."""
         return {
@@ -1223,6 +1502,10 @@ class TestService:
         if not isinstance(display_raw, dict):
             raise ValidationError("settings_config.display_settings must be an object")
 
+        review_raw = value.get("review_settings") or {}
+        if not isinstance(review_raw, dict):
+            raise ValidationError("settings_config.review_settings must be an object")
+
         require_answer_all = bool(answer_rules_raw.get("require_answer_all", False))
         allow_skip_questions = bool(answer_rules_raw.get("allow_skip_questions", True))
         if require_answer_all and allow_skip_questions:
@@ -1248,6 +1531,11 @@ class TestService:
             "display_settings": {
                 "shuffle_questions": bool(display_raw.get("shuffle_questions", False)),
                 "shuffle_choices": bool(display_raw.get("shuffle_choices", False)),
+            },
+            "review_settings": {
+                "allow_review_after_grading": bool(
+                    review_raw.get("allow_review_after_grading", False)
+                )
             },
         }
         return self._dump_json(normalized)

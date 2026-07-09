@@ -12,8 +12,10 @@ class TopicAnalyticsSchema(Schema):
 
 
 class CourseAnalyticsSchema(Schema):
-    course_id = fields.Int(required=True)
-    course_name = fields.Str(required=True)
+    subject_id = fields.Int(required=True)
+    subject_name = fields.Str(required=True)
+    course_id = fields.Int(allow_none=True)
+    course_name = fields.Str(allow_none=True)
     student = fields.Dict(keys=fields.Str(), values=fields.Raw())
     overall_performance = fields.Float(required=True)
     topics = fields.List(fields.Nested(TopicAnalyticsSchema), required=True)

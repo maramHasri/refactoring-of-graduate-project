@@ -25,6 +25,7 @@ from models.question import (
 )
 from models.attempt_answer import AttemptAnswer
 from models.attempt_grading_audit import AttemptGradingAuditLog
+from models.ai_generation import AIGeneratedQuestion, AIGenerationRequest
 from models.proctoring import (
     ProctoringAuditLog,
     ProctoringEvent,
@@ -62,6 +63,8 @@ __all__ = [
     "TestStudentAssignment",
     "AttemptAnswer",
     "AttemptGradingAuditLog",
+    "AIGenerationRequest",
+    "AIGeneratedQuestion",
     "ProctoringSession",
     "ProctoringEvent",
     "ProctoringViolation",

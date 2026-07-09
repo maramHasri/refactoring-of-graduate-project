@@ -16,34 +16,34 @@ class StudentAnalyticsService:
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
 
-    def get_course_analytics(
+    def get_subject_analytics(
         self,
         *,
         workspace_id: int,
         actor_membership,
         actor_user_id: int,
-        course_id: int,
+        subject_id: int,
     ) -> dict:
         self._ensure_student_scope(actor_membership)
-        course = self.subjects.get_active_by_id(course_id, workspace_id)
-        if not course:
-            raise NotFoundError("Course not found")
-        actor_link = self._subject_student_link(actor_membership.id, course_id)
+        subject = self.subjects.get_active_by_id(subject_id, workspace_id)
+        if not subject:
+            raise NotFoundError("Subject not found")
+        actor_link = self._subject_student_link(actor_membership.id, subject_id)
         if not verify_subject_student_access(actor_link):
-            raise NotFoundError("Course not found")
+            raise NotFoundError("Subject not found")
 
-        rows = self.attempts.list_topic_weighted_rows_for_course(
+        rows = self.attempts.list_topic_weighted_rows_for_subject(
             workspace_id=workspace_id,
             student_membership_id=actor_membership.id,
             student_user_id=actor_user_id,
-            course_id=course_id,
+            subject_id=subject_id,
         )
         topics = self._serialize_topics(rows, key_name="performance")
         overall = self._overall_percentage(rows)
 
         return {
-            "course_id": course.id,
-            "course_name": course.name,
+            "subject_id": subject.id,
+            "subject_name": subject.name,
             "student": {
                 "user_id": actor_user_id,
                 "membership_id": actor_membership.id,
@@ -58,6 +58,30 @@ class StudentAnalyticsService:
                 for item in topics
                 if item["classification"] in ("NEEDS_IMPROVEMENT", "WEAKNESS")
             ],
+        }
+
+    def get_course_analytics(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+        course_id: int,
+    ) -> dict:
+        """
+        Backward-compatible alias.
+        In this system, course == subject.
+        """
+        result = self.get_subject_analytics(
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+            actor_user_id=actor_user_id,
+            subject_id=course_id,
+        )
+        return {
+            **result,
+            "course_id": result["subject_id"],
+            "course_name": result["subject_name"],
         }
 
     def get_test_analytics(

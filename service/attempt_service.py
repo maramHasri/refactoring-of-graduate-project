@@ -281,7 +281,11 @@ class AttemptService:
             attempt, test, workspace_id, actor_membership, student_view=student_view
         )
         self._check_and_apply_timeout(attempt, test)
-        strip = student_view or attempt.student_membership_id == actor_membership.id
+        is_own_attempt = attempt.student_membership_id == actor_membership.id
+        allow_review = (
+            is_own_attempt and self._allow_student_review_after_grading(test, attempt)
+        )
+        strip = student_view or (is_own_attempt and not allow_review)
         return {
             "attempt": self.serialize_attempt(
                 attempt,
@@ -1105,6 +1109,17 @@ class AttemptService:
         if student_view:
             raise ForbiddenError("Cannot view another student's attempt in student mode")
         self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+
+    def _allow_student_review_after_grading(
+        self, test: Test, attempt: TestAttempt
+    ) -> bool:
+        if attempt.status != TestAttemptStatus.GRADED.value:
+            return False
+        settings = self._load_json(test.settings_config) or {}
+        review_settings = settings.get("review_settings") or {}
+        if not isinstance(review_settings, dict):
+            return False
+        return bool(review_settings.get("allow_review_after_grading", False))
 
     def _ensure_teacher_attempt_access(
         self, test: Test, workspace_id: int, actor_membership

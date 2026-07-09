@@ -150,6 +150,17 @@ class TestQuestionSourceType(str, enum.Enum):
     IMPORT = "IMPORT"
 
 
+class AIGenerationRequestStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class AIGeneratedQuestionStatus(str, enum.Enum):
+    PENDING_REVIEW = "PENDING_REVIEW"
+    IMPORTED = "IMPORTED"
+
+
 class ExamStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     PUBLISHED = "PUBLISHED"

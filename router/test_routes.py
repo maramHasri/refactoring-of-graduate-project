@@ -9,6 +9,7 @@ from schemas.test_schema import (
     AssignStudentsToTestSchema,
     CreateTestSchema,
     ExamBlueprintSchema,
+    ImportAIQuestionsSchema,
     ManualTestQuestionItemSchema,
     ScheduleTestSchema,
     UpdateTestSchema,
@@ -184,7 +185,7 @@ def add_random_questions_to_test(test_id):
 @handle_service_errors
 def add_ai_questions_to_test(test_id):
     data = AIGenerateQuestionsSchema().load(request.get_json() or {})
-    items, ai_model, subject_name = _svc().add_ai_generated_questions(
+    result = _svc().add_ai_generated_questions(
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
@@ -196,12 +197,23 @@ def add_ai_questions_to_test(test_id):
         additional_instructions=data.get("additional_instructions"),
     )
     return {
-        "message": "AI questions added",
-        "questions": items,
-        "count": len(items),
-        "ai_model": ai_model,
-        "subject_name": subject_name,
+        "message": "AI questions generated for review",
+        **result,
     }, 201
+
+
+@test_bp.route("/<int:test_id>/questions/import-ai", methods=["POST"])
+@require_workspace_membership
+@handle_service_errors
+def import_ai_questions_to_test(test_id):
+    data = ImportAIQuestionsSchema().load(request.get_json() or {})
+    return _svc().import_ai_generated_questions(
+        test_id=test_id,
+        request_id=data["request_id"],
+        question_ids=data["question_ids"],
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    ), 201
 
 
 @test_bp.route("/<int:test_id>/assign-students", methods=["POST"])

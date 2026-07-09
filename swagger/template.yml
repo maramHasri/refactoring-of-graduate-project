@@ -1659,6 +1659,12 @@ paths:
                     properties:
                       shuffle_questions: { type: boolean }
                       shuffle_choices: { type: boolean }
+                  review_settings:
+                    type: object
+                    properties:
+                      allow_review_after_grading:
+                        type: boolean
+                        description: "When enabled, students may review their graded attempts, including their answers, correct answers, explanations, and final score."
               availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
               starts_at: { type: string, format: date-time }
               duration_minutes: { type: integer }
@@ -1912,9 +1918,13 @@ paths:
           description: Validation error (percentages, insufficient pool, topic not in bank)
   /tests/{test_id}/questions/ai-generate:
     post:
-      tags: [Tests]
-      summary: Generate and add AI questions to exam
+      tags: [AI Question Generation Flow]
+      summary: Generate AI questions for review (does not import yet)
       description: |
+        Stage 1 of the AI flow: generation + review storage only.
+        Creates `ai_generation_requests` and `ai_generated_questions` records.
+        Does NOT add questions directly to test_questions.
+
         Subject name and selected topic names are taken from the exam context and included in the AI prompt.
         `topic_ids` is required and every topic must belong to the exam subject.
         Provider is selected via AI_QUESTION_PROVIDER (.env):
@@ -1949,15 +1959,116 @@ paths:
               additional_instructions: { type: string }
       responses:
         201:
-          description: AI questions added
+          description: AI questions generated and stored for teacher review
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "AI questions generated for review" }
+              generation_request_id: { type: integer }
+              generation_status: { type: string, enum: [PENDING, COMPLETED, FAILED] }
+              count: { type: integer }
+              subject_name: { type: string }
+              ai_model: { type: string, example: Qwen/Qwen2.5-7B-Instruct }
+              generated_questions: { type: array, items: { type: object } }
+  /tests/{test_id}/questions/import-ai:
+    post:
+      tags: [AI Question Generation Flow]
+      summary: Import approved AI generated questions into test
+      description: |
+        Stage 2 of the AI flow: import selected generated questions into the exam snapshots.
+        Only questions from the specified request and in PENDING_REVIEW status are imported.
+        Imported rows are marked with status IMPORTED.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [request_id, question_ids]
+            properties:
+              request_id: { type: integer }
+              question_ids:
+                type: array
+                items: { type: integer }
+      responses:
+        201:
+          description: AI questions imported into test
           schema:
             type: object
             properties:
               message: { type: string }
               count: { type: integer }
-              subject_name: { type: string }
-              ai_model: { type: string, example: Qwen/Qwen2.5-7B-Instruct }
               questions: { type: array, items: { type: object } }
+  /ai-generation-requests/{request_id}:
+    get:
+      tags: [AI Question Generation Flow]
+      summary: Get AI generation request and generated questions
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: request_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Generation request details
+          schema:
+            type: object
+            properties:
+              request: { type: object }
+              generated_questions:
+                type: array
+                items: { type: object }
+              count: { type: integer }
+  /ai-generated-questions/{id}:
+    put:
+      tags: [AI Question Generation Flow]
+      summary: Update generated AI question before import
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [question_text, type_code, options, topic_id]
+            properties:
+              question_text: { type: string }
+              type_code: { type: string, enum: [MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY] }
+              options: { type: array, items: { type: object } }
+              explanation: { type: string }
+              difficulty: { type: string, enum: [EASY, MEDIUM, HARD] }
+              points: { type: number }
+              topic_id: { type: integer }
+      responses:
+        200:
+          description: AI generated question updated
+          schema:
+            type: object
+            properties:
+              message: { type: string }
+              question: { type: object }
+    delete:
+      tags: [AI Question Generation Flow]
+      summary: Delete generated AI question before import
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: AI generated question deleted
   /tests/{test_id}/questions/{test_question_id}:
     patch:
       tags: [Tests]
@@ -2505,30 +2616,30 @@ paths:
               $ref: "#/definitions/StudentGradedResult"
         403:
           description: Not an active student
-  /student/courses/{course_id}/analytics:
+  /student/subjects/{subject_id}/analytics:
     get:
       tags: [Student Exams]
-      summary: Course performance analytics for authenticated student
+      summary: Subject performance analytics for authenticated student
       description: |
-        Topic-based course analytics computed from already graded attempts only.
+        Topic-based subject analytics computed from already graded attempts only.
         Includes weighted topic performance using difficulty weights:
         EASY=1.0, MEDIUM=1.5, HARD=2.0.
 
         Excludes in-progress, submitted-only, draft, and ungraded attempts.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
-        - name: course_id
+        - name: subject_id
           in: path
           type: integer
           required: true
       responses:
         200:
-          description: Course analytics
+          description: Subject analytics
           schema:
             type: object
             properties:
-              course_id: { type: integer }
-              course_name: { type: string }
+              subject_id: { type: integer }
+              subject_name: { type: string }
               overall_performance: { type: number }
               student: { type: object }
               topics:
@@ -2551,7 +2662,7 @@ paths:
                 items:
                   type: object
         404:
-          description: Course not found or student not enrolled in course
+          description: Subject not found or student not enrolled in subject
         403:
           description: Not an active student
   /student/tests/{test_id}/analytics:

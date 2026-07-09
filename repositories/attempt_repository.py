@@ -188,13 +188,13 @@ class TestAttemptRepository(BaseRepository):
             .order_by(TestAttempt.graded_at.desc().nullslast(), TestAttempt.id.desc())
         ).scalars().first()
 
-    def list_topic_weighted_rows_for_course(
+    def list_topic_weighted_rows_for_subject(
         self,
         *,
         workspace_id: int,
         student_membership_id: int,
         student_user_id: int,
-        course_id: int,
+        subject_id: int,
     ) -> list[tuple[int | None, str | None, float, float]]:
         difficulty_weight = case(
             (TestQuestion.snapshot_difficulty == "HARD", 2.0),
@@ -226,7 +226,7 @@ class TestAttemptRepository(BaseRepository):
                 TestAttempt.student_membership_id == student_membership_id,
                 TestAttempt.user_id == student_user_id,
                 TestAttempt.status == TestAttemptStatus.GRADED.value,
-                Test.subject_id == course_id,
+                Test.subject_id == subject_id,
                 Test.created_by.has(workspace_id=workspace_id),
                 TestQuestion.status == QuestionStatus.ACTIVE.value,
             )
@@ -246,6 +246,22 @@ class TestAttemptRepository(BaseRepository):
             )
             for topic_id, topic_name, weighted_earned, weighted_possible in rows
         ]
+
+    def list_topic_weighted_rows_for_course(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+        course_id: int,
+    ) -> list[tuple[int | None, str | None, float, float]]:
+        """Backward-compatible alias: course == subject."""
+        return self.list_topic_weighted_rows_for_subject(
+            workspace_id=workspace_id,
+            student_membership_id=student_membership_id,
+            student_user_id=student_user_id,
+            subject_id=course_id,
+        )
 
     def list_topic_weighted_rows_for_attempt(
         self,
