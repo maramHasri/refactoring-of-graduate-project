@@ -21,6 +21,8 @@ class WorkspaceRepository(BaseRepository):
         ).scalar_one_or_none()
 
     def list_for_user(self, user_id: int) -> list[Workspace]:
+        from utils.enums import WorkspaceStatus
+
         return list(
             db.session.execute(
                 db.select(Workspace)
@@ -28,6 +30,7 @@ class WorkspaceRepository(BaseRepository):
                 .where(
                     Membership.user_id == user_id,
                     Membership.status == "ACTIVE",
+                    Workspace.status == WorkspaceStatus.ACTIVE.value,
                 )
                 .order_by(Workspace.name)
             ).scalars().all()

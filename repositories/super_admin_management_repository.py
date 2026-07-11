@@ -1,10 +1,10 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from models import Membership, Test, User, Workspace
+from models import Membership, Test, TestAttempt, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import MembershipRole
+from utils.enums import MembershipRole, TestAttemptStatus, WorkspaceKind
 
 
 class SuperAdminManagementRepository(BaseRepository):
@@ -19,6 +19,7 @@ class SuperAdminManagementRepository(BaseRepository):
                 Membership.status == "ACTIVE",
                 Membership.role.in_(
                     [
+                        MembershipRole.ADMIN.value,
                         MembershipRole.STUDENT.value,
                         MembershipRole.TEACHER.value,
                     ]
@@ -28,9 +29,72 @@ class SuperAdminManagementRepository(BaseRepository):
         ).all()
         counts = {role: int(count) for role, count in rows}
         return {
+            "admins_count": counts.get(MembershipRole.ADMIN.value, 0),
             "students_count": counts.get(MembershipRole.STUDENT.value, 0),
             "teachers_count": counts.get(MembershipRole.TEACHER.value, 0),
         }
+
+    def count_institution_active_users(self, workspace_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(Membership.id)).where(
+                    Membership.workspace_id == workspace_id,
+                    Membership.status == "ACTIVE",
+                )
+            ).scalar_one()
+            or 0
+        )
+
+    def count_institution_attempts(self, workspace_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(TestAttempt.id))
+                .select_from(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .join(Membership, Membership.id == Test.created_by_membership_id)
+                .where(Membership.workspace_id == workspace_id)
+            ).scalar_one()
+            or 0
+        )
+
+    def count_user_created_tests(self, user_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(Test.id))
+                .select_from(Test)
+                .join(Membership, Membership.id == Test.created_by_membership_id)
+                .where(Membership.user_id == user_id)
+            ).scalar_one()
+            or 0
+        )
+
+    def count_user_completed_attempts(self, user_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(TestAttempt.id)).where(
+                    TestAttempt.user_id == user_id,
+                    TestAttempt.status.in_(
+                        [
+                            TestAttemptStatus.SUBMITTED.value,
+                            TestAttemptStatus.GRADED.value,
+                        ]
+                    ),
+                )
+            ).scalar_one()
+            or 0
+        )
+
+    def get_user_last_attempt_activity(self, user_id: int):
+        return db.session.execute(
+            select(func.max(TestAttempt.last_activity_at)).where(
+                TestAttempt.user_id == user_id
+            )
+        ).scalar_one()
+
+    def get_institution_owner(self, workspace: Workspace) -> User | None:
+        if not workspace.owner_user_id:
+            return None
+        return db.session.get(User, workspace.owner_user_id)
 
     def count_institution_tests(self, workspace_id: int) -> int:
         return (
@@ -63,6 +127,7 @@ class SuperAdminManagementRepository(BaseRepository):
         *,
         role: str | None = None,
         institution_id: int | None = None,
+        organization_id: int | None = None,
         status: str | None = None,
         search: str | None = None,
         super_admin_only: bool = False,
@@ -77,8 +142,9 @@ class SuperAdminManagementRepository(BaseRepository):
         membership_filters = []
         if role:
             membership_filters.append(Membership.role == role)
-        if institution_id is not None:
-            membership_filters.append(Membership.workspace_id == institution_id)
+        workspace_filter_id = organization_id if organization_id is not None else institution_id
+        if workspace_filter_id is not None:
+            membership_filters.append(Membership.workspace_id == workspace_filter_id)
         if membership_filters:
             base = base.join(Membership, Membership.user_id == User.id).where(
                 *membership_filters

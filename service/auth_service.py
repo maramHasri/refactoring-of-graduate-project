@@ -604,7 +604,11 @@ class AuthService:
         rows = db.session.execute(
             db.select(Membership, Workspace)
             .join(Workspace, Workspace.id == Membership.workspace_id)
-            .where(Membership.user_id == user_id, Membership.status == "ACTIVE")
+            .where(
+                Membership.user_id == user_id,
+                Membership.status == "ACTIVE",
+                Workspace.status == WorkspaceStatus.ACTIVE.value,
+            )
         ).all()
         result = []
         for membership, workspace in rows:

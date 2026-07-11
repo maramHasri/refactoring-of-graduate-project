@@ -16,7 +16,7 @@ from repositories.test_assignment_repository import TestStudentAssignmentReposit
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from utils.db import db
-from utils.enums import MembershipRole, SubjectRole, WorkspaceKind
+from utils.enums import MembershipRole, SubjectRole, WorkspaceKind, WorkspaceStatus
 from utils.rbac import (
     can_list_institution_workspace_teachers,
     can_list_workspace_students,
@@ -398,6 +398,8 @@ class WorkspaceService:
             m = self.memberships.find_by_user_and_workspace(actor_user_id, workspace_id)
             if not m or m.status != "ACTIVE":
                 raise ForbiddenError("Not a member of this workspace")
+            if workspace.status != WorkspaceStatus.ACTIVE.value:
+                raise ForbiddenError("Workspace is not active")
         return self._serialize_workspace_detail(workspace)
 
     def update_workspace(

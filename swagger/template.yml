@@ -3226,22 +3226,22 @@ paths:
           description: Super admin access required
         401:
           description: Missing or invalid token
-  /api/super-admin/institutions/{institution_id}/suspend:
+  /api/super-admin/organizations/{organization_id}/suspend:
     patch:
       tags: [Super Admin Management]
-      summary: Suspend an institution
+      summary: Suspend an organization
       description: |
-        Suspends an institution workspace (`kind = INSTITUTION`). Data and memberships are preserved.
+        Suspends a workspace organization (SOLO or INSTITUTION). Data and memberships are preserved.
         Sets workspace status to SUSPENDED and records suspension metadata.
-        SOLO workspaces cannot be suspended via this endpoint.
+        Suspended organizations are excluded from active workspace access and login workspace selection.
         Super Admin only.
       security: [{ Bearer: [] }]
       parameters:
-        - name: institution_id
+        - name: organization_id
           in: path
           type: integer
           required: true
-          description: Institution workspace id (`workspaces.kind = INSTITUTION`)
+          description: Workspace id (`workspaces.kind` is SOLO or INSTITUTION)
         - in: body
           name: body
           required: true
@@ -3254,17 +3254,17 @@ paths:
                 example: "Violation of platform policies"
       responses:
         200:
-          description: Institution suspended
+          description: Organization suspended
           schema:
             type: object
             properties:
-              message: { type: string, example: "Institution suspended successfully" }
-              institution:
+              message: { type: string, example: "Organization suspended successfully" }
+              organization:
                 type: object
                 properties:
                   id: { type: integer, example: 1 }
                   name: { type: string, example: "ABC Academy" }
-                  kind: { type: string, example: INSTITUTION }
+                  organization_type: { type: string, example: INSTITUTION }
                   status: { type: string, example: SUSPENDED }
                   suspended_at: { type: string, format: date-time }
                   suspension_reason: { type: string, example: "Violation of platform policies" }
@@ -3272,11 +3272,95 @@ paths:
                   teachers_count: { type: integer, example: 35 }
                   tests_count: { type: integer, example: 120 }
         404:
-          description: Institution not found
+          description: Organization not found
         409:
-          description: Institution is already suspended
+          description: Organization is already suspended
         422:
-          description: Validation error (e.g. workspace is SOLO, not INSTITUTION)
+          description: Validation error
+        403:
+          description: Super admin access required
+  /api/super-admin/organizations/{organization_id}/restore:
+    post:
+      tags: [Super Admin Management]
+      summary: Restore a suspended organization
+      description: |
+        Restores a previously suspended workspace organization (SOLO or INSTITUTION).
+        Sets status to ACTIVE and clears suspension metadata.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: organization_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Organization restored
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Organization restored successfully" }
+              organization:
+                type: object
+                properties:
+                  id: { type: integer, example: 1 }
+                  name: { type: string, example: "ABC Academy" }
+                  organization_type: { type: string, example: INSTITUTION }
+                  status: { type: string, example: ACTIVE }
+                  students_count: { type: integer, example: 500 }
+                  teachers_count: { type: integer, example: 35 }
+                  admins_count: { type: integer, example: 3 }
+                  tests_count: { type: integer, example: 120 }
+                  attempts_count: { type: integer, example: 5400 }
+        404:
+          description: Organization not found
+        422:
+          description: Organization is not suspended
+        403:
+          description: Super admin access required
+  /api/super-admin/organizations/{organization_id}:
+    get:
+      tags: [Super Admin Management]
+      summary: Get organization details
+      description: |
+        Complete management view for a specific workspace organization (SOLO or INSTITUTION).
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: organization_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Organization details
+          schema:
+            type: object
+            properties:
+              id: { type: integer, example: 1 }
+              name: { type: string, example: "ABC Academy" }
+              slug: { type: string, example: "abc-academy" }
+              organization_type: { type: string, example: INSTITUTION }
+              status: { type: string, example: ACTIVE }
+              created_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+              suspended_at: { type: string, format: date-time }
+              suspension_reason: { type: string }
+              is_verified_by_superadmin: { type: boolean, example: true }
+              owner:
+                type: object
+                properties:
+                  user_id: { type: integer, example: 5 }
+                  name: { type: string, example: "Owner Name" }
+                  email: { type: string, example: "owner@abc.edu" }
+              admins_count: { type: integer, example: 3 }
+              students_count: { type: integer, example: 500 }
+              teachers_count: { type: integer, example: 35 }
+              active_users_count: { type: integer, example: 538 }
+              tests_count: { type: integer, example: 120 }
+              attempts_count: { type: integer, example: 5400 }
+        404:
+          description: Organization not found
         403:
           description: Super admin access required
   /api/super-admin/users/{user_id}/suspend:
@@ -3324,14 +3408,15 @@ paths:
                     type: array
                     items: { type: string }
                     example: [TEACHER]
-                  institutions:
+                  organizations:
                     type: array
                     items:
                       type: object
                       properties:
                         id: { type: integer, example: 2 }
                         name: { type: string, example: "ABC Academy" }
-                        kind: { type: string, example: INSTITUTION }
+                        organization_type: { type: string, example: INSTITUTION }
+                        status: { type: string, example: ACTIVE }
         403:
           description: Forbidden (e.g. self-suspension)
         404:
@@ -3340,13 +3425,119 @@ paths:
           description: User is already suspended
         422:
           description: Validation error
+  /api/super-admin/users/{user_id}/restore:
+    post:
+      tags: [Super Admin Management]
+      summary: Restore a suspended user
+      description: |
+        Restores a previously suspended user account.
+        Sets status to ACTIVE and clears suspension metadata.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: User restored
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "User restored successfully" }
+              user:
+                type: object
+                properties:
+                  id: { type: integer, example: 15 }
+                  name: { type: string, example: "Ahmed Ali" }
+                  email: { type: string, example: "user@example.com" }
+                  status: { type: string, example: ACTIVE }
+                  roles:
+                    type: array
+                    items: { type: string }
+                    example: [TEACHER]
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer, example: 2 }
+                        name: { type: string, example: "ABC Academy" }
+                        organization_type: { type: string, example: INSTITUTION }
+                        status: { type: string, example: ACTIVE }
+        404:
+          description: User not found
+        422:
+          description: User is not suspended
+        403:
+          description: Super admin access required
+  /api/super-admin/users/{user_id}:
+    get:
+      tags: [Super Admin Management]
+      summary: Get user details
+      description: |
+        Complete management view for a specific user, including memberships and activity stats.
+        Super Admin only.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: User details
+          schema:
+            type: object
+            properties:
+              id: { type: integer, example: 15 }
+              name: { type: string, example: "Ahmed Ali" }
+              email: { type: string, example: "user@example.com" }
+              status: { type: string, example: ACTIVE }
+              created_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+              last_login_at: { type: string, format: date-time }
+              last_activity_at: { type: string, format: date-time }
+              email_verified: { type: boolean, example: true }
+              is_superadmin: { type: boolean, example: false }
+              suspended_at: { type: string, format: date-time }
+              suspension_reason: { type: string }
+              roles:
+                type: array
+                items: { type: string }
+                example: [TEACHER]
+              organizations:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer, example: 2 }
+                    name: { type: string, example: "ABC Academy" }
+                    organization_type: { type: string, example: INSTITUTION }
+                    status: { type: string, example: ACTIVE }
+              memberships:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    membership_id: { type: integer, example: 42 }
+                    role: { type: string, example: TEACHER }
+                    status: { type: string, example: ACTIVE }
+                    joined_at: { type: string, format: date-time }
+              created_tests_count: { type: integer, example: 12 }
+              completed_attempts_count: { type: integer, example: 48 }
+        404:
+          description: User not found
+        403:
+          description: Super admin access required
   /api/super-admin/users:
     get:
       tags: [Super Admin Management]
       summary: List all platform users with memberships and roles
       description: |
         Platform-wide user listing for Super Admin user management.
-        Supports pagination and filtering by role, institution, status, and search.
+        Supports pagination and filtering by role, organization, status, and search.
         Super Admin only.
       security: [{ Bearer: [] }]
       parameters:
@@ -3362,10 +3553,10 @@ paths:
           in: query
           type: string
           enum: [ADMIN, TEACHER, STUDENT, SUPER_ADMIN]
-        - name: institution_id
+        - name: organization_id
           in: query
           type: integer
-          description: Filter users by institution workspace id
+          description: Filter users by organization workspace id
         - name: status
           in: query
           type: string
@@ -3403,6 +3594,8 @@ paths:
                         properties:
                           id: { type: integer, example: 2 }
                           name: { type: string, example: "ABC Academy" }
+                          organization_type: { type: string, example: INSTITUTION }
+                          status: { type: string, example: ACTIVE }
               total: { type: integer, example: 120 }
               page: { type: integer, example: 1 }
               per_page: { type: integer, example: 20 }

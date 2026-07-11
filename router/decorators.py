@@ -99,6 +99,13 @@ def require_workspace_membership(f):
         if not membership or membership.status != "ACTIVE":
             return jsonify({"error": "Not an active member of this workspace"}), 403
 
+        from repositories.workspace_repository import WorkspaceRepository
+        from utils.enums import WorkspaceStatus
+
+        workspace = WorkspaceRepository().get_by_id(workspace_id)
+        if not workspace or workspace.status != WorkspaceStatus.ACTIVE.value:
+            return jsonify({"error": "Workspace is not active"}), 403
+
         g.workspace_id = workspace_id
         g.membership = membership
         return f(*args, **kwargs)
