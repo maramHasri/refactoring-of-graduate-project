@@ -40,6 +40,20 @@ class QuestionBankRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def count_by_creator(self, membership_id: int, workspace_id: int) -> int:
+        return (
+            db.session.execute(
+                db.select(db.func.count())
+                .select_from(QuestionBank)
+                .where(
+                    QuestionBank.created_by_membership_id == membership_id,
+                    QuestionBank.workspace_id == workspace_id,
+                    QuestionBank.deleted_at.is_(None),
+                )
+            ).scalar_one()
+            or 0
+        )
+
     def list_by_creator(self, membership_id: int, workspace_id: int) -> list[QuestionBank]:
         return list(
             db.session.execute(

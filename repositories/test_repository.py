@@ -21,6 +21,16 @@ class TestRepository(BaseRepository):
             )
         ).scalar_one_or_none()
 
+    def count_for_creator(self, creator_membership_id: int) -> int:
+        return (
+            db.session.execute(
+                db.select(db.func.count(Test.id)).where(
+                    Test.created_by_membership_id == creator_membership_id
+                )
+            ).scalar_one()
+            or 0
+        )
+
     def list_for_creator(self, creator_membership_id: int) -> list[Test]:
         return list(
             db.session.execute(

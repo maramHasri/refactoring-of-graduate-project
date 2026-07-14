@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from sqlalchemy.orm import joinedload
+
 from models import Subject, SubjectMembership
 from repositories.base_repository import BaseRepository
 from utils.db import db
@@ -114,6 +116,7 @@ class SubjectMembershipRepository(BaseRepository):
             db.session.execute(
                 db.select(SubjectMembership)
                 .join(Subject, Subject.id == SubjectMembership.subject_id)
+                .options(joinedload(SubjectMembership.subject))
                 .where(
                     SubjectMembership.membership_id == membership_id,
                     SubjectMembership.subject_role == SubjectRole.STUDENT.value,
@@ -153,6 +156,7 @@ class SubjectMembershipRepository(BaseRepository):
             db.session.execute(
                 db.select(SubjectMembership)
                 .join(Subject, Subject.id == SubjectMembership.subject_id)
+                .options(joinedload(SubjectMembership.subject))
                 .where(
                     SubjectMembership.membership_id == membership_id,
                     SubjectMembership.subject_role == SubjectRole.TEACHER.value,

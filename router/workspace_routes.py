@@ -7,6 +7,7 @@ from schemas.workspace_schema import (
     UpdateWorkspaceSchema,
     WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
+    WorkspaceRecentlyActiveQuerySchema,
 )
 from service.workspace_service import WorkspaceService
 
@@ -113,6 +114,37 @@ def remove_workspace_student():
         g.workspace_id,
         g.membership,
         query["membership_id"],
+    ), 200
+
+
+@workspace_bp.route("/members/recently-active", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_recently_active_workspace_members():
+    """
+    GET /workspaces/members/recently-active — members active in the last 24 hours.
+    Requires X-Workspace-Id. INSTITUTION or SOLO; workspace owner or ADMIN only.
+    """
+    query = WorkspaceRecentlyActiveQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().list_recently_active_members(
+        g.workspace_id,
+        g.membership,
+        role=query.get("role"),
+    ), 200
+
+
+@workspace_bp.route("/members/<int:membership_id>", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_workspace_member_details(membership_id):
+    """
+    GET /workspaces/members/{membership_id} — student or teacher detail.
+    Requires X-Workspace-Id. INSTITUTION or SOLO; workspace owner or ADMIN only.
+    """
+    return WorkspaceService().get_workspace_member_details(
+        g.workspace_id,
+        g.membership,
+        membership_id,
     ), 200
 
 

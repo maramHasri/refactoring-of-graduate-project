@@ -1,6 +1,8 @@
+from datetime import datetime
+
 from sqlalchemy import func, or_
 
-from models import Membership, Subject, SubjectMembership, User, Workspace
+from models import Membership, Subject, SubjectMembership, TestAttempt, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import MembershipRole, SubjectMembershipStatus
@@ -38,6 +40,55 @@ class WorkspaceRepository(BaseRepository):
 
 
 class MembershipRepository(BaseRepository):
+    def get_with_user(self, membership_id: int) -> tuple[Membership, User] | None:
+        row = db.session.execute(
+            db.select(Membership, User)
+            .join(User, User.id == Membership.user_id)
+            .where(Membership.id == membership_id)
+        ).first()
+        if not row:
+            return None
+        return row[0], row[1]
+
+    def list_recently_active_in_workspace(
+        self,
+        workspace_id: int,
+        *,
+        since: datetime,
+        role: str | None = None,
+    ) -> list[tuple[Membership, User, datetime | None]]:
+        attempt_activity = (
+            db.select(
+                TestAttempt.user_id.label("user_id"),
+                func.max(TestAttempt.last_activity_at).label("attempt_activity_at"),
+            )
+            .join(Membership, Membership.id == TestAttempt.student_membership_id)
+            .where(Membership.workspace_id == workspace_id)
+            .group_by(TestAttempt.user_id)
+            .subquery()
+        )
+        effective_activity = func.coalesce(
+            attempt_activity.c.attempt_activity_at,
+            User.last_login_at,
+        )
+        filters = [
+            Membership.workspace_id == workspace_id,
+            Membership.status == "ACTIVE",
+            effective_activity.is_not(None),
+            effective_activity >= since,
+        ]
+        if role:
+            filters.append(Membership.role == role)
+
+        rows = db.session.execute(
+            db.select(Membership, User, effective_activity)
+            .join(User, User.id == Membership.user_id)
+            .outerjoin(attempt_activity, attempt_activity.c.user_id == User.id)
+            .where(*filters)
+            .order_by(effective_activity.desc(), User.full_name, Membership.id)
+        ).all()
+        return [(membership, user, activity_at) for membership, user, activity_at in rows]
+
     def get_by_id(self, membership_id: int) -> Membership | None:
         return db.session.get(Membership, membership_id)
 

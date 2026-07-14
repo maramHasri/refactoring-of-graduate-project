@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import case, func
 from sqlalchemy.orm import joinedload
 
@@ -129,6 +131,55 @@ class TestAttemptRepository(BaseRepository):
             .distinct()
         ).scalars().all()
         return set(rows)
+
+    def list_completed_for_student(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+    ) -> list[TestAttempt]:
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(
+                    joinedload(TestAttempt.test).joinedload(Test.subject),
+                )
+                .where(
+                    TestAttempt.student_membership_id == student_membership_id,
+                    TestAttempt.user_id == student_user_id,
+                    TestAttempt.status.in_(
+                        [
+                            TestAttemptStatus.SUBMITTED.value,
+                            TestAttemptStatus.GRADED.value,
+                        ]
+                    ),
+                    Test.archived_at.is_(None),
+                    Test.created_by.has(workspace_id=workspace_id),
+                )
+                .order_by(
+                    TestAttempt.submitted_at.desc().nullslast(),
+                    TestAttempt.started_at.desc(),
+                    TestAttempt.id.desc(),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+
+    def get_user_last_activity_in_workspace(
+        self, user_id: int, workspace_id: int
+    ) -> datetime | None:
+        return db.session.execute(
+            db.select(func.max(TestAttempt.last_activity_at))
+            .join(Membership, Membership.id == TestAttempt.student_membership_id)
+            .where(
+                TestAttempt.user_id == user_id,
+                Membership.workspace_id == workspace_id,
+            )
+        ).scalar_one()
 
     def list_graded_for_student(
         self,

@@ -61,6 +61,17 @@ class WorkspaceMemberRemoveQuerySchema(Schema):
     membership_id = fields.Int(required=True)
 
 
+class WorkspaceRecentlyActiveQuerySchema(Schema):
+    """GET /workspaces/members/recently-active — optional role filter."""
+
+    role = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf(
+            [MembershipRole.STUDENT.value, MembershipRole.TEACHER.value]
+        ),
+    )
+
+
 class UpdateWorkspaceMemberSchema(Schema):
     """PATCH /workspaces/members/{membership_id} — editable User profile fields only."""
 

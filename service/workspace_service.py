@@ -7,18 +7,23 @@ Owner vs admin:
 - Regular admins cannot remove other admins.
 """
 import re
+from datetime import datetime, timedelta
 
-from models import Membership, Workspace, WorkspaceProfile
+from models import Membership, Test, TestAttempt, Workspace, WorkspaceProfile
 from repositories.attempt_repository import TestAttemptRepository
+from repositories.question_bank_repository import QuestionBankRepository
 from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import SubjectMembershipRepository
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
+from repositories.test_repository import TestRepository
 from repositories.user_repository import UserRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
+from service.attempt_service import AttemptService
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from service.user_service import UserService
+from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
-from utils.enums import MembershipRole, SubjectRole, WorkspaceKind, WorkspaceStatus
+from utils.enums import AvailabilityTimeMode, MembershipRole, SubjectRole, WorkspaceKind, WorkspaceStatus
 from utils.rbac import (
     can_list_institution_workspace_teachers,
     can_list_workspace_students,
@@ -41,8 +46,115 @@ class WorkspaceService:
         self.student_groups = StudentGroupRepository()
         self.test_assignments = TestStudentAssignmentRepository()
         self.test_attempts = TestAttemptRepository()
+        self.tests = TestRepository()
+        self.question_banks = QuestionBankRepository()
         self.user_repo = UserRepository()
         self.user_service = UserService()
+        self.attempt_service = AttemptService()
+
+    def get_workspace_member_details(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        membership_id: int,
+    ) -> dict:
+        """
+        GET /workspaces/members/{membership_id} — student or teacher detail.
+        Works for INSTITUTION and SOLO workspaces (owner or ADMIN).
+        """
+        workspace = self._ensure_can_manage_workspace_members(
+            workspace_id, actor_membership
+        )
+        row = self.memberships.get_with_user(membership_id)
+        if not row:
+            raise NotFoundError("Membership not found in this workspace")
+        target, user = row
+        if target.workspace_id != workspace.id:
+            raise NotFoundError("Membership not found in this workspace")
+        if target.role not in (
+            MembershipRole.STUDENT.value,
+            MembershipRole.TEACHER.value,
+        ):
+            raise ValidationError(
+                "Member details are only available for students and teachers"
+            )
+
+        last_activity_at = self._resolve_member_last_activity_at(user, workspace.id)
+        subjects = self._serialize_member_subjects(target, workspace.id)
+
+        if target.role == MembershipRole.STUDENT.value:
+            upcoming_raw = self.attempt_service.list_upcoming_tests(
+                workspace_id=workspace.id,
+                actor_membership=target,
+            )
+            test_ids = [item["test_id"] for item in upcoming_raw]
+            tests_by_id = self._fetch_tests_by_ids(test_ids)
+            return {
+                "student": self._serialize_member_identity(
+                    user, target, last_activity_at
+                ),
+                "subjects": subjects,
+                "upcoming_tests": [
+                    self._serialize_member_upcoming_test(
+                        item, tests_by_id.get(item["test_id"])
+                    )
+                    for item in upcoming_raw
+                ],
+                "completed_tests": [
+                    self._serialize_member_completed_test(attempt)
+                    for attempt in self.test_attempts.list_completed_for_student(
+                        workspace_id=workspace.id,
+                        student_membership_id=target.id,
+                        student_user_id=user.id,
+                    )
+                ],
+            }
+
+        return {
+            "teacher": self._serialize_member_identity(user, target, last_activity_at),
+            "subjects": subjects,
+            "statistics": {
+                "question_banks_created": self.question_banks.count_by_creator(
+                    target.id, workspace.id
+                ),
+                "tests_created": self.tests.count_for_creator(target.id),
+            },
+        }
+
+    def list_recently_active_members(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        role: str | None = None,
+    ) -> dict:
+        """
+        GET /workspaces/members/recently-active — members active in the last 24 hours.
+        Works for INSTITUTION and SOLO workspaces (owner or ADMIN).
+        """
+        self._ensure_can_manage_workspace_members(workspace_id, actor_membership)
+        since = local_timezone_now() - timedelta(hours=24)
+        rows = self.memberships.list_recently_active_in_workspace(
+            workspace_id,
+            since=since,
+            role=role,
+        )
+        if role is None:
+            rows = [
+                row
+                for row in rows
+                if row[0].role
+                in (MembershipRole.STUDENT.value, MembershipRole.TEACHER.value)
+            ]
+
+        return {
+            "members": [
+                self._serialize_recently_active_member(
+                    membership, user, activity_at
+                )
+                for membership, user, activity_at in rows
+            ]
+        }
 
     def update_workspace_member(
         self,
@@ -55,11 +167,9 @@ class WorkspaceService:
         PATCH /workspaces/members/{membership_id} — update linked User profile fields.
         Does not modify membership role, workspace, or relationship fields.
         """
-        workspace = self._get_workspace_or_404(workspace_id)
-        if not can_manage_workspace_members(workspace, actor_membership):
-            raise ForbiddenError(
-                "Only the workspace owner or admin can update workspace members"
-            )
+        workspace = self._ensure_can_manage_workspace_members(
+            workspace_id, actor_membership
+        )
 
         target = self.memberships.get_by_id(membership_id)
         if not target or target.workspace_id != workspace.id:
@@ -396,6 +506,25 @@ class WorkspaceService:
             )
         return workspace
 
+    def _ensure_can_manage_workspace_members(
+        self, workspace_id: int, actor_membership: Membership
+    ) -> Workspace:
+        """
+        Owner or ADMIN may manage members in INSTITUTION and SOLO workspaces.
+        Workspace-type agnostic: SOLO owner is treated as the workspace administrator.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        if workspace.kind not in (
+            WorkspaceKind.INSTITUTION.value,
+            WorkspaceKind.SOLO.value,
+        ):
+            raise ForbiddenError("Unsupported workspace type for member management")
+        if not can_manage_workspace_members(workspace, actor_membership):
+            raise ForbiddenError(
+                "Only the workspace owner or admin can manage workspace members"
+            )
+        return workspace
+
     def _ensure_workspace_student_list_access(
         self, workspace: Workspace, actor_membership: Membership
     ) -> None:
@@ -613,3 +742,130 @@ class WorkspaceService:
             "subject_assignment_mode": workspace.subject_assignment_mode,
             "is_verified_by_superadmin": workspace.is_verified_by_superadmin,
         }
+
+    def _resolve_member_last_activity_at(
+        self, user, workspace_id: int
+    ) -> datetime | None:
+        attempt_activity = self.test_attempts.get_user_last_activity_in_workspace(
+            user.id, workspace_id
+        )
+        if attempt_activity and user.last_login_at:
+            return max(attempt_activity, user.last_login_at)
+        return attempt_activity or user.last_login_at
+
+    def _serialize_member_identity(
+        self, user, membership: Membership, last_activity_at: datetime | None
+    ) -> dict:
+        payload = {
+            "user_id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "last_activity_at": last_activity_at.isoformat()
+            if last_activity_at
+            else None,
+            "status": membership.status,
+        }
+        if user.profile_image_url:
+            payload["avatar"] = user.profile_image_url
+        return payload
+
+    def _serialize_member_subjects(
+        self, membership: Membership, workspace_id: int
+    ) -> list[dict]:
+        if membership.role == MembershipRole.TEACHER.value:
+            links = self.subject_memberships.list_teacher_assignments_for_membership(
+                membership.id, workspace_id
+            )
+        else:
+            links = self.subject_memberships.list_student_assignments_for_membership(
+                membership.id, workspace_id
+            )
+        subjects: list[dict] = []
+        for link in links:
+            subject = link.subject
+            if not subject:
+                continue
+            subjects.append(
+                {
+                    "subject_id": subject.id,
+                    "subject_name": subject.name,
+                }
+            )
+        return subjects
+
+    def _fetch_tests_by_ids(self, test_ids: list[int]) -> dict[int, Test]:
+        if not test_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(Test).where(Test.id.in_(test_ids))
+        ).scalars().all()
+        return {test.id: test for test in rows}
+
+    def _test_availability_type(self, test: Test | None) -> str | None:
+        if not test:
+            return None
+        return (
+            test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value
+        ).upper()
+
+    def _serialize_member_upcoming_test(
+        self, upcoming: dict, test: Test | None
+    ) -> dict:
+        mode = upcoming.get("availability_time_mode")
+        starts_at = None
+        if mode == AvailabilityTimeMode.FLEXIBLE.value:
+            window = upcoming.get("availability_window") or {}
+            starts_at = window.get("available_from")
+        else:
+            starts_at = upcoming.get("start_time")
+
+        payload = {
+            "test_id": upcoming["test_id"],
+            "test_name": upcoming["title"],
+            "subject_name": upcoming.get("subject"),
+            "availability_type": mode,
+            "duration_minutes": test.duration_minutes if test else None,
+        }
+        if starts_at:
+            payload["starts_at"] = starts_at
+        return payload
+
+    def _serialize_member_completed_test(self, attempt: TestAttempt) -> dict:
+        test = attempt.test
+        availability_type = self._test_availability_type(test)
+        test_date = None
+        if attempt.submitted_at:
+            test_date = ensure_local_aware(attempt.submitted_at).date().isoformat()
+        elif attempt.started_at:
+            test_date = ensure_local_aware(attempt.started_at).date().isoformat()
+
+        return {
+            "test_id": test.id if test else None,
+            "test_name": test.name if test else None,
+            "test_type": availability_type,
+            "test_date": test_date,
+            "test_start_time": format_local_datetime(attempt.started_at),
+            "subject_name": test.subject.name if test and test.subject else None,
+            "duration_minutes": test.duration_minutes if test else None,
+        }
+
+    def _serialize_recently_active_member(
+        self,
+        membership: Membership,
+        user,
+        last_activity_at: datetime | None,
+    ) -> dict:
+        payload = {
+            "membership_id": membership.id,
+            "user_id": user.id,
+            "full_name": user.full_name,
+            "email": user.email,
+            "role": membership.role,
+            "status": membership.status,
+            "last_activity_at": last_activity_at.isoformat()
+            if last_activity_at
+            else None,
+        }
+        if user.profile_image_url:
+            payload["avatar"] = user.profile_image_url
+        return payload
