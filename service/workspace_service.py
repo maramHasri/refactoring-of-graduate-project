@@ -13,13 +13,16 @@ from repositories.attempt_repository import TestAttemptRepository
 from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import SubjectMembershipRepository
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
+from repositories.user_repository import UserRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from service.user_service import UserService
 from utils.db import db
 from utils.enums import MembershipRole, SubjectRole, WorkspaceKind, WorkspaceStatus
 from utils.rbac import (
     can_list_institution_workspace_teachers,
     can_list_workspace_students,
+    can_manage_workspace_members,
 )
 from utils.join_code import generate_workspace_join_code
 from utils.pagination import build_pagination_meta, normalize_pagination
@@ -38,6 +41,51 @@ class WorkspaceService:
         self.student_groups = StudentGroupRepository()
         self.test_assignments = TestStudentAssignmentRepository()
         self.test_attempts = TestAttemptRepository()
+        self.user_repo = UserRepository()
+        self.user_service = UserService()
+
+    def update_workspace_member(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        membership_id: int,
+        data: dict,
+    ) -> dict:
+        """
+        PATCH /workspaces/members/{membership_id} — update linked User profile fields.
+        Does not modify membership role, workspace, or relationship fields.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        if not can_manage_workspace_members(workspace, actor_membership):
+            raise ForbiddenError(
+                "Only the workspace owner or admin can update workspace members"
+            )
+
+        target = self.memberships.get_by_id(membership_id)
+        if not target or target.workspace_id != workspace.id:
+            raise NotFoundError("Membership not found in this workspace")
+        if target.status != "ACTIVE":
+            raise ValidationError("Membership is not active")
+
+        user = self.user_repo.get_by_id(target.user_id)
+        if not user:
+            raise NotFoundError("User not found")
+
+        self.user_service.update_profile(user, data)
+
+        subject_count, subject_count_field = self._member_subject_count(
+            workspace.id, target
+        )
+        member = self._serialize_workspace_member(
+            target,
+            user,
+            subject_count=subject_count,
+            subject_count_field=subject_count_field,
+        )
+        return {
+            "message": "Workspace member updated successfully",
+            "member": member,
+        }
 
     def create_workspace(
         self,
@@ -487,6 +535,21 @@ class WorkspaceService:
                     description=description,
                 )
             )
+
+    def _member_subject_count(
+        self, workspace_id: int, membership: Membership
+    ) -> tuple[int, str]:
+        if membership.role == MembershipRole.TEACHER.value:
+            assignments = self.subject_memberships.list_teacher_assignments_for_membership(
+                membership.id, workspace_id
+            )
+            return len(assignments), "assigned_subjects_count"
+        if membership.role == MembershipRole.STUDENT.value:
+            assignments = self.subject_memberships.list_student_assignments_for_membership(
+                membership.id, workspace_id
+            )
+            return len(assignments), "enrolled_subjects_count"
+        return 0, "assigned_subjects_count"
 
     def _serialize_workspace_member(
         self,

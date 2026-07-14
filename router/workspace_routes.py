@@ -3,6 +3,7 @@ from flask import Blueprint, g, request
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
 from schemas.workspace_schema import (
     CreateWorkspaceSchema,
+    UpdateWorkspaceMemberSchema,
     UpdateWorkspaceSchema,
     WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
@@ -112,6 +113,24 @@ def remove_workspace_student():
         g.workspace_id,
         g.membership,
         query["membership_id"],
+    ), 200
+
+
+@workspace_bp.route("/members/<int:membership_id>", methods=["PATCH"])
+@require_workspace_membership
+@handle_service_errors
+def update_workspace_member(membership_id):
+    """
+    PATCH /workspaces/members/{membership_id} — update member user profile fields.
+    Requires X-Workspace-Id. Workspace owner or ADMIN only.
+    Updates User fields only (full_name, phone_number, avatar). Email cannot be changed by admins.
+    """
+    payload = UpdateWorkspaceMemberSchema().load(request.get_json() or {}, partial=True)
+    return WorkspaceService().update_workspace_member(
+        g.workspace_id,
+        g.membership,
+        membership_id,
+        payload,
     ), 200
 
 

@@ -61,6 +61,15 @@ class WorkspaceMemberRemoveQuerySchema(Schema):
     membership_id = fields.Int(required=True)
 
 
+class UpdateWorkspaceMemberSchema(Schema):
+    """PATCH /workspaces/members/{membership_id} — editable User profile fields only."""
+
+    full_name = fields.Str(validate=validate.Length(min=1, max=255))
+    phone_number = fields.Str(allow_none=True, validate=validate.Length(max=20))
+    avatar_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+    profile_image_url = fields.Str(allow_none=True, validate=validate.Length(max=512))
+
+
 class WorkspaceTeacherSchema(Schema):
     """Teacher member in the active institution workspace."""
 

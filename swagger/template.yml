@@ -553,6 +553,69 @@ paths:
           description: Membership not found in this workspace
         422:
           description: Membership is not a student or not active
+  /workspaces/members/{membership_id}:
+    patch:
+      tags: [Workspaces]
+      summary: Update workspace member profile
+      description: |
+        Updates editable **User** profile fields for a workspace member identified by `membership_id`.
+        Requires `X-Workspace-Id`. Caller must be workspace owner or ADMIN.
+
+        Applies to any active member role (TEACHER, STUDENT, ADMIN) in the current workspace.
+        Only updates linked User fields; does **not** change `membership_id`, `workspace_id`, `role`, or `user_id`.
+
+        **Swagger:** run `GET /workspaces/teachers` or `GET /workspaces/students`, copy `membership_id`,
+        then call this endpoint with that id in the path.
+
+        Editable fields: `full_name`, `phone_number`, `avatar_url` (stored as `profile_image_url`).
+        Email is read-only and cannot be changed via this endpoint.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: membership_id
+          in: path
+          type: integer
+          required: true
+          example: 45
+          description: Workspace membership id (from teachers/students list)
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            properties:
+              full_name: { type: string, example: "Ahmed Ali" }
+              phone_number: { type: string, example: "+9639xxxxxxx" }
+              avatar_url: { type: string, example: "https://cdn.example.com/avatars/user123.png" }
+      responses:
+        200:
+          description: Member updated
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Workspace member updated successfully
+              member:
+                type: object
+                description: Same shape as teacher/student list items
+                properties:
+                  user_id: { type: integer, example: 14 }
+                  membership_id: { type: integer, example: 45 }
+                  full_name: { type: string, example: "Ahmed Ali" }
+                  email: { type: string, example: "ahmed@example.com" }
+                  avatar_url: { type: string }
+                  user_status: { type: string, example: ACTIVE }
+                  workspace_role: { type: string, example: TEACHER }
+                  membership_role: { type: string, example: TEACHER }
+                  assigned_subjects_count: { type: integer, example: 4 }
+                  enrolled_subjects_count: { type: integer, example: 5 }
+                  created_at: { type: string, format: date-time }
+        403:
+          description: Forbidden (not owner/admin)
+        404:
+          description: Membership or user not found in this workspace
+        422:
+          description: Validation error (empty body, inactive membership, invalid field)
   /workspaces/{workspace_id}:
     get:
       tags: [Workspaces]
