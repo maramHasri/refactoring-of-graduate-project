@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -25,7 +26,7 @@ def get_ai_generation_request(request_id):
 def update_ai_generated_question(question_id):
     data = UpdateAIGeneratedQuestionSchema().load(request.get_json() or {})
     return {
-        "message": "AI generated question updated",
+        "message": Messages.AI_GENERATED_QUESTION_UPDATED,
         "question": _svc().update_ai_generated_question(
             generated_question_id=question_id,
             workspace_id=g.workspace_id,
@@ -44,4 +45,4 @@ def delete_ai_generated_question(question_id):
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
     )
-    return {"message": "AI generated question deleted"}, 200
+    return {"message": Messages.AI_GENERATED_QUESTION_DELETED}, 200

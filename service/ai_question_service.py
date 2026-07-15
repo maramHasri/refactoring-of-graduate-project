@@ -9,7 +9,10 @@ Providers (AI_QUESTION_PROVIDER):
   - placeholder  — local draft questions (no external API)
   - auto         — first available: gemini → openrouter → qwen (dashscope) → huggingface → placeholder
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import json
 import logging
@@ -47,7 +50,7 @@ class AIQuestionService:
                     request_body=request_body, **kwargs
                 )
                 return questions, label
-            raise ValidationError(f"Unsupported AI provider: {kind}")
+            raise ValidationError(Messages.UNSUPPORTED_AI_PROVIDER_KIND.format(kind=kind))
         except ValidationError as exc:
             if self._should_fallback_to_placeholder(exc):
                 logger.warning(
@@ -61,7 +64,7 @@ class AIQuestionService:
             logger.exception("AI question generation failed (%s)", label)
             if self._should_fallback_to_placeholder(exc):
                 return self._generate_placeholder(request_body), PLACEHOLDER_MODEL
-            raise ValidationError(f"AI question generation failed: {exc}") from exc
+            raise ValidationError(Messages.AI_QUESTION_GENERATION_FAILED_EXC.format(exc=exc)) from exc
 
     def _resolve_provider(self) -> tuple[str, str, dict] | None:
         cfg = current_app.config
@@ -81,7 +84,7 @@ class AIQuestionService:
 
         if mode == "gemini":
             if not gemini_key:
-                raise ValidationError("GEMINI_API_KEY is required when AI_QUESTION_PROVIDER=gemini")
+                raise ValidationError(Messages.GEMINI_API_KEY_IS_REQUIRED_WHEN_AI_QUESTION_PROVIDER_GEMINI)
             return (
                 "gemini",
                 gemini_model,
@@ -90,9 +93,7 @@ class AIQuestionService:
 
         if mode == "openrouter":
             if not openrouter_key:
-                raise ValidationError(
-                    "OPENROUTER_API_KEY is required when AI_QUESTION_PROVIDER=openrouter"
-                )
+                raise ValidationError(Messages.OPENROUTER_API_KEY_IS_REQUIRED_WHEN_AI_QUESTION_PROVIDER_OPENROUTER)
             return self._openrouter_provider(openrouter_key, openrouter_model)
 
         if mode == "qwen":
@@ -118,13 +119,11 @@ class AIQuestionService:
                         "provider_label": "Qwen via HuggingFace",
                     },
                 )
-            raise ValidationError(
-                "Qwen provider requires DASHSCOPE_API_KEY or HF_TOKEN in environment"
-            )
+            raise ValidationError(Messages.QWEN_PROVIDER_REQUIRES_DASHSCOPE_API_KEY_OR_HF_TOKEN_IN_ENVIRONMENT)
 
         if mode == "huggingface":
             if not hf_token:
-                raise ValidationError("HF_TOKEN is required when AI_QUESTION_PROVIDER=huggingface")
+                raise ValidationError(Messages.HF_TOKEN_IS_REQUIRED_WHEN_AI_QUESTION_PROVIDER_HUGGINGFACE)
             return (
                 "openai_chat",
                 hf_model,
@@ -315,9 +314,9 @@ class AIQuestionService:
         try:
             text = raw["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ValidationError(f"Unexpected {provider_label} response format") from exc
+            raise ValidationError(Messages.UNEXPECTED_PROVIDER_LABEL_RESPONSE_FORMAT.format(provider_label=provider_label)) from exc
         if not isinstance(text, str) or not text.strip():
-            raise ValidationError(f"{provider_label} returned empty content")
+            raise ValidationError(Messages.PROVIDER_LABEL_RETURNED_EMPTY_CONTENT.format(provider_label=provider_label))
         return self._normalize_questions_from_json(text, request_body)
 
     def _http_post_json(
@@ -359,22 +358,14 @@ class AIQuestionService:
                 elif "openrouter.ai" in url:
                     label = "OpenRouter"
                     if exc.code == 402:
-                        raise ValidationError(
-                            "OpenRouter error (402): insufficient credits for this model. "
-                            "Use a free model (set OPENROUTER_MODEL to a ':free' model such as "
-                            "'meta-llama/llama-3.3-70b-instruct:free'), lower AI_MAX_OUTPUT_TOKENS, "
-                            "or add credits at https://openrouter.ai/settings/credits."
-                        ) from exc
+                        raise ValidationError(Messages.OPENROUTER_INSUFFICIENT_CREDITS) from exc
                 if "generativelanguage.googleapis.com" in url and exc.code == 503:
-                    raise ValidationError(
-                        "Gemini API is temporarily busy (503 UNAVAILABLE). "
-                        "Please retry in a few seconds."
-                    ) from exc
-                raise ValidationError(f"{label} error ({exc.code}): {detail}") from exc
+                    raise ValidationError(Messages.GEMINI_API_TEMPORARILY_BUSY_503) from exc
+                raise ValidationError(Messages.LABEL_ERROR_CODE_DETAIL.format(label=label, code=exc.code, detail=detail)) from exc
             except urllib.error.URLError as exc:
-                raise ValidationError(f"Could not reach AI API: {exc.reason}") from exc
+                raise ValidationError(Messages.COULD_NOT_REACH_AI_API_REASON.format(reason=exc.reason)) from exc
 
-        raise ValidationError("Gemini API is temporarily busy. Please retry shortly.")
+        raise ValidationError(Messages.GEMINI_API_IS_TEMPORARILY_BUSY_PLEASE_RETRY_SHORTLY)
 
     def _normalize_questions_from_json(
         self, text: str, request_body: dict
@@ -382,23 +373,21 @@ class AIQuestionService:
         parsed = self._parse_json_payload(text)
         questions = parsed.get("questions")
         if not isinstance(questions, list) or not questions:
-            raise ValidationError("AI response did not include a questions array")
+            raise ValidationError(Messages.AI_RESPONSE_DID_NOT_INCLUDE_A_QUESTIONS_ARRAY)
 
         expected = int(request_body["count"])
         if len(questions) < expected:
-            raise ValidationError(
-                f"AI returned {len(questions)} question(s), expected {expected}"
-            )
+            raise ValidationError(Messages.AI_RETURNED_LEN_QUESTIONS_QUESTION_S_EXPECTED_EXPECTED.format(len_questions=len(questions), expected=expected))
 
         type_code = request_body["type_code"]
         default_difficulty = request_body.get("difficulty")
         normalized: list[dict] = []
         for idx, item in enumerate(questions[:expected]):
             if not isinstance(item, dict):
-                raise ValidationError(f"AI question #{idx + 1} is not an object")
+                raise ValidationError(Messages.AI_QUESTION_IS_NOT_AN_OBJECT.format(index=idx + 1))
             body = (item.get("body") or "").strip()
             if not body:
-                raise ValidationError(f"AI question #{idx + 1} is missing body text")
+                raise ValidationError(Messages.AI_QUESTION_IS_MISSING_BODY_TEXT.format(index=idx + 1))
             choices = item.get("choices")
             if choices is None:
                 choices = []
@@ -422,7 +411,7 @@ class AIQuestionService:
         except json.JSONDecodeError:
             match = re.search(r"\{[\s\S]*\}", stripped)
             if not match:
-                raise ValidationError("AI response was not valid JSON") from None
+                raise ValidationError(Messages.AI_RESPONSE_WAS_NOT_VALID_JSON) from None
             return json.loads(match.group(0))
 
     def _extract_gemini_text(self, raw: dict) -> str:
@@ -430,7 +419,7 @@ class AIQuestionService:
             parts = raw["candidates"][0]["content"]["parts"]
             return "".join(part.get("text", "") for part in parts).strip()
         except (KeyError, IndexError, TypeError) as exc:
-            raise ValidationError("Unexpected Gemini response format") from exc
+            raise ValidationError(Messages.UNEXPECTED_GEMINI_RESPONSE_FORMAT) from exc
 
     def _generate_placeholder(self, request_body: dict) -> list[dict]:
         count = int(request_body["count"])

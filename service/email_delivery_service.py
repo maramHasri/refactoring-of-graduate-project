@@ -1,6 +1,8 @@
 """
 Send transactional emails via Gmail SMTP (Google App Password).
 """
+
+from utils.messages import Messages
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -282,9 +284,7 @@ class EmailDeliveryService:
                 to_email,
             )
             print(f"\n[DEV EMAIL] To: {to_email}\nSubject: {subject}\n{text_body}\n")
-            raise EmailDeliveryError(
-                "Gmail is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env"
-            )
+            raise EmailDeliveryError(Messages.GMAIL_IS_NOT_CONFIGURED_SET_GMAIL_USER_AND_GMAIL_APP_PASSWORD_IN_ENV)
 
         self._send_via_gmail(
             gmail_user=gmail_user,
@@ -319,6 +319,6 @@ class EmailDeliveryService:
                 server.login(gmail_user, gmail_pass)
                 server.sendmail(from_addr, [to_email], msg.as_string())
         except smtplib.SMTPException as exc:
-            raise EmailDeliveryError(f"Gmail SMTP error: {exc}") from exc
+            raise EmailDeliveryError(Messages.GMAIL_SMTP_ERROR_EXC.format(exc=exc)) from exc
 
         logger.info("Email sent via Gmail to %s", to_email)

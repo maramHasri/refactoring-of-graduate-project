@@ -9,7 +9,10 @@ Client message format:
 Server message types:
   session_started | event_recorded | violation_triggered | error
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import json
 import logging
@@ -34,29 +37,29 @@ def _authenticate_ws() -> tuple:
     if token.startswith("Bearer "):
         token = token[7:].strip()
     if not token:
-        raise ServiceError("Missing token", 401)
+        raise ServiceError(Messages.MISSING_TOKEN, 401)
 
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
-        raise ServiceError("Invalid access token", 401)
+        raise ServiceError(Messages.INVALID_ACCESS_TOKEN, 401)
 
     SessionService().validate_access_jti(payload.get("jti"))
     db.session.commit()
 
     user = UserRepository().get_by_id(int(payload["sub"]))
     if not user:
-        raise ServiceError("User not found", 401)
+        raise ServiceError(Messages.USER_NOT_FOUND, 401)
 
     workspace_id = request.args.get("workspace_id", type=int)
     if not workspace_id:
-        raise ServiceError("workspace_id query parameter is required", 400)
+        raise ServiceError(Messages.WORKSPACE_ID_QUERY_PARAMETER_IS_REQUIRED, 400)
 
     membership = MembershipRepository().find_by_user_and_workspace(
         user.id, workspace_id
     )
     if not membership or membership.status != "ACTIVE":
         if not user.is_superadmin:
-            raise ServiceError("Not an active member of this workspace", 403)
+            raise ServiceError(Messages.NOT_AN_ACTIVE_MEMBER_OF_THIS_WORKSPACE, 403)
 
     return user, membership, workspace_id
 
@@ -91,7 +94,7 @@ def register_proctoring_websocket(app) -> None:
                     json.dumps(
                         {
                             "type": "error",
-                            "payload": {"error": "Invalid JSON message"},
+                            "payload": {"error": Messages.INVALID_JSON_MESSAGE},
                         }
                     )
                 )
@@ -117,7 +120,7 @@ def register_proctoring_websocket(app) -> None:
                     json.dumps(
                         {
                             "type": "error",
-                            "payload": {"error": "Internal server error"},
+                            "payload": {"error": Messages.INTERNAL_SERVER_ERROR},
                         }
                     )
                 )

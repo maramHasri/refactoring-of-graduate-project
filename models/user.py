@@ -73,6 +73,12 @@ class User(db.Model, TimestampMixin):
         back_populates="owner",
         lazy="dynamic",
     )
+    reports = relationship(
+        "Report",
+        back_populates="created_by",
+        cascade="all, delete-orphan",
+        lazy="dynamic",
+    )
     __table_args__ = (Index("ix_users_user_status", "user_status"),)
 
     @validates("email")

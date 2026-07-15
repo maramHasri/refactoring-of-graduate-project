@@ -3,6 +3,8 @@ Student subject assignment APIs — membership-centric bulk operations.
 
 Reuses subject_memberships with subject_role=STUDENT (same table as subject-centric enroll).
 """
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -28,7 +30,7 @@ def assign_subjects_to_student():
         subject_ids=data["subject_ids"],
         actor_membership=g.membership,
     )
-    return {"message": "Subjects assigned to student", **result}, 201
+    return {"message": Messages.SUBJECTS_ASSIGNED_TO_STUDENT, **result}, 201
 
 
 @student_membership_bp.route("/<int:membership_id>/subjects", methods=["GET"])
@@ -56,7 +58,7 @@ def replace_student_subjects(membership_id):
         subject_ids=data["subject_ids"],
         actor_membership=g.membership,
     )
-    return {"message": "Student subject assignments updated", **result}, 200
+    return {"message": Messages.STUDENT_SUBJECT_ASSIGNMENTS_UPDATED, **result}, 200
 
 
 @student_membership_bp.route(
@@ -72,4 +74,4 @@ def remove_student_subject(membership_id, subject_id):
         subject_id=subject_id,
         actor_membership=g.membership,
     )
-    return {"message": "Subject removed from student", **result}, 200
+    return {"message": Messages.SUBJECT_REMOVED_FROM_STUDENT, **result}, 200

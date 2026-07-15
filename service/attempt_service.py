@@ -1,7 +1,10 @@
 """
 Exam attempt runtime — start, resume, autosave, submit, timeout, grading.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import json
 import logging
@@ -185,7 +188,7 @@ class AttemptService:
                     actor_membership.id,
                 )
                 return {
-                    "message": "Attempt resumed",
+                    "message": Messages.ATTEMPT_RESUMED,
                     "attempt": self.serialize_attempt(existing, include_answers=True),
                     "resumed": True,
                 }
@@ -197,7 +200,7 @@ class AttemptService:
             max_attempts = self._max_attempts(test)
             if completed_count >= max_attempts:
                 raise ConflictError(
-                    f"You have reached the maximum allowed attempts ({max_attempts})"
+                    Messages.YOU_HAVE_REACHED_THE_MAXIMUM_ALLOWED_ATTEMPTS_MAX_ATTEMPTS.format(max_attempts=max_attempts)
                 )
 
         self._ensure_test_takeable_for_first_attempt(test)
@@ -245,7 +248,7 @@ class AttemptService:
             actor_membership.id,
         )
         return {
-            "message": "Attempt started",
+            "message": Messages.ATTEMPT_STARTED,
             "attempt": self.serialize_attempt(attempt, include_answers=True),
             "resumed": False,
         }
@@ -258,10 +261,10 @@ class AttemptService:
         )
         attempt = self.attempts.find_active_for_student(test.id, actor_membership.id)
         if not attempt:
-            raise NotFoundError("No in-progress attempt for this test")
+            raise NotFoundError(Messages.NO_IN_PROGRESS_ATTEMPT_FOR_THIS_TEST)
         self._check_and_apply_timeout(attempt, test)
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise NotFoundError("No in-progress attempt for this test")
+            raise NotFoundError(Messages.NO_IN_PROGRESS_ATTEMPT_FOR_THIS_TEST)
         return {
             "attempt": self.serialize_attempt(attempt, include_answers=True),
         }
@@ -323,7 +326,7 @@ class AttemptService:
             attempt.id,
         )
         return {
-            "message": "Answers saved",
+            "message": Messages.ANSWERS_SAVED,
             "answers": [self._serialize_answer(a) for a in saved],
             "count": len(saved),
         }
@@ -349,14 +352,14 @@ class AttemptService:
         attempt.last_activity_at = datetime.now(timezone.utc)
         db.session.commit()
         if not saved:
-            raise NotFoundError("Test question not found in this exam")
+            raise NotFoundError(Messages.TEST_QUESTION_NOT_FOUND_IN_THIS_EXAM)
         logger.info(
             "Updated answer for attempt id=%s test_question_id=%s",
             attempt.id,
             test_question_id,
         )
         return {
-            "message": "Answer updated",
+            "message": Messages.ANSWER_UPDATED,
             "answer": self._serialize_answer(saved[0]),
         }
 
@@ -376,19 +379,19 @@ class AttemptService:
             self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
         else:
             if attempt.student_membership_id != actor_membership.id:
-                raise ForbiddenError("You can only submit your own attempt")
+                raise ForbiddenError(Messages.YOU_CAN_ONLY_SUBMIT_YOUR_OWN_ATTEMPT)
             self._resolve_student_test_access(test_id, workspace_id, actor_membership)
 
         self._check_and_apply_timeout(attempt, test)
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise ConflictError("Attempt is not in progress")
+            raise ConflictError(Messages.ATTEMPT_IS_NOT_IN_PROGRESS)
         self._validate_submission_answer_rules(attempt, test)
 
         result = self._finalize_attempt(
             attempt, test, submission_source=submission_source
         )
         return {
-            "message": "Attempt submitted",
+            "message": Messages.ATTEMPT_SUBMITTED,
             **result,
         }
 
@@ -419,9 +422,7 @@ class AttemptService:
         self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
 
         if attempt.status != TestAttemptStatus.SUBMITTED.value:
-            raise ValidationError(
-                "Manual grading is only available while the attempt is awaiting review"
-            )
+            raise ValidationError(Messages.MANUAL_GRADING_IS_ONLY_AVAILABLE_WHILE_THE_ATTEMPT_IS_AWAITING_REVIEW)
 
         message, became_graded = self.grading.grade_pending_answers(
             attempt,
@@ -473,11 +474,9 @@ class AttemptService:
                 actor_subject_link=actor_link,
                 is_test_creator=is_creator,
             ):
-                raise ForbiddenError(
-                    "Insufficient permissions to view this attempt's grading result"
-                )
+                raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_ATTEMPTS_GRADING_RESULT)
         if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
-            raise ValidationError("Grading results are available only after submission")
+            raise ValidationError(Messages.GRADING_RESULTS_ARE_AVAILABLE_ONLY_AFTER_SUBMISSION)
         return self.grading.build_grading_result(attempt, test)
 
     def timeout_attempt(
@@ -532,7 +531,7 @@ class AttemptService:
         submission_source: str,
     ) -> dict:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise ConflictError("Attempt is already finalized")
+            raise ConflictError(Messages.ATTEMPT_IS_ALREADY_FINALIZED)
 
         now = datetime.now(timezone.utc)
         attempt.status = TestAttemptStatus.SUBMITTED.value
@@ -584,9 +583,7 @@ class AttemptService:
             test_question_id = int(item["test_question_id"])
             test_question = question_map.get(test_question_id)
             if not test_question:
-                raise NotFoundError(
-                    f"Test question {test_question_id} not found in this exam"
-                )
+                raise NotFoundError(Messages.TEST_QUESTION_TEST_QUESTION_ID_NOT_FOUND_IN_THIS_EXAM.format(test_question_id=test_question_id))
 
             row = self.answers.find_by_attempt_and_test_question(
                 attempt.id, test_question_id
@@ -621,16 +618,14 @@ class AttemptService:
             elif isinstance(indices, list):
                 answer.set_selected_indices(indices)
             else:
-                raise ValidationError("selected_choice_indices must be an array of integers")
+                raise ValidationError(Messages.SELECTED_CHOICE_INDICES_MUST_BE_AN_ARRAY_OF_INTEGERS)
 
         if type_code in _OBJECTIVE_TYPES and not answer.get_selected_indices():
             if answer.answer_text:
-                raise ValidationError(
-                    f"{type_code} questions require selected_choice_indices"
-                )
+                raise ValidationError(Messages.TYPE_CODE_QUESTIONS_REQUIRE_SELECTED_CHOICE_INDICES.format(type_code=type_code))
 
         if type_code == "ESSAY" and answer.get_selected_indices():
-            raise ValidationError("ESSAY questions cannot include selected_choice_indices")
+            raise ValidationError(Messages.ESSAY_QUESTIONS_CANNOT_INCLUDE_SELECTED_CHOICE_INDICES)
 
     def _check_and_apply_timeout(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
@@ -685,7 +680,7 @@ class AttemptService:
         self, test: Test, started_at: datetime
     ) -> datetime:
         if not test.duration_minutes:
-            raise ValidationError("Test duration is not configured")
+            raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
         if self._is_flexible(test):
             ends_at = ensure_local_aware(started_at) + timedelta(
                 minutes=int(test.duration_minutes)
@@ -698,17 +693,15 @@ class AttemptService:
             return ends_at
         global_end = self._scheduled_global_end_time(test)
         if not global_end:
-            raise ValidationError(
-                "Test starts_at and duration_minutes are required for scheduled exams"
-            )
+            raise ValidationError(Messages.TEST_STARTS_AT_AND_DURATION_MINUTES_ARE_REQUIRED_FOR_SCHEDULED_EXAMS)
         logger.info("[SCHEDULED] Global end %s", global_end.isoformat())
         return global_end
 
     def _ensure_test_takeable_for_first_attempt(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value:
-            raise ValidationError("Test is not published")
+            raise ValidationError(Messages.TEST_IS_NOT_PUBLISHED)
         if not test.duration_minutes:
-            raise ValidationError("Test duration is not configured")
+            raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
 
         if self._is_flexible(test):
             logger.info(
@@ -719,13 +712,13 @@ class AttemptService:
 
         now = local_timezone_now()
         if not test.starts_at:
-            raise ValidationError("Test start time is not configured")
+            raise ValidationError(Messages.TEST_START_TIME_IS_NOT_CONFIGURED)
         starts_at = ensure_local_aware(test.starts_at)
         if now < starts_at:
-            raise ValidationError("Test has not started yet")
+            raise ValidationError(Messages.TEST_HAS_NOT_STARTED_YET)
         global_end = self._scheduled_global_end_time(test)
         if global_end and now >= global_end:
-            raise ForbiddenError("Exam has already ended")
+            raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
         if test.entry_window_minutes:
             window_end = starts_at + timedelta(
                 minutes=int(test.entry_window_minutes)
@@ -735,7 +728,7 @@ class AttemptService:
                     "event=entry_window_rejected test_id=%s reason=window_closed result=forbidden",
                     test.id,
                 )
-                raise ForbiddenError("Entry window has closed.")
+                raise ForbiddenError(Messages.ENTRY_WINDOW_HAS_CLOSED)
         logger.info(
             "[SCHEDULED] Global end %s",
             global_end.isoformat() if global_end else "n/a",
@@ -743,12 +736,12 @@ class AttemptService:
 
     def _ensure_resume_allowed(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise ConflictError("Attempt is not in progress")
+            raise ConflictError(Messages.ATTEMPT_IS_NOT_IN_PROGRESS)
         if test.status != TestStatus.PUBLISHED.value:
-            raise ForbiddenError("Exam is no longer available for resume")
+            raise ForbiddenError(Messages.EXAM_IS_NO_LONGER_AVAILABLE_FOR_RESUME)
         deadline = self._attempt_end_deadline(attempt, test)
         if deadline and local_timezone_now() >= deadline:
-            raise ForbiddenError("Exam has already ended")
+            raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
 
     def serialize_attempt(
         self,
@@ -1052,8 +1045,9 @@ class AttemptService:
 
         if missing_question_ids:
             raise ValidationError(
-                "All questions must be answered before submission. "
-                f"Missing answers for question IDs: {missing_question_ids}"
+                Messages.ALL_QUESTIONS_MUST_BE_ANSWERED_BEFORE_SUBMISSION_MISSING_ANSWERS_FOR_QUESTION_IDS.format(
+                    missing_question_ids=missing_question_ids
+                )
             )
 
     def _resolve_in_progress_attempt(
@@ -1066,11 +1060,11 @@ class AttemptService:
         attempt = self._get_attempt_or_404(attempt_id, test_id)
         test = self._get_test_in_workspace(test_id, workspace_id)
         if attempt.student_membership_id != actor_membership.id:
-            raise ForbiddenError("You can only modify your own attempt")
+            raise ForbiddenError(Messages.YOU_CAN_ONLY_MODIFY_YOUR_OWN_ATTEMPT)
         self._resolve_student_test_access(test_id, workspace_id, actor_membership)
         self._check_and_apply_timeout(attempt, test)
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise ConflictError("Attempt is not in progress")
+            raise ConflictError(Messages.ATTEMPT_IS_NOT_IN_PROGRESS)
         return attempt, test
 
     def _resolve_student_test_access(
@@ -1082,16 +1076,16 @@ class AttemptService:
             actor_membership.id, test.subject_id
         )
         if not can_take_published_test(workspace, actor_membership, actor_link):
-            raise ForbiddenError("You are not enrolled in this test's subject")
+            raise ForbiddenError(Messages.YOU_ARE_NOT_ENROLLED_IN_THIS_TESTS_SUBJECT)
         if actor_membership.role == MembershipRole.STUDENT.value:
             if not verify_subject_student_access(actor_link):
-                raise ForbiddenError("Only students enrolled in the subject can take tests")
+                raise ForbiddenError(Messages.ONLY_STUDENTS_ENROLLED_IN_THE_SUBJECT_CAN_TAKE_TESTS)
             assignment = self.test_assignments.find(
                 test_id=test.id,
                 student_membership_id=actor_membership.id,
             )
             if not assignment:
-                raise ForbiddenError("You are not assigned to this exam")
+                raise ForbiddenError(Messages.YOU_ARE_NOT_ASSIGNED_TO_THIS_EXAM)
         return test, actor_link
 
     def _ensure_attempt_access(
@@ -1107,7 +1101,7 @@ class AttemptService:
             self._resolve_student_test_access(test.id, workspace_id, actor_membership)
             return
         if student_view:
-            raise ForbiddenError("Cannot view another student's attempt in student mode")
+            raise ForbiddenError(Messages.CANNOT_VIEW_ANOTHER_STUDENTS_ATTEMPT_IN_STUDENT_MODE)
         self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
 
     def _allow_student_review_after_grading(
@@ -1135,7 +1129,7 @@ class AttemptService:
             actor_subject_link=actor_link,
             is_test_creator=is_creator,
         ):
-            raise ForbiddenError("Insufficient permissions to manage attempts")
+            raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_MANAGE_ATTEMPTS)
 
     def _student_subject_ids(
         self, membership_id: int, workspace_id: int
@@ -1165,19 +1159,19 @@ class AttemptService:
     def _get_workspace(self, workspace_id: int):
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
         return workspace
 
     def _get_test_in_workspace(self, test_id: int, workspace_id: int) -> Test:
         test = self.tests.get_by_id_in_workspace(test_id, workspace_id)
         if not test:
-            raise NotFoundError("Test not found")
+            raise NotFoundError(Messages.TEST_NOT_FOUND)
         return test
 
     def _get_attempt_or_404(self, attempt_id: int, test_id: int) -> TestAttempt:
         attempt = self.attempts.get_for_test(attempt_id, test_id)
         if not attempt:
-            raise NotFoundError("Attempt not found")
+            raise NotFoundError(Messages.ATTEMPT_NOT_FOUND)
         return attempt
 
     def _maybe_start_proctoring(

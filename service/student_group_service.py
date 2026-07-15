@@ -4,6 +4,8 @@ Student groups — manual student cohorts scoped to a subject.
 Groups belong to one subject. Only subject teachers (or workspace admins) may manage them.
 Membership is static: students must already be enrolled in the subject.
 """
+
+from utils.messages import Messages
 from models import StudentGroup, StudentGroupMember
 from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import (
@@ -41,12 +43,10 @@ class StudentGroupService:
         )
         name = name.strip()
         if not name:
-            raise ValidationError("Group name is required")
+            raise ValidationError(Messages.GROUP_NAME_IS_REQUIRED)
 
         if self.groups.find_by_subject_and_name(subject.id, name):
-            raise ConflictError(
-                "A group with this name already exists in the subject"
-            )
+            raise ConflictError(Messages.A_GROUP_WITH_THIS_NAME_ALREADY_EXISTS_IN_THE_SUBJECT)
 
         group = StudentGroup(
             workspace_id=workspace_id,
@@ -103,12 +103,10 @@ class StudentGroupService:
         if "name" in data and data["name"] is not None:
             name = data["name"].strip()
             if not name:
-                raise ValidationError("Group name is required")
+                raise ValidationError(Messages.GROUP_NAME_IS_REQUIRED)
             existing = self.groups.find_by_subject_and_name(group.subject_id, name)
             if existing and existing.id != group.id:
-                raise ConflictError(
-                    "A group with this name already exists in the subject"
-                )
+                raise ConflictError(Messages.A_GROUP_WITH_THIS_NAME_ALREADY_EXISTS_IN_THE_SUBJECT)
             group.name = name
 
         if "description" in data:
@@ -202,7 +200,7 @@ class StudentGroupService:
             student_membership_id=student_id,
         )
         if not member:
-            raise NotFoundError("Student is not a member of this group")
+            raise NotFoundError(Messages.STUDENT_IS_NOT_A_MEMBER_OF_THIS_GROUP)
 
         db.session.delete(member)
         db.session.commit()
@@ -212,11 +210,11 @@ class StudentGroupService:
     ):
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         self._ensure_can_manage_group(
             workspace_id=workspace_id,
@@ -236,20 +234,18 @@ class StudentGroupService:
     ) -> None:
         workspace = workspace or self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         actor_link = self.subject_memberships.find_active_by_role(
             actor_membership.id, subject_id, SubjectRole.TEACHER.value
         )
         if not can_manage_student_groups(workspace, actor_membership, actor_link):
-            raise ForbiddenError(
-                "Only subject teachers or workspace admins can manage student groups"
-            )
+            raise ForbiddenError(Messages.ONLY_SUBJECT_TEACHERS_OR_WORKSPACE_ADMINS_CAN_MANAGE_STUDENT_GROUPS)
 
     def _get_group_or_404(self, group_id: int, workspace_id: int) -> StudentGroup:
         group = self.groups.get_in_workspace(group_id, workspace_id)
         if not group:
-            raise NotFoundError("Group not found")
+            raise NotFoundError(Messages.GROUP_NOT_FOUND)
         return group
 
     def _validate_subject_student(
@@ -261,25 +257,17 @@ class StudentGroupService:
     ) -> None:
         membership = self.memberships.get_by_id(student_membership_id)
         if not membership or membership.workspace_id != workspace_id:
-            raise ValidationError(
-                f"Student {student_membership_id} is not a member of this workspace"
-            )
+            raise ValidationError(Messages.STUDENT_STUDENT_MEMBERSHIP_ID_IS_NOT_A_MEMBER_OF_THIS_WORKSPACE.format(student_membership_id=student_membership_id))
         if membership.role != MembershipRole.STUDENT.value:
-            raise ValidationError(
-                f"Membership {student_membership_id} is not a student"
-            )
+            raise ValidationError(Messages.MEMBERSHIP_STUDENT_MEMBERSHIP_ID_IS_NOT_A_STUDENT.format(student_membership_id=student_membership_id))
         if membership.status != MembershipStatus.ACTIVE.value:
-            raise ValidationError(
-                f"Student {student_membership_id} is not an active workspace member"
-            )
+            raise ValidationError(Messages.STUDENT_STUDENT_MEMBERSHIP_ID_IS_NOT_AN_ACTIVE_WORKSPACE_MEMBER.format(student_membership_id=student_membership_id))
 
         enrollment = self.subject_memberships.find_active_by_role(
             student_membership_id, subject_id, SubjectRole.STUDENT.value
         )
         if not enrollment:
-            raise ValidationError(
-                f"Student {student_membership_id} is not enrolled in this subject"
-            )
+            raise ValidationError(Messages.STUDENT_STUDENT_MEMBERSHIP_ID_IS_NOT_ENROLLED_IN_THIS_SUBJECT.format(student_membership_id=student_membership_id))
 
     def _serialize_group_list_item(self, group: StudentGroup, student_count: int) -> dict:
         return {

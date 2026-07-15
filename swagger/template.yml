@@ -38,6 +38,8 @@ tags:
     description: Student — available exams, start/resume attempts, autosave answers, submit, and exam-time proctoring
   - name: Proctoring
     description: Teacher/proctor — monitor sessions, review violations, and audit logs
+  - name: Reports
+    description: User support reports submitted to platform administration
   - name: Grading
     description: Teacher — manual grading and results; students — graded results dashboard and per-attempt grading outcome
   - name: Invites
@@ -3354,6 +3356,106 @@ paths:
             type: object
             properties:
               success: { type: boolean, example: true }
+  /reports:
+    post:
+      tags: [Reports]
+      summary: Create a support report
+      description: |
+        Authenticated users can submit a report/support request to platform administration.
+        The backend derives `created_by_user_id` from the JWT and optionally derives
+        `workspace_id` from the `X-Workspace-Id` header. The request body must not include
+        `user_id`, `workspace_id`, or `status`.
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: header
+          name: X-Workspace-Id
+          type: integer
+          required: false
+          description: Optional active workspace context for the report
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [title, description, category]
+            properties:
+              title:
+                type: string
+                example: "Cannot access my exam"
+              description:
+                type: string
+                example: "The exam page keeps loading and never starts."
+              category:
+                type: string
+                enum: [TECHNICAL, ACCOUNT, CONTENT, CHEATING, OTHER]
+                example: TECHNICAL
+      responses:
+        201:
+          description: Report created
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Report created successfully" }
+              report_id: { type: integer, example: 1 }
+        401:
+          description: Missing or invalid token
+        403:
+          description: User account is not active or workspace membership is invalid
+        422:
+          description: Validation error
+    get:
+      tags: [Reports]
+      summary: List my reports
+      description: Returns only reports created by the authenticated user.
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: User reports
+          schema:
+            type: object
+            properties:
+              reports:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    report_id: { type: integer, example: 1 }
+                    title: { type: string, example: "Cannot access my exam" }
+                    category: { type: string, example: TECHNICAL }
+                    status: { type: string, example: UNREAD }
+                    created_at: { type: string, format: date-time }
+        401:
+          description: Missing or invalid token
+  /reports/{report_id}:
+    get:
+      tags: [Reports]
+      summary: Get my report details
+      description: Returns details for a report created by the authenticated user.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: report_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Report details
+          schema:
+            type: object
+            properties:
+              report_id: { type: integer, example: 1 }
+              title: { type: string, example: "Cannot access my exam" }
+              description: { type: string, example: "The exam page keeps loading and never starts." }
+              category: { type: string, example: TECHNICAL }
+              status: { type: string, example: UNREAD }
+              created_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+        401:
+          description: Missing or invalid token
+        403:
+          description: Report does not belong to user
+        404:
+          description: Report not found
   /api/super-admin/dashboard:
     get:
       tags: [Super Admin]
@@ -3428,6 +3530,138 @@ paths:
           description: Super admin access required
         401:
           description: Missing or invalid token
+  /api/super-admin/reports:
+    get:
+      tags: [Super Admin Management]
+      summary: List all support reports
+      description: |
+        Platform-wide support report listing for Super Admins.
+        Supports pagination and optional filtering by status and category.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+        - name: status
+          in: query
+          type: string
+          enum: [UNREAD, IN_REVIEW, REVIEWED, REJECTED]
+        - name: category
+          in: query
+          type: string
+          enum: [TECHNICAL, ACCOUNT, CONTENT, CHEATING, OTHER]
+      responses:
+        200:
+          description: Paginated report list
+          schema:
+            type: object
+            properties:
+              reports:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    report_id: { type: integer, example: 1 }
+                    title: { type: string, example: "Cannot access my exam" }
+                    category: { type: string, example: TECHNICAL }
+                    status: { type: string, example: UNREAD }
+                    created_at: { type: string, format: date-time }
+                    reporter:
+                      type: object
+                      properties:
+                        user_id: { type: integer, example: 10 }
+                        full_name: { type: string, example: "Ahmed Ali" }
+                        email: { type: string, example: "student@example.com" }
+              total: { type: integer, example: 50 }
+              page: { type: integer, example: 1 }
+              per_page: { type: integer, example: 20 }
+              pages: { type: integer, example: 3 }
+        403:
+          description: Super admin access required
+  /api/super-admin/reports/{report_id}:
+    get:
+      tags: [Super Admin Management]
+      summary: Get support report details
+      description: |
+        Returns full report details for Super Admins. If the report is UNREAD,
+        opening it changes its status to IN_REVIEW.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: report_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Report details
+          schema:
+            type: object
+            properties:
+              report_id: { type: integer, example: 1 }
+              title: { type: string, example: "Cannot access my exam" }
+              description: { type: string, example: "The exam page keeps loading and never starts." }
+              category: { type: string, example: TECHNICAL }
+              status: { type: string, example: IN_REVIEW }
+              created_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+              reporter:
+                type: object
+                properties:
+                  user_id: { type: integer, example: 10 }
+                  full_name: { type: string, example: "Ahmed Ali" }
+                  email: { type: string, example: "student@example.com" }
+                  role: { type: string, example: STUDENT }
+                  workspace_name: { type: string, example: "ABC Academy" }
+        403:
+          description: Super admin access required
+        404:
+          description: Report not found
+    patch:
+      tags: [Super Admin Management]
+      summary: Update support report status
+      description: |
+        Updates only the report status. Title, description, reporter, and workspace
+        are immutable through this endpoint.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: report_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [UNREAD, IN_REVIEW, REVIEWED, REJECTED]
+                example: IN_REVIEW
+      responses:
+        200:
+          description: Report status updated
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Report status updated successfully" }
+              report:
+                type: object
+                properties:
+                  report_id: { type: integer, example: 1 }
+                  status: { type: string, example: IN_REVIEW }
+        403:
+          description: Super admin access required
+        404:
+          description: Report not found
+        422:
+          description: Invalid report status
   /api/super-admin/organizations/{organization_id}/suspend:
     patch:
       tags: [Super Admin Management]

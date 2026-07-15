@@ -1,6 +1,8 @@
 """
 Join codes: permanent workspace-level codes for STUDENT onboarding only.
 """
+
+from utils.messages import Messages
 from models import Membership
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, NotFoundError
@@ -16,11 +18,11 @@ class JoinCodeService:
     def join_workspace_with_code(self, *, user_id: int, join_code: str) -> Membership:
         workspace = self.workspaces.find_by_join_code(join_code)
         if not workspace:
-            raise NotFoundError("Invalid join code")
+            raise NotFoundError(Messages.INVALID_JOIN_CODE)
 
         existing = self.memberships.find_by_user_and_workspace(user_id, workspace.id)
         if existing:
-            raise ConflictError("Already a member of this workspace")
+            raise ConflictError(Messages.ALREADY_A_MEMBER_OF_THIS_WORKSPACE)
 
         membership = Membership(
             user_id=user_id,

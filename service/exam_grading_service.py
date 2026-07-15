@@ -4,7 +4,10 @@ Deterministic, state-driven exam grading workflow.
 Question type is consulted only during initial auto-grading on submit.
 After submission the workflow relies on AnswerGradingStatus and TestAttemptStatus.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import json
 import logging
@@ -85,11 +88,11 @@ class ExamGradingService:
         Returns (message, became_graded_first_time).
         """
         if not grades:
-            raise ValidationError("At least one answer grade is required")
+            raise ValidationError(Messages.AT_LEAST_ONE_ANSWER_GRADE_IS_REQUIRED)
 
         pending_by_question = self._pending_answers_by_question(attempt)
         if not pending_by_question:
-            raise ValidationError("No answers are pending manual grading")
+            raise ValidationError(Messages.NO_ANSWERS_ARE_PENDING_MANUAL_GRADING)
 
         self._log_audit(
             attempt.id,
@@ -109,23 +112,16 @@ class ExamGradingService:
             test_question_id = int(item["test_question_id"])
             answer = pending_by_question.get(test_question_id)
             if not answer:
-                raise ValidationError(
-                    f"test_question_id {test_question_id} is not pending manual grading"
-                )
+                raise ValidationError(Messages.TEST_QUESTION_ID_TEST_QUESTION_ID_IS_NOT_PENDING_MANUAL_GRADING.format(test_question_id=test_question_id))
 
             test_question = question_rows.get(test_question_id)
             if not test_question:
-                raise ValidationError(
-                    f"test_question_id {test_question_id} is not part of this exam"
-                )
+                raise ValidationError(Messages.TEST_QUESTION_ID_TEST_QUESTION_ID_IS_NOT_PART_OF_THIS_EXAM.format(test_question_id=test_question_id))
 
             max_points = Decimal(str(test_question.points or 0))
             earned = Decimal(str(item["earned_score"]))
             if earned > max_points:
-                raise ValidationError(
-                    f"earned_score for question {test_question_id} cannot exceed "
-                    f"{max_points}"
-                )
+                raise ValidationError(Messages.EARNED_SCORE_FOR_QUESTION_TEST_QUESTION_ID_CANNOT_EXCEED_MAX_POINTS.format(test_question_id=test_question_id, max_points=max_points))
 
             answer.earned_score = earned
             answer.is_correct = None
@@ -274,13 +270,13 @@ class ExamGradingService:
         if attempt.status == TestAttemptStatus.SUBMITTED.value:
             return {
                 "grading_completed": False,
-                "message": "This attempt is waiting for manual grading.",
+                "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_MANUAL_GRADING,
             }
 
         if attempt.status != TestAttemptStatus.GRADED.value:
             return {
                 "grading_completed": False,
-                "message": "Grading is not available for this attempt status.",
+                "message": Messages.GRADING_IS_NOT_AVAILABLE_FOR_THIS_ATTEMPT_STATUS,
                 "status": attempt.status,
             }
 

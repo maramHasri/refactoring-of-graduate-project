@@ -1,6 +1,8 @@
 """
 Subject lifecycle and subject_memberships (teacher/student assignments).
 """
+
+from utils.messages import Messages
 from datetime import datetime, timezone
 
 from models import Subject, SubjectMembership
@@ -39,13 +41,13 @@ class SubjectService:
     ) -> Subject:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can create subjects")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_CREATE_SUBJECTS)
 
         name = name.strip()
         if self.subjects.find_by_workspace_and_name(workspace_id, name):
-            raise ConflictError("A subject with this name already exists in the workspace")
+            raise ConflictError(Messages.A_SUBJECT_WITH_THIS_NAME_ALREADY_EXISTS_IN_THE_WORKSPACE)
 
         subject = Subject(
             name=name,
@@ -60,7 +62,7 @@ class SubjectService:
     def list_workspace_subjects(self, workspace_id: int, actor_membership) -> list[dict]:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         if can_manage_subjects(workspace, actor_membership):
             rows = self.subjects.list_active_by_workspace(workspace_id)
@@ -89,7 +91,7 @@ class SubjectService:
                 self._serialize_subject(s, topics_map=topics_map) for s in links
             ]
 
-        raise ForbiddenError("Insufficient permissions to list subjects")
+        raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_LIST_SUBJECTS)
 
     def get_subject(
         self, subject_id: int, workspace_id: int, actor_membership
@@ -109,13 +111,13 @@ class SubjectService:
         workspace = self.workspaces.get_by_id(workspace_id)
         subject = self._get_subject_or_404(subject_id, workspace_id)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can update subjects")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_UPDATE_SUBJECTS)
 
         if "name" in data and data["name"]:
             name = data["name"].strip()
             existing = self.subjects.find_by_workspace_and_name(workspace_id, name)
             if existing and existing.id != subject.id:
-                raise ConflictError("A subject with this name already exists")
+                raise ConflictError(Messages.A_SUBJECT_WITH_THIS_NAME_ALREADY_EXISTS)
             subject.name = name
         if "description" in data:
             subject.description = data["description"]
@@ -131,7 +133,7 @@ class SubjectService:
         workspace = self.workspaces.get_by_id(workspace_id)
         subject = self._get_subject_or_404(subject_id, workspace_id)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can archive subjects")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_ARCHIVE_SUBJECTS)
 
         now = datetime.now(timezone.utc)
         subject.is_archived = True
@@ -150,23 +152,21 @@ class SubjectService:
         workspace = self.workspaces.get_by_id(workspace_id)
         subject = self._get_subject_or_404(subject_id, workspace_id)
         if not can_assign_teachers_to_subject(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can assign teachers")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_ASSIGN_TEACHERS)
 
         teacher = self.memberships.get_by_id(teacher_membership_id)
         if not teacher or teacher.workspace_id != workspace_id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if teacher.status != "ACTIVE":
-            raise ValidationError("Membership is not active")
+            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
         if teacher.role not in (
             MembershipRole.TEACHER.value,
             MembershipRole.ADMIN.value,
         ):
-            raise ValidationError(
-                "Only workspace teachers or admins can be assigned as subject teachers"
-            )
+            raise ValidationError(Messages.ONLY_WORKSPACE_TEACHERS_OR_ADMINS_CAN_BE_ASSIGNED_AS_SUBJECT_TEACHERS)
 
         if self.subject_memberships.find_active(teacher_membership_id, subject_id):
-            raise ConflictError("Teacher is already assigned to this subject")
+            raise ConflictError(Messages.TEACHER_IS_ALREADY_ASSIGNED_TO_THIS_SUBJECT)
 
         link = SubjectMembership(
             subject_id=subject_id,
@@ -190,13 +190,13 @@ class SubjectService:
         workspace = self.workspaces.get_by_id(workspace_id)
         self._get_subject_or_404(subject_id, workspace_id)
         if not can_assign_teachers_to_subject(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can remove teachers")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_REMOVE_TEACHERS)
 
         link = self.subject_memberships.find_active_by_role(
             teacher_membership_id, subject_id, SubjectRole.TEACHER.value
         )
         if not link:
-            raise NotFoundError("Teacher assignment not found")
+            raise NotFoundError(Messages.TEACHER_ASSIGNMENT_NOT_FOUND)
         self.subject_memberships.soft_remove(link)
         db.session.commit()
 
@@ -222,20 +222,18 @@ class SubjectService:
             actor_membership.id, subject_id, SubjectRole.TEACHER.value
         )
         if not can_enroll_students_in_subject(workspace, actor_membership, actor_link):
-            raise ForbiddenError(
-                "Only admin, owner, or assigned subject teachers can enroll students"
-            )
+            raise ForbiddenError(Messages.ONLY_ADMIN_OWNER_OR_ASSIGNED_SUBJECT_TEACHERS_CAN_ENROLL_STUDENTS)
 
         student = self.memberships.get_by_id(student_membership_id)
         if not student or student.workspace_id != workspace_id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if student.role != MembershipRole.STUDENT.value:
-            raise ValidationError("Only students can be enrolled in a subject")
+            raise ValidationError(Messages.ONLY_STUDENTS_CAN_BE_ENROLLED_IN_A_SUBJECT)
         if student.status != "ACTIVE":
-            raise ValidationError("Membership is not active")
+            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
 
         if self.subject_memberships.find_active(student_membership_id, subject_id):
-            raise ConflictError("Student is already enrolled in this subject")
+            raise ConflictError(Messages.STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT)
 
         link = SubjectMembership(
             subject_id=subject_id,
@@ -262,13 +260,13 @@ class SubjectService:
             actor_membership.id, subject_id, SubjectRole.TEACHER.value
         )
         if not can_enroll_students_in_subject(workspace, actor_membership, actor_link):
-            raise ForbiddenError("Insufficient permissions to remove student enrollment")
+            raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_REMOVE_STUDENT_ENROLLMENT)
 
         link = self.subject_memberships.find_active_by_role(
             student_membership_id, subject_id, SubjectRole.STUDENT.value
         )
         if not link:
-            raise NotFoundError("Student enrollment not found")
+            raise NotFoundError(Messages.STUDENT_ENROLLMENT_NOT_FOUND)
         self.subject_memberships.soft_remove(link)
         db.session.commit()
 
@@ -286,9 +284,7 @@ class SubjectService:
         elif verify_subject_teacher_access(actor_link):
             pass
         else:
-            raise ForbiddenError(
-                "Teachers may only list students for subjects they teach"
-            )
+            raise ForbiddenError(Messages.TEACHERS_MAY_ONLY_LIST_STUDENTS_FOR_SUBJECTS_THEY_TEACH)
 
         links = self.subject_memberships.list_students_for_subject(subject_id)
         return [self._serialize_assignment(link) for link in links]
@@ -303,7 +299,7 @@ class SubjectService:
     ) -> dict:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can assign subjects to students")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_ASSIGN_SUBJECTS_TO_STUDENTS)
 
         self._validate_student_membership(workspace_id, student_membership_id)
         unique_subject_ids = self._validate_subject_ids(workspace_id, subject_ids)
@@ -346,7 +342,7 @@ class SubjectService:
     ) -> dict:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can update student subject assignments")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_UPDATE_STUDENT_SUBJECT_ASSIGNMENTS)
 
         self._validate_student_membership(workspace_id, student_membership_id)
         desired_subject_ids = set(self._validate_subject_ids(workspace_id, subject_ids))
@@ -382,7 +378,7 @@ class SubjectService:
     ) -> dict:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can remove student subject assignments")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_REMOVE_STUDENT_SUBJECT_ASSIGNMENTS)
 
         self._validate_student_membership(workspace_id, student_membership_id)
         self._get_subject_or_404(subject_id, workspace_id)
@@ -391,7 +387,7 @@ class SubjectService:
             student_membership_id, subject_id, SubjectRole.STUDENT.value
         )
         if not link:
-            raise NotFoundError("Student subject assignment not found")
+            raise NotFoundError(Messages.STUDENT_SUBJECT_ASSIGNMENT_NOT_FOUND)
 
         self.subject_memberships.soft_remove(link)
         db.session.commit()
@@ -407,7 +403,7 @@ class SubjectService:
     def _get_subject_or_404(self, subject_id: int, workspace_id: int) -> Subject:
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
         return subject
 
     def _ensure_can_view_subject(self, subject: Subject, actor_membership) -> None:
@@ -417,7 +413,7 @@ class SubjectService:
         link = self.subject_memberships.find_active(actor_membership.id, subject.id)
         if link:
             return
-        raise ForbiddenError("You do not have access to this subject")
+        raise ForbiddenError(Messages.YOU_DO_NOT_HAVE_ACCESS_TO_THIS_SUBJECT)
 
     def _subjects_for_membership(
         self, membership_id: int, workspace_id: int
@@ -491,18 +487,18 @@ class SubjectService:
     ):
         membership = self.memberships.get_by_id(membership_id)
         if not membership or membership.workspace_id != workspace_id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if membership.role != MembershipRole.STUDENT.value:
-            raise ValidationError("Membership role must be STUDENT")
+            raise ValidationError(Messages.MEMBERSHIP_ROLE_MUST_BE_STUDENT)
         if membership.status != MembershipStatus.ACTIVE.value:
-            raise ValidationError("Membership is not active")
+            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
         return membership
 
     def _validate_subject_ids(
         self, workspace_id: int, subject_ids: list[int]
     ) -> list[int]:
         if not subject_ids:
-            raise ValidationError("subject_ids is required")
+            raise ValidationError(Messages.SUBJECT_IDS_IS_REQUIRED)
         unique_ids: list[int] = []
         seen: set[int] = set()
         for subject_id in subject_ids:
@@ -531,9 +527,7 @@ class SubjectService:
         )
         if row:
             if row.subject_role != SubjectRole.STUDENT.value:
-                raise ConflictError(
-                    "Membership already has a different subject role on this subject"
-                )
+                raise ConflictError(Messages.MEMBERSHIP_ALREADY_HAS_A_DIFFERENT_SUBJECT_ROLE_ON_THIS_SUBJECT)
             self.subject_memberships.reactivate(
                 row,
                 assigned_by_membership_id=actor_membership_id,
@@ -561,7 +555,7 @@ class SubjectService:
             return
         if actor_membership.id == student_membership_id:
             return
-        raise ForbiddenError("Insufficient permissions to view student subject assignments")
+        raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_VIEW_STUDENT_SUBJECT_ASSIGNMENTS)
 
     def _serialize_student_subjects_response(
         self, workspace_id: int, student_membership_id: int

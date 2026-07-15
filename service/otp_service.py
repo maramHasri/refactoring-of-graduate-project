@@ -1,6 +1,8 @@
 """
 Email OTP issuance and verification with rate limits.
 """
+
+from utils.messages import Messages
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
@@ -59,14 +61,14 @@ class OtpService:
             email, purpose=purpose, purposes=purposes
         )
         if not row:
-            raise ValidationError("Invalid or expired OTP")
+            raise ValidationError(Messages.INVALID_OR_EXPIRED_OTP)
 
         max_attempts = current_app.config.get("OTP_MAX_VERIFY_ATTEMPTS", 5)
         if row.verify_attempts >= max_attempts:
             row.is_used = True
             row.used_at = datetime.now(timezone.utc)
             db.session.flush()
-            raise ValidationError("Maximum verification attempts exceeded. Request a new OTP.")
+            raise ValidationError(Messages.MAXIMUM_VERIFICATION_ATTEMPTS_EXCEEDED_REQUEST_A_NEW_OTP)
 
         if hash_otp(otp) != row.otp_hash:
             row.verify_attempts += 1
@@ -75,10 +77,8 @@ class OtpService:
             if remaining <= 0:
                 row.is_used = True
                 row.used_at = datetime.now(timezone.utc)
-                raise ValidationError(
-                    "Maximum verification attempts exceeded. Request a new OTP."
-                )
-            raise ValidationError(f"Invalid OTP. {remaining} attempt(s) remaining.")
+                raise ValidationError(Messages.MAXIMUM_VERIFICATION_ATTEMPTS_EXCEEDED_REQUEST_A_NEW_OTP)
+            raise ValidationError(Messages.INVALID_OTP_REMAINING_ATTEMPT_S_REMAINING.format(remaining=remaining))
 
         if consume:
             row.is_used = True
@@ -92,11 +92,9 @@ class OtpService:
             elapsed = (datetime.now(timezone.utc) - latest).total_seconds()
             if elapsed < interval:
                 wait = int(interval - elapsed)
-                raise ValidationError(
-                    f"Please wait {wait} second(s) before requesting another OTP"
-                )
+                raise ValidationError(Messages.PLEASE_WAIT_WAIT_SECOND_S_BEFORE_REQUESTING_ANOTHER_OTP.format(wait=wait))
 
         max_per_hour = current_app.config.get("OTP_MAX_RESEND_PER_HOUR", 5)
         since = datetime.now(timezone.utc) - timedelta(hours=1)
         if self.otps.count_sent_since(email, since) >= max_per_hour:
-            raise ValidationError("OTP resend limit reached. Try again later.")
+            raise ValidationError(Messages.OTP_RESEND_LIMIT_REACHED_TRY_AGAIN_LATER)

@@ -1,6 +1,8 @@
 """
 Auth API routes — thin layer over AuthService.
 """
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth
@@ -36,7 +38,7 @@ def register_owner():
     data = RegisterOwnerSchema().load(request.get_json() or {})
     result = AuthService().register_workspace_owner(**data)
     response = {
-        "message": "Registration started. Check your email for the verification code.",
+        "message": Messages.REGISTRATION_STARTED_CHECK_YOUR_EMAIL_FOR_THE_VERIFICATION_CODE,
         **result,
     }
     if result.get("dev_otp"):
@@ -72,7 +74,7 @@ def superadmin_login():
 def logout():
     """POST /auth/logout — revoke current session."""
     AuthService().logout(g.access_jti)
-    return {"message": "Logged out"}, 200
+    return {"message": Messages.LOGGED_OUT}, 200
 
 
 @auth_bp.route("/logout-all", methods=["POST"])
@@ -81,7 +83,7 @@ def logout():
 def logout_all():
     """POST /auth/logout-all — revoke all sessions for user."""
     count = AuthService().logout_all(g.current_user.id)
-    return {"message": "All sessions revoked", "count": count}, 200
+    return {"message": Messages.ALL_SESSIONS_REVOKED, "count": count}, 200
 
 
 @auth_bp.route("/refresh", methods=["POST"])
@@ -117,7 +119,7 @@ def forgot_password():
     """POST /auth/forgot-password — send a 6-digit OTP to reset password."""
     data = ForgotPasswordSchema().load(request.get_json() or {})
     result = AuthService().forgot_password(data["email"])
-    response = {"message": "If the account exists, a reset code was sent"}
+    response = {"message": Messages.IF_THE_ACCOUNT_EXISTS_A_RESET_CODE_WAS_SENT}
     if result:
         if "email_sent" in result:
             response["email_sent"] = result["email_sent"]
@@ -132,7 +134,7 @@ def reset_password():
     """POST /auth/reset-password — set new password after OTP verified via /auth/verify-otp."""
     data = ResetPasswordSchema().load(request.get_json() or {})
     AuthService().reset_password(data["email"], data["new_password"])
-    return {"message": "Password reset successful"}, 200
+    return {"message": Messages.PASSWORD_RESET_SUCCESSFUL}, 200
 
 
 @auth_bp.route("/change-password", methods=["POST"])
@@ -146,4 +148,4 @@ def change_password():
         data["current_password"],
         data["new_password"],
     )
-    return {"message": "Password changed"}, 200
+    return {"message": Messages.PASSWORD_CHANGED}, 200

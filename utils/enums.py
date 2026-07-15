@@ -261,6 +261,21 @@ class ProctoringAuditAction(str, enum.Enum):
     WARNING_GENERATED = "WARNING_GENERATED"
 
 
+class ReportStatus(str, enum.Enum):
+    UNREAD = "UNREAD"
+    IN_REVIEW = "IN_REVIEW"
+    REVIEWED = "REVIEWED"
+    REJECTED = "REJECTED"
+
+
+class ReportCategory(str, enum.Enum):
+    TECHNICAL = "TECHNICAL"
+    ACCOUNT = "ACCOUNT"
+    CONTENT = "CONTENT"
+    CHEATING = "CHEATING"
+    OTHER = "OTHER"
+
+
 class NotificationType(str, enum.Enum):
     EXAM = "EXAM"
     INVITE = "INVITE"

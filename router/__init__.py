@@ -18,6 +18,7 @@ from router.template_routes import template_bp
 from router.uploads_routes import uploads_bp
 from router.student_group_routes import student_group_bp
 from router.ai_generation_routes import ai_generation_bp
+from router.report_routes import report_bp
 from router.super_admin_dashboard_routes import super_admin_dashboard_bp
 from router.super_admin_management_routes import super_admin_management_bp
 
@@ -42,6 +43,7 @@ def register_blueprints(app):
     app.register_blueprint(uploads_bp, url_prefix="/uploads")
     app.register_blueprint(student_group_bp)
     app.register_blueprint(ai_generation_bp)
+    app.register_blueprint(report_bp, url_prefix="/reports")
     app.register_blueprint(super_admin_dashboard_bp, url_prefix="/api/super-admin")
     app.register_blueprint(super_admin_management_bp, url_prefix="/api/super-admin")
     app.register_blueprint(admin_bp, url_prefix="/admin")

@@ -4,7 +4,10 @@ Teacher-friendly exam CSV import parser.
 Spreadsheet columns only — no JSON inside cells.
 Legacy format (type_code, body, choices-as-JSON) is still detected for backward compatibility.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import csv
 import json
@@ -48,7 +51,7 @@ class ParsedCsvRow:
 
 def read_csv_text(raw_bytes: bytes) -> str:
     if not raw_bytes:
-        raise ValidationError("Uploaded CSV file is empty")
+        raise ValidationError(Messages.UPLOADED_CSV_FILE_IS_EMPTY)
     return raw_bytes.decode("utf-8-sig")
 
 
@@ -66,12 +69,12 @@ def parse_exam_csv(
     """
     reader = csv.DictReader(StringIO(text))
     if not reader.fieldnames:
-        raise ValidationError("CSV headers are required")
+        raise ValidationError(Messages.CSV_HEADERS_ARE_REQUIRED)
 
     fieldnames = [name.strip() for name in reader.fieldnames if name]
     rows = list(reader)
     if not rows:
-        raise ValidationError("CSV file must contain at least one question row")
+        raise ValidationError(Messages.CSV_FILE_MUST_CONTAIN_AT_LEAST_ONE_QUESTION_ROW)
 
     logger.info("[CSV Import] Reading file... %s data row(s) found", len(rows))
 
@@ -80,10 +83,7 @@ def parse_exam_csv(
     use_legacy = "type_code" in lowered and "body" in lowered
 
     if not use_teacher and not use_legacy:
-        raise ValidationError(
-            "Unrecognized CSV format. Download the template from GET /templates/exam-questions-csv "
-            "or use legacy headers: type_code, body, choices"
-        )
+        raise ValidationError(Messages.UNRECOGNIZED_CSV_FORMAT)
 
     topics = TopicRepository()
     parsed: list[ParsedCsvRow] = []
@@ -121,12 +121,9 @@ def parse_exam_csv(
     ]
 
     if not payloads and failed_rows:
-        raise ValidationError(
-            f"All {len(failed_rows)} row(s) failed validation. "
-            f"First error (row {failed_rows[0]['row']}): {failed_rows[0]['error']}"
-        )
+        raise ValidationError(Messages.ALL_LEN_FAILED_ROWS_ROW_S_FAILED_VALIDATION_FIRST_ERROR_ROW_FAILED.format(len_failed_rows=len(failed_rows), failed_rows_0_row=failed_rows[0]['row'], failed_rows_0_error=failed_rows[0]['error']))
     if not payloads:
-        raise ValidationError("CSV file must contain at least one non-empty question row")
+        raise ValidationError(Messages.CSV_FILE_MUST_CONTAIN_AT_LEAST_ONE_NON_EMPTY_QUESTION_ROW)
 
     return payloads, failed_rows
 
@@ -163,7 +160,7 @@ def _parse_legacy_row(row: dict[str, str], *, row_number: int) -> dict:
     type_code = _cell(row, "type_code")
     body = _cell(row, "body")
     if not type_code or not body:
-        raise ValidationError(f"Row {row_number}: type_code and body are required")
+        raise ValidationError(Messages.ROW_ROW_NUMBER_TYPE_CODE_AND_BODY_ARE_REQUIRED.format(row_number=row_number))
 
     choices_raw = _cell(row, "choices")
     choices: list[dict] = []
@@ -171,9 +168,7 @@ def _parse_legacy_row(row: dict[str, str], *, row_number: int) -> dict:
         try:
             choices = json.loads(choices_raw)
         except json.JSONDecodeError as exc:
-            raise ValidationError(
-                f"Row {row_number}: choices must be valid JSON array"
-            ) from exc
+            raise ValidationError(Messages.ROW_ROW_NUMBER_CHOICES_MUST_BE_VALID_JSON_ARRAY.format(row_number=row_number)) from exc
 
     payload = {
         "type_code": type_code,
@@ -201,16 +196,13 @@ def _parse_teacher_row(
     raw_type = _cell(row, "Question Type", "question type")
     body = _cell(row, "Question", "question")
     if not raw_type:
-        raise ValidationError(f"Row {row_number}: Question Type is required")
+        raise ValidationError(Messages.ROW_ROW_NUMBER_QUESTION_TYPE_IS_REQUIRED.format(row_number=row_number))
     if not body:
-        raise ValidationError(f"Row {row_number}: Question text is required")
+        raise ValidationError(Messages.ROW_ROW_NUMBER_QUESTION_TEXT_IS_REQUIRED.format(row_number=row_number))
 
     type_code = normalize_type_code(raw_type)
     if type_code not in SUPPORTED_TYPES:
-        raise ValidationError(
-            f"Row {row_number}: invalid question type '{raw_type}'. "
-            f"Allowed: MCQ, TRUE_FALSE, MULTI_SELECT, ESSAY"
-        )
+        raise ValidationError(Messages.ROW_ROW_NUMBER_INVALID_QUESTION_TYPE_RAW_TYPE_ALLOWED_MCQ_TRUE_FALSE.format(row_number=row_number, raw_type=raw_type))
 
     difficulty_raw = _cell(row, "Difficulty", "difficulty")
     difficulty = None
@@ -228,11 +220,9 @@ def _parse_teacher_row(
         try:
             points = float(points_raw)
         except ValueError as exc:
-            raise ValidationError(
-                f"Row {row_number}: Points must be a number"
-            ) from exc
+            raise ValidationError(Messages.ROW_ROW_NUMBER_POINTS_MUST_BE_A_NUMBER.format(row_number=row_number)) from exc
         if points <= 0:
-            raise ValidationError(f"Row {row_number}: Points must be greater than 0")
+            raise ValidationError(Messages.ROW_ROW_NUMBER_POINTS_MUST_BE_GREATER_THAN_0.format(row_number=row_number))
 
     topic_id_raw = _cell(row, "Topic ID", "topic id")
     topic_id = None
@@ -240,16 +230,12 @@ def _parse_teacher_row(
         try:
             topic_id = int(topic_id_raw)
         except ValueError as exc:
-            raise ValidationError(
-                f"Row {row_number}: Topic ID must be a valid integer"
-            ) from exc
+            raise ValidationError(Messages.ROW_ROW_NUMBER_TOPIC_ID_MUST_BE_A_VALID_INTEGER.format(row_number=row_number)) from exc
         if topic_id <= 0:
-            raise ValidationError(f"Row {row_number}: Topic ID must be positive")
+            raise ValidationError(Messages.ROW_ROW_NUMBER_TOPIC_ID_MUST_BE_POSITIVE.format(row_number=row_number))
         topic = topics.get_in_subject(topic_id, subject_id=subject_id, workspace_id=workspace_id)
         if not topic:
-            raise ValidationError(
-                f"Row {row_number}: Topic ID {topic_id} does not belong to the exam subject"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_TOPIC_ID_TOPIC_ID_DOES_NOT_BELONG_TO_THE.format(row_number=row_number, topic_id=topic_id))
 
     choice_texts = [_cell(row, header) for header in CHOICE_HEADERS]
     correct_raw = _cell(row, "Correct Answers", "correct answers").upper().replace(",", "")
@@ -259,9 +245,7 @@ def _parse_teacher_row(
 
     if type_code == "ESSAY":
         if correct_raw:
-            raise ValidationError(
-                f"Row {row_number}: ESSAY questions must leave Correct Answers empty"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_ESSAY_QUESTIONS_MUST_LEAVE_CORRECT_ANSWERS_EMPTY.format(row_number=row_number))
         payload = {
             "type_code": type_code,
             "body": body,
@@ -311,9 +295,7 @@ def _parse_image_url_cell(row: dict[str, str], *, row_number: int) -> str | None
 
     value = raw.strip()
     if len(value) > 512:
-        raise ValidationError(
-            f"Row {row_number}: image_url must be at most 512 characters"
-        )
+        raise ValidationError(Messages.ROW_ROW_NUMBER_IMAGE_URL_MUST_BE_AT_MOST_512_CHARACTERS.format(row_number=row_number))
 
     if value.startswith("questions/"):
         return value
@@ -322,21 +304,15 @@ def _parse_image_url_cell(row: dict[str, str], *, row_number: int) -> str | None
     if uploads_marker in value:
         path = value.split(uploads_marker, 1)[1].lstrip("/")
         if not path:
-            raise ValidationError(
-                f"Row {row_number}: invalid image_url (empty path after /uploads/)"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_INVALID_IMAGE_URL_EMPTY_PATH_AFTER_UPLOADS.format(row_number=row_number))
         if len(path) > 512:
-            raise ValidationError(
-                f"Row {row_number}: image_url must be at most 512 characters"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_IMAGE_URL_MUST_BE_AT_MOST_512_CHARACTERS.format(row_number=row_number))
         return path
 
     if value.startswith(("http://", "https://")):
         parsed = urlparse(value)
         if not parsed.scheme or not parsed.netloc:
-            raise ValidationError(
-                f"Row {row_number}: invalid image_url (malformed URL)"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_INVALID_IMAGE_URL_MALFORMED_URL.format(row_number=row_number))
         raise ValidationError(
             f"Row {row_number}: image_url must be a questions/... path or a URL "
             "from POST /uploads/images (containing /uploads/)"
@@ -357,17 +333,11 @@ def _parse_correct_letters(raw: str, *, row_number: int) -> list[str]:
 
     invalid = [letter for letter in letters if letter not in LETTER_TO_INDEX]
     if invalid:
-        raise ValidationError(
-            f"Row {row_number}: invalid correct answer letter(s): "
-            f"{', '.join(sorted(set(invalid)))}. Use A-F only"
-        )
+        raise ValidationError(Messages.ROW_ROW_NUMBER_INVALID_CORRECT_ANSWER_LETTER_S_JOIN_SORTED_SET_INVALID.format(row_number=row_number, join_sorted_set_invalid=', '.join(sorted(set(invalid)))))
 
     if len(letters) != len(set(letters)):
         duplicates = sorted({letter for letter in letters if letters.count(letter) > 1})
-        raise ValidationError(
-            f"Row {row_number}: duplicate correct answer letter(s): "
-            f"{', '.join(duplicates)}"
-        )
+        raise ValidationError(Messages.ROW_ROW_NUMBER_DUPLICATE_CORRECT_ANSWER_LETTER_S_JOIN_DUPLICATES.format(row_number=row_number, join_duplicates=', '.join(duplicates)))
     return letters
 
 
@@ -380,7 +350,7 @@ def _build_choices(
 ) -> list[dict]:
     filled_indices = [index for index, text in enumerate(choice_texts) if text]
     if not filled_indices and type_code != "ESSAY":
-        raise ValidationError(f"Row {row_number}: at least one choice is required")
+        raise ValidationError(Messages.ROW_ROW_NUMBER_AT_LEAST_ONE_CHOICE_IS_REQUIRED.format(row_number=row_number))
 
     for letter in correct_letters:
         index = LETTER_TO_INDEX[letter]
@@ -391,9 +361,7 @@ def _build_choices(
 
     if type_code == "TRUE_FALSE":
         if any(choice_texts[2:]):
-            raise ValidationError(
-                f"Row {row_number}: TRUE_FALSE questions may only use Choice A and Choice B"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_TRUE_FALSE_QUESTIONS_MAY_ONLY_USE_CHOICE_A_AND.format(row_number=row_number))
         if len(correct_letters) != 1 or correct_letters[0] not in ("A", "B"):
             raise ValidationError(
                 f"Row {row_number}: TRUE_FALSE questions must have exactly one correct "
@@ -401,14 +369,10 @@ def _build_choices(
             )
     elif type_code == "MCQ":
         if len(correct_letters) != 1:
-            raise ValidationError(
-                f"Row {row_number}: MCQ questions must have exactly one correct answer"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_MCQ_QUESTIONS_MUST_HAVE_EXACTLY_ONE_CORRECT_ANSWER.format(row_number=row_number))
     elif type_code == "MULTI_SELECT":
         if len(correct_letters) < 1:
-            raise ValidationError(
-                f"Row {row_number}: MULTI_SELECT questions must have at least one correct answer"
-            )
+            raise ValidationError(Messages.ROW_ROW_NUMBER_MULTI_SELECT_QUESTIONS_MUST_HAVE_AT_LEAST_ONE_CORRECT.format(row_number=row_number))
 
     correct_indices = {LETTER_TO_INDEX[letter] for letter in correct_letters}
     choices: list[dict] = []

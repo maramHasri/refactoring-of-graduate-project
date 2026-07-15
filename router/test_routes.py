@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -33,7 +34,7 @@ def create_test():
         data=data,
     )
     return {
-        "message": "Test created successfully",
+        "message": Messages.TEST_CREATED_SUCCESSFULLY,
         "test": _svc().serialize_test_created(test),
     }, 201
 
@@ -67,7 +68,7 @@ def update_test(test_id):
         actor_membership=g.membership,
         data=data,
     )
-    return {"message": "Test updated", "test": _svc().serialize_test_updated(test)}, 200
+    return {"message": Messages.TEST_UPDATED, "test": _svc().serialize_test_updated(test)}, 200
 
 
 @test_bp.route("/<int:test_id>", methods=["DELETE"])
@@ -79,7 +80,7 @@ def delete_test(test_id):
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
     )
-    return {"message": "Test deleted successfully"}, 200
+    return {"message": Messages.TEST_DELETED_SUCCESSFULLY}, 200
 
 
 @test_bp.route("/<int:test_id>/questions", methods=["POST"])
@@ -94,7 +95,7 @@ def add_questions_to_test(test_id):
         question_ids=data["question_ids"],
         source_type=data["source_type"],
     )
-    return {"message": "Questions added to test", "questions": items, "count": len(items)}, 201
+    return {"message": Messages.QUESTIONS_ADDED_TO_TEST, "questions": items, "count": len(items)}, 201
 
 
 @test_bp.route("/<int:test_id>/questions/manual", methods=["POST"])
@@ -108,7 +109,7 @@ def add_manual_questions_to_test(test_id):
         try:
             payload = json.loads(request.form.get("payload") or "{}")
         except json.JSONDecodeError as exc:
-            raise ValidationError("Invalid JSON in multipart payload") from exc
+            raise ValidationError(Messages.INVALID_JSON_IN_MULTIPART_PAYLOAD) from exc
     data = AddManualQuestionsToTestSchema().load(payload or {})
     items = _svc().add_manual_questions(
         test_id=test_id,
@@ -116,7 +117,7 @@ def add_manual_questions_to_test(test_id):
         actor_membership=g.membership,
         questions=data["questions"],
     )
-    return {"message": "Manual questions added", "questions": items, "count": len(items)}, 201
+    return {"message": Messages.MANUAL_QUESTIONS_ADDED, "questions": items, "count": len(items)}, 201
 
 
 @test_bp.route("/<int:test_id>/questions/manual/single", methods=["POST"])
@@ -136,7 +137,7 @@ def add_single_manual_question_to_test(test_id):
         actor_membership=g.membership,
         questions=[item],
     )
-    return {"message": "Manual question added", "question": items[0]}, 201
+    return {"message": Messages.MANUAL_QUESTION_ADDED, "question": items[0]}, 201
 
 
 @test_bp.route("/<int:test_id>/questions/import-csv", methods=["POST"])
@@ -164,7 +165,7 @@ def add_bank_selected_questions_to_test(test_id):
         bank_id=data["bank_id"],
         question_ids=data["question_ids"],
     )
-    return {"message": "Question bank selection added", "questions": items, "count": len(items)}, 201
+    return {"message": Messages.QUESTION_BANK_SELECTION_ADDED, "questions": items, "count": len(items)}, 201
 
 
 @test_bp.route("/<int:test_id>/questions/random-from-banks", methods=["POST"])
@@ -197,7 +198,7 @@ def add_ai_questions_to_test(test_id):
         additional_instructions=data.get("additional_instructions"),
     )
     return {
-        "message": "AI questions generated for review",
+        "message": Messages.AI_QUESTIONS_GENERATED_FOR_REVIEW,
         **result,
     }, 201
 
@@ -227,7 +228,7 @@ def assign_students_to_test(test_id):
         actor_membership=g.membership,
         student_membership_ids=data["student_membership_ids"],
     )
-    return {"message": "Students assigned successfully", "count": count}, 201
+    return {"message": Messages.STUDENTS_ASSIGNED_SUCCESSFULLY, "count": count}, 201
 
 
 @test_bp.route("/<int:test_id>/assigned-students", methods=["GET"])
@@ -252,7 +253,7 @@ def remove_assigned_student(test_id, membership_id):
         actor_membership=g.membership,
         student_membership_id=membership_id,
     )
-    return {"message": "Student removed from assigned list"}, 200
+    return {"message": Messages.STUDENT_REMOVED_FROM_ASSIGNED_LIST}, 200
 
 
 @test_bp.route("/<int:test_id>/questions/<int:test_question_id>", methods=["PATCH"])
@@ -266,7 +267,7 @@ def update_test_question(test_id, test_question_id):
         try:
             payload = json.loads(request.form.get("payload") or "{}")
         except json.JSONDecodeError as exc:
-            raise ValidationError("Invalid JSON in multipart payload") from exc
+            raise ValidationError(Messages.INVALID_JSON_IN_MULTIPART_PAYLOAD) from exc
     data = UpdateTestQuestionSchema().load(payload or {}, partial=True)
     item = _svc().update_test_question(
         test_id=test_id,
@@ -275,7 +276,7 @@ def update_test_question(test_id, test_question_id):
         actor_membership=g.membership,
         data=data,
     )
-    return {"message": "Test question updated", "question": item}, 200
+    return {"message": Messages.TEST_QUESTION_UPDATED, "question": item}, 200
 
 
 @test_bp.route("/<int:test_id>/questions/<int:test_question_id>", methods=["DELETE"])
@@ -288,7 +289,7 @@ def delete_test_question(test_id, test_question_id):
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
     )
-    return {"message": "Test question removed"}, 200
+    return {"message": Messages.TEST_QUESTION_REMOVED}, 200
 
 
 @test_bp.route("/<int:test_id>/publish-now", methods=["POST"])
@@ -298,7 +299,7 @@ def publish_test_now(test_id):
     test = _svc().publish_now(
         test_id=test_id, workspace_id=g.workspace_id, actor_membership=g.membership
     )
-    return {"message": "Test published", "test": _svc().serialize_test(test)}, 200
+    return {"message": Messages.TEST_PUBLISHED, "test": _svc().serialize_test(test)}, 200
 
 
 @test_bp.route("/<int:test_id>/schedule-publication", methods=["POST"])
@@ -312,7 +313,7 @@ def schedule_test_publication(test_id):
         actor_membership=g.membership,
         publish_at=data["publish_at"],
     )
-    return {"message": "Test scheduled", "test": _svc().serialize_test(test)}, 200
+    return {"message": Messages.TEST_SCHEDULED, "test": _svc().serialize_test(test)}, 200
 
 
 @test_bp.route("/<int:test_id>/close", methods=["POST"])
@@ -322,7 +323,7 @@ def close_test(test_id):
     test = _svc().close_test(
         test_id=test_id, workspace_id=g.workspace_id, actor_membership=g.membership
     )
-    return {"message": "Test closed", "test": _svc().serialize_test(test)}, 200
+    return {"message": Messages.TEST_CLOSED, "test": _svc().serialize_test(test)}, 200
 
 
 @test_bp.route("/<int:test_id>/archive", methods=["POST"])
@@ -332,4 +333,4 @@ def archive_test(test_id):
     test = _svc().archive_test(
         test_id=test_id, workspace_id=g.workspace_id, actor_membership=g.membership
     )
-    return {"message": "Test archived", "test": _svc().serialize_test(test)}, 200
+    return {"message": Messages.TEST_ARCHIVED, "test": _svc().serialize_test(test)}, 200

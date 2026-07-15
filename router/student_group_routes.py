@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -26,7 +27,7 @@ def create_student_group(subject_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Group created successfully",
+        "message": Messages.GROUP_CREATED_SUCCESSFULLY,
         "group": _svc()._serialize_group(group),
     }, 201
 
@@ -70,7 +71,7 @@ def update_student_group(group_id):
         data=data,
     )
     return {
-        "message": "Group updated successfully",
+        "message": Messages.GROUP_UPDATED_SUCCESSFULLY,
         "group": _svc()._serialize_group(group),
     }, 200
 
@@ -85,7 +86,7 @@ def delete_student_group(group_id):
         group_id=group_id,
         actor_membership=g.membership,
     )
-    return {"message": "Group deleted successfully"}, 200
+    return {"message": Messages.GROUP_DELETED_SUCCESSFULLY}, 200
 
 
 @student_group_bp.route("/groups/<int:group_id>/members", methods=["POST"])
@@ -101,7 +102,7 @@ def add_student_group_members(group_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Group members updated",
+        "message": Messages.GROUP_MEMBERS_UPDATED,
         **result,
     }, 200
 
@@ -119,4 +120,4 @@ def remove_student_group_member(group_id, student_id):
         student_id=student_id,
         actor_membership=g.membership,
     )
-    return {"message": "Member removed from group"}, 200
+    return {"message": Messages.MEMBER_REMOVED_FROM_GROUP}, 200

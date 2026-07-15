@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
@@ -31,7 +32,7 @@ def create_workspace():
         logo_url=payload.get("logo_url"),
         description=payload.get("description"),
     )
-    return {"message": "Workspace created", **result}, 201
+    return {"message": Messages.WORKSPACE_CREATED, **result}, 201
 
 
 @workspace_bp.route("", methods=["GET"])
@@ -189,7 +190,7 @@ def update_workspace(workspace_id):
         is_superadmin=g.current_user.is_superadmin,
         data=payload,
     )
-    return {"message": "Workspace updated", "id": workspace.id}, 200
+    return {"message": Messages.WORKSPACE_UPDATED, "id": workspace.id}, 200
 
 
 @workspace_bp.route("/<int:workspace_id>", methods=["DELETE"])
@@ -201,4 +202,4 @@ def delete_workspace(workspace_id):
         g.current_user.id,
         is_superadmin=g.current_user.is_superadmin,
     )
-    return {"message": "Workspace deleted"}, 200
+    return {"message": Messages.WORKSPACE_DELETED}, 200

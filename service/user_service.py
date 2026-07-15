@@ -1,6 +1,8 @@
 """
 User profile — self-service read/update for the authenticated user.
 """
+
+from utils.messages import Messages
 from models import User
 from repositories.user_repository import UserRepository
 from service.exceptions import ValidationError
@@ -16,7 +18,7 @@ class UserService:
 
     def update_profile(self, user: User, data: dict) -> User:
         if not data:
-            raise ValidationError("At least one profile field is required")
+            raise ValidationError(Messages.AT_LEAST_ONE_PROFILE_FIELD_IS_REQUIRED)
         self._apply_user_profile_updates(user, data)
         db.session.commit()
         return user
@@ -24,10 +26,10 @@ class UserService:
     def _apply_user_profile_updates(self, user: User, data: dict) -> None:
         if "full_name" in data:
             if data["full_name"] is None:
-                raise ValidationError("full_name cannot be empty")
+                raise ValidationError(Messages.FULL_NAME_CANNOT_BE_EMPTY)
             name = data["full_name"].strip()
             if not name:
-                raise ValidationError("full_name cannot be empty")
+                raise ValidationError(Messages.FULL_NAME_CANNOT_BE_EMPTY)
             user.full_name = name
 
         if "phone_number" in data:

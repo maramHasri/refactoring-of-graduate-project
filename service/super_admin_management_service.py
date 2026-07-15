@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from datetime import datetime, timezone
 
 from flask import current_app
@@ -28,11 +29,11 @@ class SuperAdminManagementService:
         workspace = self._get_organization_or_raise(organization_id)
 
         if workspace.status == WorkspaceStatus.SUSPENDED.value:
-            raise ConflictError("Organization is already suspended")
+            raise ConflictError(Messages.ORGANIZATION_IS_ALREADY_SUSPENDED)
 
         reason = (reason or "").strip()
         if not reason:
-            raise ValidationError("Suspension reason is required")
+            raise ValidationError(Messages.SUSPENSION_REASON_IS_REQUIRED)
 
         now = datetime.now(timezone.utc)
         workspace.status = WorkspaceStatus.SUSPENDED.value
@@ -48,7 +49,7 @@ class SuperAdminManagementService:
         )
 
         return {
-            "message": "Organization suspended successfully",
+            "message": Messages.ORGANIZATION_SUSPENDED_SUCCESSFULLY,
             "organization": self._serialize_organization_summary(workspace),
         }
 
@@ -58,7 +59,7 @@ class SuperAdminManagementService:
         workspace = self._get_organization_or_raise(organization_id)
 
         if workspace.status != WorkspaceStatus.SUSPENDED.value:
-            raise ValidationError("Organization is not suspended")
+            raise ValidationError(Messages.ORGANIZATION_IS_NOT_SUSPENDED)
 
         workspace.status = WorkspaceStatus.ACTIVE.value
         workspace.suspended_at = None
@@ -73,7 +74,7 @@ class SuperAdminManagementService:
         )
 
         return {
-            "message": "Organization restored successfully",
+            "message": Messages.ORGANIZATION_RESTORED_SUCCESSFULLY,
             "organization": self._serialize_organization_detail(workspace),
         }
 
@@ -90,17 +91,17 @@ class SuperAdminManagementService:
     ) -> dict:
         user = self.users.get_by_id(user_id)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
 
         if user.id == actor_user.id:
-            raise ForbiddenError("Super admins cannot suspend their own account")
+            raise ForbiddenError(Messages.SUPER_ADMINS_CANNOT_SUSPEND_THEIR_OWN_ACCOUNT)
 
         if user.user_status == UserStatus.SUSPENDED.value:
-            raise ConflictError("User is already suspended")
+            raise ConflictError(Messages.USER_IS_ALREADY_SUSPENDED)
 
         reason = (reason or "").strip()
         if not reason:
-            raise ValidationError("Suspension reason is required")
+            raise ValidationError(Messages.SUSPENSION_REASON_IS_REQUIRED)
 
         now = datetime.now(timezone.utc)
         user.user_status = UserStatus.SUSPENDED.value
@@ -118,17 +119,17 @@ class SuperAdminManagementService:
         user = self.repo.get_user_with_memberships(user.id)
         memberships = self.repo.load_memberships_for_users([user.id]).get(user.id, [])
         return {
-            "message": "User suspended successfully",
+            "message": Messages.USER_SUSPENDED_SUCCESSFULLY,
             "user": self._serialize_managed_user(user, memberships),
         }
 
     def restore_user(self, user_id: int, *, actor_user: User) -> dict:
         user = self.users.get_by_id(user_id)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
 
         if user.user_status != UserStatus.SUSPENDED.value:
-            raise ValidationError("User is not suspended")
+            raise ValidationError(Messages.USER_IS_NOT_SUSPENDED)
 
         user.user_status = UserStatus.ACTIVE.value
         user.suspended_at = None
@@ -143,14 +144,14 @@ class SuperAdminManagementService:
 
         memberships = self.repo.load_memberships_for_users([user.id]).get(user.id, [])
         return {
-            "message": "User restored successfully",
+            "message": Messages.USER_RESTORED_SUCCESSFULLY,
             "user": self._serialize_managed_user(user, memberships),
         }
 
     def get_user_details(self, user_id: int) -> dict:
         user = self.users.get_by_id(user_id)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
 
         memberships = self.repo.load_memberships_for_users([user.id]).get(user.id, [])
         return self._serialize_user_detail(user, memberships)
@@ -190,7 +191,7 @@ class SuperAdminManagementService:
     def _get_organization_or_raise(self, organization_id: int) -> Workspace:
         workspace = self.repo.get_workspace_by_id(organization_id)
         if not workspace:
-            raise NotFoundError("Organization not found")
+            raise NotFoundError(Messages.ORGANIZATION_NOT_FOUND)
         return workspace
 
     def _serialize_organization_summary(self, workspace: Workspace) -> dict:

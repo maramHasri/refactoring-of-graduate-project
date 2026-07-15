@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, current_app, g, request
 
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
@@ -22,7 +23,7 @@ def create_invite():
     if g.membership and g.membership.role == MembershipRole.STUDENT.value:
         from service.exceptions import ForbiddenError
 
-        raise ForbiddenError("Students cannot send invitations")
+        raise ForbiddenError(Messages.STUDENTS_CANNOT_SEND_INVITATIONS)
 
     data = CreateInviteSchema().load(request.get_json() or {})
     inviter_role = g.membership.role if g.membership else None
@@ -89,7 +90,7 @@ def accept_invite(token):
     """
     membership = InviteService().accept_invite(token, g.current_user.id)
     return {
-        "message": "Invitation accepted",
+        "message": Messages.INVITATION_ACCEPTED,
         "membership_id": membership.id,
         "workspace_id": membership.workspace_id,
         "role": membership.role,
@@ -103,5 +104,5 @@ def reject_invite(token):
     POST /invites/{token}/reject — reject invitation (no auth required).
     """
     InviteService().reject_invite(token)
-    return {"message": "Invitation rejected"}, 200
+    return {"message": Messages.INVITATION_REJECTED}, 200
 

@@ -1,6 +1,8 @@
 """
 Session management: ties JWT access jti to user_sessions rows.
 """
+
+from utils.messages import Messages
 from datetime import datetime, timezone
 
 from flask import current_app
@@ -48,11 +50,11 @@ class SessionService:
     def validate_access_jti(self, jti: str) -> UserSession:
         session = self.repo.find_active_by_jti(jti)
         if not session:
-            raise UnauthorizedError("Session is invalid or expired")
+            raise UnauthorizedError(Messages.SESSION_IS_INVALID_OR_EXPIRED)
         if session.expires_at < datetime.now(timezone.utc):
             self.repo.deactivate(session)
             self.repo.commit()
-            raise UnauthorizedError("Session has expired")
+            raise UnauthorizedError(Messages.SESSION_HAS_EXPIRED)
         self.repo.touch(session)
         return session
 
@@ -61,15 +63,15 @@ class SessionService:
 
         payload = decode_token(refresh_token)
         if not payload or payload.get("type") != "refresh":
-            raise UnauthorizedError("Invalid refresh token")
+            raise UnauthorizedError(Messages.INVALID_REFRESH_TOKEN)
 
         session = self.repo.get_by_id(int(payload["sid"]))
         if not session or not session.is_active:
-            raise UnauthorizedError("Session is no longer active")
+            raise UnauthorizedError(Messages.SESSION_IS_NO_LONGER_ACTIVE)
 
         user_id = int(payload["sub"])
         if session.user_id != user_id:
-            raise UnauthorizedError("Refresh token mismatch")
+            raise UnauthorizedError(Messages.REFRESH_TOKEN_MISMATCH)
 
         from repositories.user_repository import UserRepository
 

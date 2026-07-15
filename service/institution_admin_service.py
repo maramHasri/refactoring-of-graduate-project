@@ -2,6 +2,8 @@
 Super admin — institution registration approval by owner user_id.
 Workspace is created only when the request is approved.
 """
+
+from utils.messages import Messages
 from datetime import datetime, timezone
 
 from models import Membership, RegistrationIntent, User, Workspace, WorkspaceProfile
@@ -41,7 +43,7 @@ class InstitutionAdminService:
         user = self._get_user_or_404(user_id)
 
         if self.workspaces.find_by_slug(intent.slug):
-            raise ConflictError("Workspace slug is no longer available")
+            raise ConflictError(Messages.WORKSPACE_SLUG_IS_NO_LONGER_AVAILABLE)
 
         try:
             workspace = Workspace(
@@ -123,7 +125,7 @@ class InstitutionAdminService:
         user = self._get_user_or_404(user_id)
         reason = (reason or "").strip()
         if not reason:
-            raise ValidationError("Rejection reason is required")
+            raise ValidationError(Messages.REJECTION_REASON_IS_REQUIRED)
 
         now = datetime.now(timezone.utc)
         intent.approval_status = InstitutionApprovalStatus.REJECTED.value
@@ -148,21 +150,19 @@ class InstitutionAdminService:
     def _get_user_or_404(self, user_id: int) -> User:
         user = self.users.get_by_id(user_id)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
         return user
 
     def _get_institution_intent_for_user(self, user_id: int) -> RegistrationIntent:
         intent = self.registration_intents.find_institution_by_user_id(user_id)
         if not intent:
-            raise NotFoundError("Institution registration request not found")
+            raise NotFoundError(Messages.INSTITUTION_REGISTRATION_REQUEST_NOT_FOUND)
         return intent
 
     def _get_pending_institution_intent(self, user_id: int) -> RegistrationIntent:
         intent = self.registration_intents.find_pending_institution_by_user_id(user_id)
         if not intent:
-            raise ValidationError(
-                "No pending institution registration found for this user"
-            )
+            raise ValidationError(Messages.NO_PENDING_INSTITUTION_REGISTRATION_FOUND_FOR_THIS_USER)
         return intent
 
     def _serialize_institution_request(self, intent: RegistrationIntent) -> dict:
@@ -196,4 +196,4 @@ class InstitutionAdminService:
             code = generate_workspace_join_code()
             if not self.workspaces.find_by_join_code(code):
                 return code
-        raise ConflictError("Could not generate unique join code")
+        raise ConflictError(Messages.COULD_NOT_GENERATE_UNIQUE_JOIN_CODE)

@@ -1,6 +1,8 @@
 """
 Create questions inside question banks (single endpoint, multiple type_code values).
 """
+
+from utils.messages import Messages
 from decimal import Decimal
 
 from models import Question, QuestionBank, QuestionChoice
@@ -42,7 +44,7 @@ class QuestionService:
         )
 
         if not questions:
-            raise ValidationError("questions must contain at least one item")
+            raise ValidationError(Messages.QUESTIONS_MUST_CONTAIN_AT_LEAST_ONE_ITEM)
 
         created: list[Question] = []
         try:
@@ -82,9 +84,7 @@ class QuestionService:
         )
         question_type = self.question_types.find_by_code(type_code)
         if not question_type:
-            raise ValidationError(
-                f"{prefix}: question type '{type_code}' is not configured. Run flask seed."
-            )
+            raise ValidationError(Messages.PREFIX_QUESTION_TYPE_TYPE_CODE_IS_NOT_CONFIGURED_RUN_FLASK_SEED.format(prefix=prefix, type_code=type_code))
 
         topic_id = self._resolve_optional_topic_id(
             payload.get("topic_id"),
@@ -97,13 +97,13 @@ class QuestionService:
         if difficulty is not None:
             difficulty = difficulty.strip().upper()
             if difficulty not in [d.value for d in Difficulty]:
-                raise ValidationError(f"{prefix}: invalid difficulty value")
+                raise ValidationError(Messages.PREFIX_INVALID_DIFFICULTY_VALUE.format(prefix=prefix))
 
         points = payload.get("points")
         if points is not None:
             points = Decimal(str(points))
             if points < 0:
-                raise ValidationError(f"{prefix}: points must be non-negative")
+                raise ValidationError(Messages.PREFIX_POINTS_MUST_BE_NON_NEGATIVE.format(prefix=prefix))
 
         question = Question(
             bank_id=bank.id,
@@ -158,7 +158,7 @@ class QuestionService:
         )
         question = self.questions.get_active_in_bank(question_id, bank.id)
         if not question:
-            raise NotFoundError("Question not found in this bank")
+            raise NotFoundError(Messages.QUESTION_NOT_FOUND_IN_THIS_BANK)
 
         if "type_code" in data or "choices" in data:
             type_code = (
@@ -184,9 +184,7 @@ class QuestionService:
             if "type_code" in data:
                 question_type = self.question_types.find_by_code(type_code)
                 if not question_type:
-                    raise ValidationError(
-                        f"Question type '{type_code}' is not configured. Run flask seed."
-                    )
+                    raise ValidationError(Messages.QUESTION_TYPE_TYPE_CODE_IS_NOT_CONFIGURED_RUN_FLASK_SEED.format(type_code=type_code))
                 question.question_type_id = question_type.id
 
         if "body" in data and data["body"]:
@@ -214,7 +212,7 @@ class QuestionService:
             else:
                 difficulty = difficulty.strip().upper()
                 if difficulty not in [d.value for d in Difficulty]:
-                    raise ValidationError("invalid difficulty value")
+                    raise ValidationError(Messages.INVALID_DIFFICULTY_VALUE)
                 question.difficulty = difficulty
         if "points" in data:
             points = data.get("points")
@@ -223,7 +221,7 @@ class QuestionService:
             else:
                 points = Decimal(str(points))
                 if points < 0:
-                    raise ValidationError("points must be non-negative")
+                    raise ValidationError(Messages.POINTS_MUST_BE_NON_NEGATIVE)
                 question.points = points
 
         if "choices" in data:
@@ -258,7 +256,7 @@ class QuestionService:
         )
         question = self.questions.get_active_in_bank(question_id, bank.id)
         if not question:
-            raise NotFoundError("Question not found in this bank")
+            raise NotFoundError(Messages.QUESTION_NOT_FOUND_IN_THIS_BANK)
 
         question.status = QuestionStatus.ARCHIVED.value
         db.session.commit()
@@ -277,7 +275,7 @@ class QuestionService:
         try:
             topic_id = int(topic_id)
         except (TypeError, ValueError):
-            raise ValidationError(f"{field_prefix}: topic_id must be a valid integer")
+            raise ValidationError(Messages.FIELD_PREFIX_TOPIC_ID_MUST_BE_A_VALID_INTEGER.format(field_prefix=field_prefix))
         if topic_id <= 0:
             return None
 
@@ -285,10 +283,7 @@ class QuestionService:
             topic_id, subject_id=subject_id, workspace_id=workspace_id
         )
         if not topic:
-            raise ValidationError(
-                f"{field_prefix}: topic_id must reference an existing topic "
-                f"in the bank's subject (subject_id={subject_id})"
-            )
+            raise ValidationError(Messages.FIELD_PREFIX_TOPIC_ID_MUST_REFERENCE_AN_EXISTING_TOPIC_IN_THE_BANK.format(field_prefix=field_prefix, subject_id=subject_id))
         return topic.id
 
     def serialize_question(self, question: Question) -> dict:

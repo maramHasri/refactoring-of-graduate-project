@@ -1,15 +1,49 @@
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_superadmin
+from schemas.report_schema import ReportsListQuerySchema, UpdateReportStatusSchema
 from schemas.super_admin_management_schema import (
     SuperAdminUsersListQuerySchema,
     SuspendOrganizationSchema,
     SuspendUserSchema,
 )
+from service.report_service import ReportService
 from service.super_admin_management_service import SuperAdminManagementService
 
 super_admin_management_bp = Blueprint("super_admin_management", __name__)
 _svc = lambda: SuperAdminManagementService()
+_report_svc = lambda: ReportService()
+
+
+@super_admin_management_bp.route("/reports", methods=["GET"])
+@require_superadmin
+@handle_service_errors
+def list_reports():
+    query = ReportsListQuerySchema().load(request.args.to_dict())
+    return _report_svc().list_reports_for_super_admin(
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        status=query.get("status"),
+        category=query.get("category"),
+    ), 200
+
+
+@super_admin_management_bp.route("/reports/<int:report_id>", methods=["GET"])
+@require_superadmin
+@handle_service_errors
+def get_report_details(report_id):
+    return _report_svc().get_report_for_super_admin(report_id), 200
+
+
+@super_admin_management_bp.route("/reports/<int:report_id>", methods=["PATCH"])
+@require_superadmin
+@handle_service_errors
+def update_report_status(report_id):
+    payload = UpdateReportStatusSchema().load(request.get_json() or {})
+    return _report_svc().update_report_status(
+        report_id,
+        status=payload["status"],
+    ), 200
 
 
 @super_admin_management_bp.route(

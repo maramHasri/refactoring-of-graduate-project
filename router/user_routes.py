@@ -1,4 +1,6 @@
 """User profile routes — authenticated self-service only."""
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth
@@ -25,6 +27,6 @@ def update_my_profile():
     data = UpdateUserProfileSchema().load(request.get_json() or {}, partial=True)
     user = _svc().update_profile(g.current_user, data)
     return {
-        "message": "Profile updated successfully",
+        "message": Messages.PROFILE_UPDATED_SUCCESSFULLY,
         "user": _svc().serialize_profile(user),
     }, 200

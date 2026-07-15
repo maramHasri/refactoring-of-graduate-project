@@ -4,6 +4,8 @@ Authentication business logic.
 Owner registration: intent + OTP → verify → create user/workspace.
 Student/invite: user pending → OTP → activate account.
 """
+
+from utils.messages import Messages
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -82,7 +84,7 @@ class AuthService:
         existing_user = self.users.find_by_email(email)
         if existing_user:
             if existing_user.email_verified:
-                raise ConflictError("Email is already registered")
+                raise ConflictError(Messages.EMAIL_IS_ALREADY_REGISTERED)
             # Legacy or incomplete signup — resend OTP instead of blocking with 409
             plain_otp = self.otps.issue_otp(
                 email=email,
@@ -100,11 +102,11 @@ class AuthService:
             return attach_dev_otp(result, plain_otp, email=email)
 
         if workspace_kind not in (WorkspaceKind.SOLO.value, WorkspaceKind.INSTITUTION.value):
-            raise ValidationError("Invalid workspace kind")
+            raise ValidationError(Messages.INVALID_WORKSPACE_KIND)
 
         slug = slug or _slugify(workspace_name)
         if self.workspaces.find_by_slug(slug):
-            raise ConflictError("Workspace slug already exists")
+            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
 
         existing_intent = self.registration_intents.find_by_email(email)
         if existing_intent:
@@ -153,12 +155,12 @@ class AuthService:
     ) -> dict:
         workspace = self.workspaces.find_by_join_code(join_code)
         if not workspace:
-            raise NotFoundError("Invalid join code")
+            raise NotFoundError(Messages.INVALID_JOIN_CODE)
         self._ensure_workspace_allows_member_join(workspace)
 
         email = email.lower().strip()
         if self.users.find_by_email(email):
-            raise ConflictError("Email is already registered")
+            raise ConflictError(Messages.EMAIL_IS_ALREADY_REGISTERED)
 
         user = User(
             email=email,
@@ -227,7 +229,7 @@ class AuthService:
                 "success": True,
                 "otp_verified": True,
                 "purpose": EmailOtpPurpose.RESET_PASSWORD.value,
-                "message": "OTP verified. Set your new password via POST /auth/reset-password.",
+                "message": Messages.OTP_VERIFIED_SET_YOUR_NEW_PASSWORD_VIA_POST_AUTH_RESET_PASSWORD,
             }
 
         self.otps.verify_otp(
@@ -245,7 +247,7 @@ class AuthService:
 
         user = self.users.find_by_email(email)
         if not user:
-            raise ValidationError("No registration found for this email")
+            raise ValidationError(Messages.NO_REGISTRATION_FOUND_FOR_THIS_EMAIL)
 
         user.email_verified = True
         if user.user_status == UserStatus.PENDING_VERIFICATION.value:
@@ -269,11 +271,10 @@ class AuthService:
         user = self.users.find_by_email(email)
         if not user:
             raise ValidationError(
-                "No account or pending registration found for this email. "
-                "Use POST /auth/register first."
+                Messages.NO_ACCOUNT_OR_PENDING_REGISTRATION_FOUND_USE_POST_AUTH_REGISTER
             )
         if user.email_verified:
-            raise ValidationError("Email is already verified")
+            raise ValidationError(Messages.EMAIL_IS_ALREADY_VERIFIED)
 
         plain, email_sent = self.send_account_verification_otp(user)
         db.session.commit()
@@ -292,7 +293,7 @@ class AuthService:
         INSTITUTION: create user only; workspace is created on super admin approve.
         """
         if self.users.find_by_email(intent.email):
-            raise ConflictError("Email is already registered")
+            raise ConflictError(Messages.EMAIL_IS_ALREADY_REGISTERED)
 
         user = User(
             email=intent.email,
@@ -325,9 +326,9 @@ class AuthService:
 
     def _complete_solo_owner_registration(self, intent: RegistrationIntent) -> dict:
         if self.users.find_by_email(intent.email):
-            raise ConflictError("Email is already registered")
+            raise ConflictError(Messages.EMAIL_IS_ALREADY_REGISTERED)
         if self.workspaces.find_by_slug(intent.slug):
-            raise ConflictError("Workspace slug already exists")
+            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
 
         user = User(
             email=intent.email,
@@ -404,16 +405,14 @@ class AuthService:
         email = email.lower().strip()
         user = self.users.find_by_email(email)
         if not user or not verify_password(password, user.password_hash):
-            raise UnauthorizedError("Invalid email or password")
+            raise UnauthorizedError(Messages.INVALID_EMAIL_OR_PASSWORD)
 
         if user.user_status == UserStatus.DISABLED.value:
-            raise ForbiddenError("Account is disabled")
+            raise ForbiddenError(Messages.ACCOUNT_IS_DISABLED)
         if user.user_status == UserStatus.SUSPENDED.value:
-            raise ForbiddenError("Account is suspended")
+            raise ForbiddenError(Messages.ACCOUNT_IS_SUSPENDED)
         if not user.email_verified:
-            raise ForbiddenError(
-                "Email not verified. Enter the OTP sent to your email via POST /auth/verify-otp"
-            )
+            raise ForbiddenError(Messages.EMAIL_NOT_VERIFIED_ENTER_THE_OTP_SENT_TO_YOUR_EMAIL_VIA_POST_AUTH_VERIFY_OTP)
 
         self._enforce_institution_login_rules(user)
 
@@ -430,7 +429,7 @@ class AuthService:
         email = email.lower().strip()
         user = self.users.find_superadmin_by_email(email)
         if not user or not verify_password(password, user.password_hash):
-            raise UnauthorizedError("Invalid super admin credentials")
+            raise UnauthorizedError(Messages.INVALID_SUPER_ADMIN_CREDENTIALS)
 
         return self._issue_auth_response(user, ip_address=ip_address, user_agent=user_agent)
 
@@ -450,7 +449,7 @@ class AuthService:
         user = self.users.get_by_id(session.user_id)
         if not user.is_superadmin:
             if not user.email_verified:
-                raise ForbiddenError("Email not verified")
+                raise ForbiddenError(Messages.EMAIL_NOT_VERIFIED)
             self._enforce_institution_login_rules(user)
         db.session.commit()
         return {
@@ -487,13 +486,11 @@ class AuthService:
         email = email.lower().strip()
         row = self.otps.otps.find_verified_password_reset_otp(email)
         if not row:
-            raise ValidationError(
-                "Password reset OTP not verified. Call POST /auth/verify-otp first."
-            )
+            raise ValidationError(Messages.PASSWORD_RESET_OTP_NOT_VERIFIED_CALL_POST_AUTH_VERIFY_OTP_FIRST)
 
         user = self.users.find_by_email(email)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
 
         user.password_hash = hash_password(new_password)
         row.is_used = True
@@ -504,7 +501,7 @@ class AuthService:
     def change_password(self, user_id: int, current_password: str, new_password: str) -> None:
         user = self.users.get_by_id(user_id)
         if not user or not verify_password(current_password, user.password_hash):
-            raise UnauthorizedError("Current password is incorrect")
+            raise UnauthorizedError(Messages.CURRENT_PASSWORD_IS_INCORRECT)
         user.password_hash = hash_password(new_password)
         db.session.commit()
 
@@ -513,8 +510,7 @@ class AuthService:
     def _enforce_institution_login_rules(self, user: User) -> None:
         if user.user_status == UserStatus.PENDING_APPROVAL.value:
             raise ForbiddenError(
-                "Your institution registration request is currently under review. "
-                "You will receive an email once it has been approved."
+                Messages.INSTITUTION_REGISTRATION_UNDER_REVIEW_EMAIL_NOTICE
             )
         if user.user_status == UserStatus.REGISTRATION_REJECTED.value:
             intent = self.registration_intents.find_institution_by_user_id(user.id)
@@ -523,7 +519,7 @@ class AuthService:
                 else "No reason provided."
             )
             raise ForbiddenError(
-                f"Your institution registration was rejected. Reason: {reason}"
+                Messages.INSTITUTION_REGISTRATION_REJECTED_REASON.format(reason=reason)
             )
 
         # Legacy rows: institution workspace created before user-based approval flow
@@ -536,25 +532,24 @@ class AuthService:
         for workspace in owned:
             if workspace.status == WorkspaceStatus.PENDING_APPROVAL.value:
                 raise ForbiddenError(
-                    "Your institution registration request is currently under review. "
-                    "You will receive an email once it has been approved."
+                    Messages.INSTITUTION_REGISTRATION_UNDER_REVIEW_EMAIL_NOTICE
                 )
             if workspace.status == WorkspaceStatus.REJECTED.value:
                 reason = workspace.rejection_reason or "No reason provided."
                 raise ForbiddenError(
-                    f"Your institution registration was rejected. Reason: {reason}"
+                    Messages.INSTITUTION_REGISTRATION_REJECTED_REASON.format(reason=reason)
                 )
 
     def _ensure_workspace_allows_member_join(self, workspace: Workspace) -> None:
         if workspace.status == WorkspaceStatus.PENDING_APPROVAL.value:
-            raise ForbiddenError("This institution is not yet approved for members")
+            raise ForbiddenError(Messages.THIS_INSTITUTION_IS_NOT_YET_APPROVED_FOR_MEMBERS)
         if workspace.status == WorkspaceStatus.REJECTED.value:
-            raise ForbiddenError("This institution registration was rejected")
+            raise ForbiddenError(Messages.THIS_INSTITUTION_REGISTRATION_WAS_REJECTED)
         if workspace.status in (
             WorkspaceStatus.SUSPENDED.value,
             WorkspaceStatus.ARCHIVED.value,
         ):
-            raise ForbiddenError("This workspace is not accepting new members")
+            raise ForbiddenError(Messages.THIS_WORKSPACE_IS_NOT_ACCEPTING_NEW_MEMBERS)
 
     def _issue_auth_response(
         self,
@@ -683,4 +678,4 @@ class AuthService:
             code = generate_workspace_join_code()
             if not self.workspaces.find_by_join_code(code):
                 return code
-        raise ConflictError("Could not generate unique join code")
+        raise ConflictError(Messages.COULD_NOT_GENERATE_UNIQUE_JOIN_CODE)

@@ -1,6 +1,8 @@
 """
 Subject topics — curriculum taxonomy per subject.
 """
+
+from utils.messages import Messages
 from models import Topic
 from repositories.question_repository import QuestionRepository
 from repositories.subject_repository import (
@@ -38,7 +40,7 @@ class TopicService:
         )
         name = name.strip()
         if self.topics.find_by_subject_and_name(subject.id, name):
-            raise ConflictError("A topic with this name already exists in the subject")
+            raise ConflictError(Messages.A_TOPIC_WITH_THIS_NAME_ALREADY_EXISTS_IN_THE_SUBJECT)
 
         topic = Topic(
             name=name,
@@ -97,7 +99,7 @@ class TopicService:
             name = data["name"].strip()
             existing = self.topics.find_by_subject_and_name(subject_id, name)
             if existing and existing.id != topic.id:
-                raise ConflictError("A topic with this name already exists in the subject")
+                raise ConflictError(Messages.A_TOPIC_WITH_THIS_NAME_ALREADY_EXISTS_IN_THE_SUBJECT)
             topic.name = name
         if "description" in data:
             topic.description = (data.get("description") or "").strip() or None
@@ -121,9 +123,7 @@ class TopicService:
         topic = self._get_topic_or_404(topic_id, subject_id, workspace_id)
         question_count = self.questions.count_by_topic_id(topic.id)
         if question_count > 0:
-            raise ValidationError(
-                f"Cannot delete topic: {question_count} question(s) still reference it"
-            )
+            raise ValidationError(Messages.CANNOT_DELETE_TOPIC_QUESTION_COUNT_QUESTION_S_STILL_REFERENCE_IT.format(question_count=question_count))
         db.session.delete(topic)
         db.session.commit()
 
@@ -132,14 +132,14 @@ class TopicService:
     ):
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         if not can_manage_subjects(workspace, actor_membership):
-            raise ForbiddenError("Only workspace owner or admin can manage topics")
+            raise ForbiddenError(Messages.ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_MANAGE_TOPICS)
         return subject
 
     def _resolve_subject_for_topic_view(
@@ -147,11 +147,11 @@ class TopicService:
     ):
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         actor_link = self.subject_memberships.find_active(
             actor_membership.id, subject_id
@@ -159,9 +159,7 @@ class TopicService:
         if not can_view_subject_topics(
             workspace, actor_link, actor=actor_membership
         ):
-            raise ForbiddenError(
-                "You need an active assignment to this subject to access topics"
-            )
+            raise ForbiddenError(Messages.YOU_NEED_AN_ACTIVE_ASSIGNMENT_TO_THIS_SUBJECT_TO_ACCESS_TOPICS)
         return subject
 
     def _get_topic_or_404(
@@ -171,7 +169,7 @@ class TopicService:
             topic_id, subject_id=subject_id, workspace_id=workspace_id
         )
         if not topic:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(Messages.TOPIC_NOT_FOUND)
         return topic
 
     def serialize_topic(self, topic: Topic) -> dict:

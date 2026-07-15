@@ -1,3 +1,5 @@
+from utils.messages import Messages
+
 class ServiceError(Exception):
     """Base application error with HTTP status code."""
 
@@ -32,7 +34,7 @@ class ScheduleConflictError(ConflictError):
     def __init__(self, conflicting_test_ids: list[int]):
         self.conflicting_test_ids = sorted({int(test_id) for test_id in conflicting_test_ids})
         super().__init__(
-            "This exam overlaps with another scheduled exam for one or more students."
+            Messages.THIS_EXAM_OVERLAPS_WITH_ANOTHER_SCHEDULED_EXAM_FOR_ONE_OR_MORE_STUDENTS
         )
 
 
@@ -42,7 +44,7 @@ class TeacherScheduleConflictError(ConflictError):
     def __init__(self, conflicting_test_id: int):
         self.conflicting_test_id = int(conflicting_test_id)
         super().__init__(
-            "The teacher already has another scheduled exam during this time."
+            Messages.THE_TEACHER_ALREADY_HAS_ANOTHER_SCHEDULED_EXAM_DURING_THIS_TIME
         )
 
 

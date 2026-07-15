@@ -3,6 +3,8 @@ Domain validation for unified question creation by type_code.
 
 Keeps rules out of routes/services so new types can be registered in one place.
 """
+
+from utils.messages import Messages
 from service.exceptions import ValidationError
 
 SUPPORTED_TYPE_CODES = frozenset({"MCQ", "TRUE_FALSE", "MULTI_SELECT", "ESSAY"})
@@ -22,45 +24,43 @@ def validate_question_create_payload(*, type_code: str, choices: list[dict] | No
     """
     normalized = normalize_type_code(type_code)
     if normalized not in SUPPORTED_TYPE_CODES:
-        raise ValidationError(
-            f"Unsupported type_code. Allowed: {', '.join(sorted(SUPPORTED_TYPE_CODES))}"
-        )
+        raise ValidationError(Messages.UNSUPPORTED_TYPE_CODE_ALLOWED_JOIN_SORTED_SUPPORTED_TYPE_CODES.format(join_sorted_supported_type_codes=', '.join(sorted(SUPPORTED_TYPE_CODES))))
 
     choice_list = choices or []
 
     if normalized in _NO_CHOICES:
         if choice_list:
-            raise ValidationError("ESSAY questions must not include choices")
+            raise ValidationError(Messages.ESSAY_QUESTIONS_MUST_NOT_INCLUDE_CHOICES)
         return normalized
 
     if normalized in _CHOICE_REQUIRED and not choice_list:
-        raise ValidationError(f"{normalized} questions require at least one choice")
+        raise ValidationError(Messages.NORMALIZED_QUESTIONS_REQUIRE_AT_LEAST_ONE_CHOICE.format(normalized=normalized))
 
     _validate_choice_rows(choice_list)
 
     if normalized == "TRUE_FALSE":
         if len(choice_list) != 2:
-            raise ValidationError("TRUE_FALSE questions must have exactly two choices")
+            raise ValidationError(Messages.TRUE_FALSE_QUESTIONS_MUST_HAVE_EXACTLY_TWO_CHOICES)
         correct = sum(1 for c in choice_list if c.get("is_correct"))
         if correct != 1:
-            raise ValidationError("TRUE_FALSE questions must have exactly one correct choice")
+            raise ValidationError(Messages.TRUE_FALSE_QUESTIONS_MUST_HAVE_EXACTLY_ONE_CORRECT_CHOICE)
 
     elif normalized == "MCQ":
         correct = sum(1 for c in choice_list if c.get("is_correct"))
         if correct != 1:
-            raise ValidationError("MCQ questions must have exactly one correct choice")
+            raise ValidationError(Messages.MCQ_QUESTIONS_MUST_HAVE_EXACTLY_ONE_CORRECT_CHOICE)
         if len(choice_list) < 2:
-            raise ValidationError("MCQ questions must have at least two choices")
+            raise ValidationError(Messages.MCQ_QUESTIONS_MUST_HAVE_AT_LEAST_TWO_CHOICES)
 
     elif normalized == "MULTI_SELECT":
         correct = sum(1 for c in choice_list if c.get("is_correct"))
         if correct < 1:
             raise ValidationError(
-                "MULTI_SELECT questions must have at least one correct choice"
+                Messages.MULTI_SELECT_QUESTIONS_MUST_HAVE_AT_LEAST_ONE_CORRECT_CHOICE
             )
         if len(choice_list) < 2:
             raise ValidationError(
-                "MULTI_SELECT questions must have at least two choices"
+                Messages.MULTI_SELECT_QUESTIONS_MUST_HAVE_AT_LEAST_TWO_CHOICES
             )
 
     return normalized
@@ -70,6 +70,6 @@ def _validate_choice_rows(choices: list[dict]) -> None:
     for idx, choice in enumerate(choices):
         body = (choice.get("body") or "").strip()
         if not body:
-            raise ValidationError(f"Choice at index {idx} must have a non-empty body")
+            raise ValidationError(Messages.CHOICE_AT_INDEX_IDX_MUST_HAVE_A_NON_EMPTY_BODY.format(idx=idx))
         if "is_correct" not in choice:
-            raise ValidationError(f"Choice at index {idx} must include is_correct")
+            raise ValidationError(Messages.CHOICE_AT_INDEX_IDX_MUST_INCLUDE_IS_CORRECT.format(idx=idx))

@@ -1,7 +1,10 @@
 """
 Student analytics based on already graded test attempts.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 from repositories.attempt_repository import TestAttemptRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
@@ -27,10 +30,10 @@ class StudentAnalyticsService:
         self._ensure_student_scope(actor_membership)
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
         actor_link = self._subject_student_link(actor_membership.id, subject_id)
         if not verify_subject_student_access(actor_link):
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         rows = self.attempts.list_topic_weighted_rows_for_subject(
             workspace_id=workspace_id,
@@ -100,9 +103,9 @@ class StudentAnalyticsService:
             test_id=test_id,
         )
         if not attempt:
-            raise NotFoundError("Graded test result not found")
+            raise NotFoundError(Messages.GRADED_TEST_RESULT_NOT_FOUND)
         if attempt.status != TestAttemptStatus.GRADED.value:
-            raise ValidationError("Test attempt is not fully graded")
+            raise ValidationError(Messages.TEST_ATTEMPT_IS_NOT_FULLY_GRADED)
 
         rows = self.attempts.list_topic_weighted_rows_for_attempt(attempt_id=attempt.id)
         topics = self._serialize_topics(rows, key_name="mastery_percentage")
@@ -123,7 +126,7 @@ class StudentAnalyticsService:
     @staticmethod
     def _ensure_student_scope(actor_membership) -> None:
         if actor_membership.role != MembershipRole.STUDENT.value:
-            raise ValidationError("Student access required")
+            raise ValidationError(Messages.STUDENT_ACCESS_REQUIRED)
 
     @staticmethod
     def _classify(performance: float) -> str:

@@ -33,6 +33,7 @@ from models.proctoring import (
     ProctoringSession,
     ProctoringViolation,
 )
+from models.report import Report
 from models.billing import (
     Feature,
     Payment,
@@ -70,6 +71,7 @@ __all__ = [
     "ProctoringViolation",
     "ProctoringEvidencePackage",
     "ProctoringAuditLog",
+    "Report",
     "QuestionBank",
     "QuestionType",
     "QuestionChoice",

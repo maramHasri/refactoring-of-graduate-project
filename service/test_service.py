@@ -1,3 +1,4 @@
+from utils.messages import Messages
 import json
 import logging
 import re
@@ -165,7 +166,7 @@ class TestService:
             student_membership_id=student_membership_id,
         )
         if not row:
-            raise NotFoundError("Student assignment not found")
+            raise NotFoundError(Messages.STUDENT_ASSIGNMENT_NOT_FOUND)
         self.test_assignments.delete(row)
         db.session.commit()
         logger.info(
@@ -178,17 +179,17 @@ class TestService:
     def create_test(self, *, workspace_id: int, actor_membership, data: dict) -> Test:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         subject = self.subjects.get_active_by_id(data["subject_id"], workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         actor_link = self.subject_memberships.find_active(
             actor_membership.id, subject.id
         )
         if not can_manage_subjects(workspace, actor_membership) and not verify_subject_teacher_access(actor_link):
-            raise ForbiddenError("You are not allowed to create exams for this subject")
+            raise ForbiddenError(Messages.YOU_ARE_NOT_ALLOWED_TO_CREATE_EXAMS_FOR_THIS_SUBJECT)
 
         base_slug = self._resolve_slug(None, data["name"])
         slug = self._resolve_unique_slug(base_slug)
@@ -196,7 +197,7 @@ class TestService:
         total_score = self._to_decimal(data.get("total_score"), "total_score")
         passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
         if total_score is not None and passing_score is not None and passing_score > total_score:
-            raise ValidationError("passing_score cannot be greater than total_score")
+            raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
 
         test = Test(
             name=data["name"].strip(),
@@ -251,18 +252,14 @@ class TestService:
         if "slug" in data:
             raw_slug = (data.get("slug") or "").strip()
             if not raw_slug:
-                raise ValidationError("slug cannot be empty")
+                raise ValidationError(Messages.SLUG_CANNOT_BE_EMPTY)
             slug = self._normalize_slug_value(raw_slug)
             if not slug:
-                raise ValidationError(
-                    "slug must contain at least one latin letter or digit (a-z, 0-9)"
-                )
+                raise ValidationError(Messages.SLUG_MUST_CONTAIN_AT_LEAST_ONE_LATIN_LETTER_OR_DIGIT_A_Z_0_9)
             if slug != test.slug:
                 existing = self.tests.find_by_slug(slug)
                 if existing:
-                    raise ConflictError(
-                        f"Test slug '{slug}' is already used by test id {existing.id}"
-                    )
+                    raise ConflictError(Messages.TEST_SLUG_SLUG_IS_ALREADY_USED_BY_TEST_ID_EXISTING_ID.format(slug=slug, existing_id=existing.id))
                 test.slug = slug
         if "description" in data:
             test.description = (data.get("description") or "").strip() or None
@@ -271,7 +268,7 @@ class TestService:
         if "passing_score" in data:
             test.passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
         if test.total_score is not None and test.passing_score is not None and test.passing_score > test.total_score:
-            raise ValidationError("passing_score cannot be greater than total_score")
+            raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
         if "settings_config" in data:
             test.settings_config = self._normalize_settings_config(data.get("settings_config"))
         if "availability_time_mode" in data:
@@ -303,19 +300,17 @@ class TestService:
     ) -> list[dict]:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status != TestStatus.DRAFT.value:
-            raise ValidationError("Questions can only be added while test is DRAFT")
+            raise ValidationError(Messages.QUESTIONS_CAN_ONLY_BE_ADDED_WHILE_TEST_IS_DRAFT)
         if not question_ids:
-            raise ValidationError("question_ids must contain at least one item")
+            raise ValidationError(Messages.QUESTION_IDS_MUST_CONTAIN_AT_LEAST_ONE_ITEM)
 
         created = []
         for question_id in question_ids:
             question = self.questions.get_by_id(question_id)
             if not question or not question.bank or question.bank.workspace_id != workspace_id:
-                raise NotFoundError(f"Question {question_id} not found in workspace")
+                raise NotFoundError(Messages.QUESTION_QUESTION_ID_NOT_FOUND_IN_WORKSPACE.format(question_id=question_id))
             if question.bank.subject_id != test.subject_id:
-                raise ValidationError(
-                    f"Question {question_id} does not belong to the test subject"
-                )
+                raise ValidationError(Messages.QUESTION_QUESTION_ID_DOES_NOT_BELONG_TO_THE_TEST_SUBJECT.format(question_id=question_id))
             if self.test_questions.find_by_test_and_question(test.id, question.id):
                 continue
 
@@ -374,7 +369,7 @@ class TestService:
     ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         if not file_storage:
-            raise ValidationError("csv_file is required")
+            raise ValidationError(Messages.CSV_FILE_IS_REQUIRED)
 
         text = read_csv_text(file_storage.read())
         logger.info(
@@ -424,7 +419,7 @@ class TestService:
         )
 
         result = {
-            "message": "CSV questions imported",
+            "message": Messages.CSV_QUESTIONS_IMPORTED,
             "count": imported_count,
             "questions": [self.serialize_test_question(row) for row in created],
         }
@@ -453,13 +448,13 @@ class TestService:
             actor_membership=actor_membership,
         )
         if bank.subject_id != test.subject_id:
-            raise ValidationError("Selected bank does not belong to exam subject")
+            raise ValidationError(Messages.SELECTED_BANK_DOES_NOT_BELONG_TO_EXAM_SUBJECT)
 
         created = []
         for question_id in question_ids:
             question = self.questions.get_active_in_bank(question_id, bank.id)
             if not question:
-                raise NotFoundError(f"Question {question_id} not found in selected bank")
+                raise NotFoundError(Messages.QUESTION_QUESTION_ID_NOT_FOUND_IN_SELECTED_BANK.format(question_id=question_id))
             snapshot = self._snapshot_from_source_question(question)
             row = TestQuestion(
                 test_id=test.id,
@@ -527,7 +522,7 @@ class TestService:
         db.session.commit()
         serialized = [self.serialize_test_question(row) for row in created]
         return {
-            "message": "Blueprint generated successfully",
+            "message": Messages.BLUEPRINT_GENERATED_SUCCESSFULLY,
             "count": len(serialized),
             "summary": summary,
             "questions": serialized,
@@ -548,7 +543,7 @@ class TestService:
     ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         if not test.subject:
-            raise ValidationError("Test must have a subject for AI question generation")
+            raise ValidationError(Messages.TEST_MUST_HAVE_A_SUBJECT_FOR_AI_QUESTION_GENERATION)
 
         subject_name = test.subject.name
         topic_rows = self._resolve_topics_for_test(
@@ -682,7 +677,7 @@ class TestService:
             actor_membership=actor_membership,
         )
         if row.status != AIGeneratedQuestionStatus.PENDING_REVIEW.value:
-            raise ValidationError("Only pending review AI questions can be edited")
+            raise ValidationError(Messages.ONLY_PENDING_REVIEW_AI_QUESTIONS_CAN_BE_EDITED)
 
         payload = {
             "type_code": data.get("type_code", row.type_code),
@@ -745,21 +740,21 @@ class TestService:
             actor_membership=actor_membership,
         )
         if request_row.test_id != test.id:
-            raise ValidationError("request_id does not belong to this test")
+            raise ValidationError(Messages.REQUEST_ID_DOES_NOT_BELONG_TO_THIS_TEST)
         if request_row.status != AIGenerationRequestStatus.COMPLETED.value:
-            raise ValidationError("Only completed generation requests can be imported")
+            raise ValidationError(Messages.ONLY_COMPLETED_GENERATION_REQUESTS_CAN_BE_IMPORTED)
         if not question_ids:
-            raise ValidationError("question_ids must contain at least one id")
+            raise ValidationError(Messages.QUESTION_IDS_MUST_CONTAIN_AT_LEAST_ONE_ID)
 
         rows = self.ai_generated_questions.list_by_ids_for_request(request_id, question_ids)
         if len(rows) != len(set(question_ids)):
-            raise ValidationError("Some question_ids do not belong to the generation request")
+            raise ValidationError(Messages.SOME_QUESTION_IDS_DO_NOT_BELONG_TO_THE_GENERATION_REQUEST)
 
         created = []
         try:
             for row in rows:
                 if row.status != AIGeneratedQuestionStatus.PENDING_REVIEW.value:
-                    raise ValidationError(f"AI question {row.id} already imported")
+                    raise ValidationError(Messages.AI_QUESTION_ALREADY_IMPORTED.format(question_id=row.id))
                 payload = {
                     "type_code": row.type_code,
                     "body": row.question_text,
@@ -783,7 +778,7 @@ class TestService:
             db.session.rollback()
             raise
         return {
-            "message": "AI questions imported into test",
+            "message": Messages.AI_QUESTIONS_IMPORTED_INTO_TEST,
             "count": len(created),
             "questions": [self.serialize_test_question(row) for row in created],
         }
@@ -844,7 +839,7 @@ class TestService:
     def publish_now(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
-            raise ValidationError("Closed or archived tests cannot be published")
+            raise ValidationError(Messages.CLOSED_OR_ARCHIVED_TESTS_CANNOT_BE_PUBLISHED)
         self.schedule_conflicts.ensure_no_schedule_conflicts(
             test=test,
             workspace_id=workspace_id,
@@ -883,13 +878,13 @@ class TestService:
     ) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
-            raise ValidationError("Closed or archived tests cannot be scheduled")
+            raise ValidationError(Messages.CLOSED_OR_ARCHIVED_TESTS_CANNOT_BE_SCHEDULED)
         if not publish_at:
-            raise ValidationError("publish_at is required")
+            raise ValidationError(Messages.PUBLISH_AT_IS_REQUIRED)
         publish_at = ensure_local_aware(publish_at)
         now = local_timezone_now()
         if publish_at <= now:
-            raise ValidationError("publish_at must be in the future")
+            raise ValidationError(Messages.PUBLISH_AT_MUST_BE_IN_THE_FUTURE)
         test.status = TestStatus.SCHEDULED.value
         test.scheduled_publish_at = publish_at
         self.schedule_conflicts.ensure_no_schedule_conflicts(
@@ -908,7 +903,7 @@ class TestService:
     def close_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status == TestStatus.ARCHIVED.value:
-            raise ValidationError("Archived tests cannot be closed")
+            raise ValidationError(Messages.ARCHIVED_TESTS_CANNOT_BE_CLOSED)
         test.status = TestStatus.CLOSED.value
         test.closed_at = local_timezone_now()
         db.session.commit()
@@ -1009,10 +1004,10 @@ class TestService:
     def _resolve_test_access(self, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self.tests.get_by_id(test_id)
         if not test:
-            raise NotFoundError("Test not found")
+            raise NotFoundError(Messages.TEST_NOT_FOUND)
 
         if not test.created_by or test.created_by.workspace_id != workspace_id:
-            raise NotFoundError("Test not found in this workspace")
+            raise NotFoundError(Messages.TEST_NOT_FOUND_IN_THIS_WORKSPACE)
 
         workspace = self.workspaces.get_by_id(workspace_id)
         actor_link = self.subject_memberships.find_active(actor_membership.id, test.subject_id)
@@ -1021,12 +1016,12 @@ class TestService:
             return test
         if verify_subject_teacher_access(actor_link):
             return test
-        raise ForbiddenError("You do not have access to this test")
+        raise ForbiddenError(Messages.YOU_DO_NOT_HAVE_ACCESS_TO_THIS_TEST)
 
     def _resolve_draft_test(self, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status != TestStatus.DRAFT.value:
-            raise ValidationError("Questions can only be modified while test is DRAFT")
+            raise ValidationError(Messages.QUESTIONS_CAN_ONLY_BE_MODIFIED_WHILE_TEST_IS_DRAFT)
         return test
 
     def _resolve_test_for_creator(
@@ -1034,22 +1029,20 @@ class TestService:
     ) -> Test:
         test = self.tests.get_by_id_in_workspace(test_id, workspace_id)
         if not test:
-            raise NotFoundError("Test not found in this workspace")
+            raise NotFoundError(Messages.TEST_NOT_FOUND_IN_THIS_WORKSPACE)
         if test.created_by_membership_id != actor_membership.id:
-            raise ForbiddenError("Only the test creator can delete this test")
+            raise ForbiddenError(Messages.ONLY_THE_TEST_CREATOR_CAN_DELETE_THIS_TEST)
         return test
 
     def _get_test_question_or_404(self, test_id: int, test_question_id: int) -> TestQuestion:
         row = self.test_questions.get_for_test(test_question_id, test_id)
         if not row:
-            raise NotFoundError("Test question not found")
+            raise NotFoundError(Messages.TEST_QUESTION_NOT_FOUND)
         return row
 
     def _ensure_no_attempts_on_test(self, test_id: int) -> None:
         if self.attempts.list_for_test(test_id):
-            raise ValidationError(
-                "Cannot modify exam questions after student attempts have been recorded"
-            )
+            raise ValidationError(Messages.CANNOT_MODIFY_EXAM_QUESTIONS_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED)
 
     def _merge_test_question_payload(self, row: TestQuestion, patch: dict) -> dict:
         current = {
@@ -1076,22 +1069,20 @@ class TestService:
             topic_id, subject_id=test.subject_id, workspace_id=workspace_id
         )
         if not topic:
-            raise ValidationError(
-                f"topic_id {topic_id} does not belong to the exam subject"
-            )
+            raise ValidationError(Messages.TOPIC_ID_TOPIC_ID_DOES_NOT_BELONG_TO_THE_EXAM_SUBJECT.format(topic_id=topic_id))
         return topic.id, topic.name
 
     def _resolve_topics_for_test(
         self, *, test: Test, workspace_id: int, topic_ids: list[int]
     ) -> list:
         if not topic_ids:
-            raise ValidationError("topic_ids must contain at least one topic")
+            raise ValidationError(Messages.TOPIC_IDS_MUST_CONTAIN_AT_LEAST_ONE_TOPIC)
         unique_topic_ids = []
         seen = set()
         for topic_id in topic_ids:
             tid = int(topic_id)
             if tid <= 0:
-                raise ValidationError("topic_ids must contain positive integers")
+                raise ValidationError(Messages.TOPIC_IDS_MUST_CONTAIN_POSITIVE_INTEGERS)
             if tid in seen:
                 continue
             seen.add(tid)
@@ -1108,9 +1099,7 @@ class TestService:
                 continue
             rows.append(topic)
         if missing:
-            raise ValidationError(
-                f"topic_id(s) do not belong to the exam subject: {missing}"
-            )
+            raise ValidationError(Messages.TOPIC_ID_S_DO_NOT_BELONG_TO_THE_EXAM_SUBJECT_MISSING.format(missing=missing))
         return rows
 
     def _snapshot_from_source_question(self, question) -> dict:
@@ -1153,7 +1142,7 @@ class TestService:
     ) -> AIGenerationRequest:
         row = self.ai_generation_requests.get_by_id(request_id)
         if not row:
-            raise NotFoundError("AI generation request not found")
+            raise NotFoundError(Messages.AI_GENERATION_REQUEST_NOT_FOUND)
         return row
 
     def _get_ai_generated_question_or_404(
@@ -1161,7 +1150,7 @@ class TestService:
     ) -> AIGeneratedQuestion:
         row = self.ai_generated_questions.get_by_id(generated_question_id)
         if not row:
-            raise NotFoundError("AI generated question not found")
+            raise NotFoundError(Messages.AI_GENERATED_QUESTION_NOT_FOUND)
         return row
 
     def _ensure_can_manage_ai_request(
@@ -1173,10 +1162,10 @@ class TestService:
     ) -> None:
         test = self.tests.get_by_id(request_row.test_id)
         if not test:
-            raise NotFoundError("Test not found")
+            raise NotFoundError(Messages.TEST_NOT_FOUND)
         self._resolve_test_access(test.id, workspace_id, actor_membership)
         if request_row.created_by_membership_id != actor_membership.id:
-            raise ForbiddenError("You can only manage your own AI generation requests")
+            raise ForbiddenError(Messages.YOU_CAN_ONLY_MANAGE_YOUR_OWN_AI_GENERATION_REQUESTS)
 
     def serialize_ai_generation_request(self, row: AIGenerationRequest) -> dict:
         return {
@@ -1295,7 +1284,7 @@ class TestService:
         student_membership_ids: list[int],
     ) -> None:
         if not student_membership_ids:
-            raise ValidationError("student_membership_ids must contain at least one id")
+            raise ValidationError(Messages.STUDENT_MEMBERSHIP_IDS_MUST_CONTAIN_AT_LEAST_ONE_ID)
 
         missing_in_workspace: list[int] = []
         not_student_role: list[int] = []
@@ -1322,21 +1311,16 @@ class TestService:
                 not_enrolled.append(membership_id)
 
         if missing_in_workspace:
-            raise ValidationError(
-                f"Membership(s) not found in workspace: {missing_in_workspace}"
-            )
+            raise ValidationError(Messages.MEMBERSHIP_S_NOT_FOUND_IN_WORKSPACE_MISSING_IN_WORKSPACE.format(missing_in_workspace=missing_in_workspace))
         if inactive_memberships:
-            raise ValidationError(
-                f"Membership(s) are not active: {inactive_memberships}"
-            )
+            raise ValidationError(Messages.MEMBERSHIP_S_ARE_NOT_ACTIVE_INACTIVE_MEMBERSHIPS.format(inactive_memberships=inactive_memberships))
         if not_student_role:
-            raise ValidationError(
-                f"Only STUDENT memberships are allowed: {not_student_role}"
-            )
+            raise ValidationError(Messages.ONLY_STUDENT_MEMBERSHIPS_ARE_ALLOWED_NOT_STUDENT_ROLE.format(not_student_role=not_student_role))
         if not_enrolled:
             raise ValidationError(
-                "Student membership(s) are not enrolled in the exam subject: "
-                f"{not_enrolled}"
+                Messages.STUDENT_MEMBERSHIPS_NOT_ENROLLED_IN_EXAM_SUBJECT.format(
+                    membership_ids=not_enrolled
+                )
             )
 
     def _normalize_slug_value(self, raw: str) -> str:
@@ -1398,31 +1382,29 @@ class TestService:
         )
         question_type = self.question_types.find_by_code(type_code)
         if not question_type:
-            raise ValidationError(
-                f"Question type '{type_code}' is not configured. Run flask seed."
-            )
+            raise ValidationError(Messages.QUESTION_TYPE_TYPE_CODE_IS_NOT_CONFIGURED_RUN_FLASK_SEED.format(type_code=type_code))
 
         body = (payload.get("body") or "").strip()
         if not body:
-            raise ValidationError("Question body is required")
+            raise ValidationError(Messages.QUESTION_BODY_IS_REQUIRED)
 
         points = payload.get("points")
         points_value = Decimal(str(points)) if points is not None else Decimal("1")
         if points_value < 0:
-            raise ValidationError("points must be non-negative")
+            raise ValidationError(Messages.POINTS_MUST_BE_NON_NEGATIVE)
 
         difficulty = payload.get("difficulty")
         if difficulty is not None:
             difficulty = difficulty.strip().upper()
             if difficulty not in [d.value for d in Difficulty]:
-                raise ValidationError("invalid difficulty value")
+                raise ValidationError(Messages.INVALID_DIFFICULTY_VALUE)
 
         topic_id = payload.get("topic_id")
         if topic_id is not None:
             try:
                 topic_id = int(topic_id)
             except (TypeError, ValueError):
-                raise ValidationError("topic_id must be a valid integer")
+                raise ValidationError(Messages.TOPIC_ID_MUST_BE_A_VALID_INTEGER)
             if topic_id <= 0:
                 topic_id = None
 
@@ -1465,46 +1447,46 @@ class TestService:
         try:
             parsed = Decimal(str(value))
         except Exception:
-            raise ValidationError(f"{field_name} must be numeric")
+            raise ValidationError(Messages.FIELD_NAME_MUST_BE_NUMERIC.format(field_name=field_name))
         if parsed < 0:
-            raise ValidationError(f"{field_name} must be non-negative")
+            raise ValidationError(Messages.FIELD_NAME_MUST_BE_NON_NEGATIVE.format(field_name=field_name))
         return parsed
 
     def _normalize_settings_config(self, value) -> str | None:
         if value is None:
             return None
         if not isinstance(value, dict):
-            raise ValidationError("settings_config must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIG_MUST_BE_AN_OBJECT)
         proctoring_raw = value.get("proctoring") or {}
         if not isinstance(proctoring_raw, dict):
-            raise ValidationError("settings_config.proctoring must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGPROCTORING_MUST_BE_AN_OBJECT)
 
         attempt_raw = value.get("attempt_settings") or {}
         if not isinstance(attempt_raw, dict):
-            raise ValidationError("settings_config.attempt_settings must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGATTEMPT_SETTINGS_MUST_BE_AN_OBJECT)
         max_attempts_raw = attempt_raw.get("max_attempts", 1)
         try:
             max_attempts = int(max_attempts_raw)
         except (TypeError, ValueError):
-            raise ValidationError("settings_config.attempt_settings.max_attempts must be an integer")
+            raise ValidationError(Messages.SETTINGS_CONFIGATTEMPT_SETTINGSMAX_ATTEMPTS_MUST_BE_AN_INTEGER)
         if max_attempts < 1:
-            raise ValidationError("settings_config.attempt_settings.max_attempts must be >= 1")
+            raise ValidationError(Messages.SETTINGS_CONFIGATTEMPT_SETTINGSMAX_ATTEMPTS_MUST_BE_1)
 
         navigation_raw = value.get("navigation_settings") or {}
         if not isinstance(navigation_raw, dict):
-            raise ValidationError("settings_config.navigation_settings must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGNAVIGATION_SETTINGS_MUST_BE_AN_OBJECT)
 
         answer_rules_raw = value.get("answer_rules") or {}
         if not isinstance(answer_rules_raw, dict):
-            raise ValidationError("settings_config.answer_rules must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGANSWER_RULES_MUST_BE_AN_OBJECT)
 
         display_raw = value.get("display_settings") or {}
         if not isinstance(display_raw, dict):
-            raise ValidationError("settings_config.display_settings must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGDISPLAY_SETTINGS_MUST_BE_AN_OBJECT)
 
         review_raw = value.get("review_settings") or {}
         if not isinstance(review_raw, dict):
-            raise ValidationError("settings_config.review_settings must be an object")
+            raise ValidationError(Messages.SETTINGS_CONFIGREVIEW_SETTINGS_MUST_BE_AN_OBJECT)
 
         require_answer_all = bool(answer_rules_raw.get("require_answer_all", False))
         allow_skip_questions = bool(answer_rules_raw.get("allow_skip_questions", True))
@@ -1544,17 +1526,15 @@ class TestService:
         if test.status == TestStatus.DRAFT.value:
             return
         if test.status != TestStatus.SCHEDULED.value:
-            raise ValidationError("Only DRAFT tests are editable")
+            raise ValidationError(Messages.ONLY_DRAFT_TESTS_ARE_EDITABLE)
 
         if not test.scheduled_publish_at:
-            raise ValidationError("Scheduled test is missing scheduled_publish_at")
+            raise ValidationError(Messages.SCHEDULED_TEST_IS_MISSING_SCHEDULED_PUBLISH_AT)
         now = local_timezone_now()
         publish_at = ensure_local_aware(test.scheduled_publish_at)
         min_delta = timedelta(minutes=30)
         if publish_at - now < min_delta:
-            raise ValidationError(
-                "Scheduled tests can only be edited at least 30 minutes before publish time"
-            )
+            raise ValidationError(Messages.SCHEDULED_TESTS_CAN_ONLY_BE_EDITED_AT_LEAST_30_MINUTES_BEFORE_PUBLISH_TIME)
 
     def _dump_json(self, value):
         if value is None:

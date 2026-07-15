@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from pathlib import Path
 
 from flask import Blueprint, current_app, g, request, send_from_directory
@@ -21,7 +22,7 @@ def upload_image():
     """
     image = request.files.get("image")
     if not image:
-        raise ValidationError("image file is required")
+        raise ValidationError(Messages.IMAGE_FILE_IS_REQUIRED)
 
     result = QuestionImageService().upload_image(
         image_file=image,
@@ -29,7 +30,7 @@ def upload_image():
         owner_user_id=g.current_user.id,
     )
     return {
-        "message": "Image uploaded",
+        "message": Messages.IMAGE_UPLOADED,
         **result,
     }, 201
 

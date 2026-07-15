@@ -1,3 +1,4 @@
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth
@@ -17,7 +18,7 @@ def register_student():
     data = RegisterStudentSchema().load(request.get_json() or {})
     result = AuthService().register_student_with_join_code(**data)
     return {
-        "message": "Student registered. Check your email for the verification code.",
+        "message": Messages.STUDENT_REGISTERED_CHECK_YOUR_EMAIL_FOR_THE_VERIFICATION_CODE,
         **result,
     }, 201
 
@@ -35,7 +36,7 @@ def join_with_code():
         join_code=data["join_code"],
     )
     return {
-        "message": "Joined workspace",
+        "message": Messages.JOINED_WORKSPACE,
         "membership_id": membership.id,
         "workspace_id": membership.workspace_id,
         "role": membership.role,

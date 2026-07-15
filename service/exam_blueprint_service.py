@@ -3,7 +3,10 @@ Exam blueprint generator — validates instructor blueprints and plans question 
 
 Selection and snapshot persistence are orchestrated by TestService.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 from dataclasses import dataclass
 
@@ -86,10 +89,7 @@ class ExamBlueprintService:
                 if len(batch) < slot.count:
                     topic = self.topics.get_by_id(slot.topic_id)
                     topic_label = topic.name if topic else str(slot.topic_id)
-                    raise ValidationError(
-                        f"Not enough {slot.difficulty} questions inside Topic {topic_label} "
-                        f"(bank {slot.bank_id}): requested {slot.count}, found {len(batch)}"
-                    )
+                    raise ValidationError(Messages.NOT_ENOUGH_SLOT_DIFFICULTY_QUESTIONS_INSIDE_TOPIC_TOPIC_LABEL_BANK_SLO.format(slot_difficulty=slot.difficulty, topic_label=topic_label, slot_bank_id=slot.bank_id, slot_count=slot.count, len_batch=len(batch)))
                 for question in batch:
                     used_question_ids.add(question.id)
                 selected.extend(batch)
@@ -129,16 +129,13 @@ class ExamBlueprintService:
 
         topic_ids = [int(topic["topic_id"]) for topic in topics]
         if len(topic_ids) != len(set(topic_ids)):
-            raise ValidationError(f"Duplicate topic_id entries are not allowed for bank {bank_id}")
+            raise ValidationError(Messages.DUPLICATE_TOPIC_ID_ENTRIES_ARE_NOT_ALLOWED_FOR_BANK_BANK_ID.format(bank_id=bank_id))
 
         topic_weights = {
             str(topic["topic_id"]): int(topic["percentage"]) for topic in topics
         }
         if sum(topic_weights.values()) != 100:
-            raise ValidationError(
-                f"Topic percentages must total 100% for bank {bank_id} "
-                f"(got {sum(topic_weights.values())}%)"
-            )
+            raise ValidationError(Messages.TOPIC_PERCENTAGES_MUST_TOTAL_100_FOR_BANK_BANK_ID_GOT_SUM_TOPIC.format(bank_id=bank_id, sum_topic_weights_values=sum(topic_weights.values())))
 
         topic_counts = distribute_by_percentages(question_count, topic_weights)
         slots: list[QuestionSlot] = []
@@ -147,17 +144,13 @@ class ExamBlueprintService:
             topic_id = int(topic_entry["topic_id"])
             topic = self.topics.get_by_id(topic_id)
             if not topic:
-                raise ValidationError(f"Topic {topic_id} does not exist")
+                raise ValidationError(Messages.TOPIC_TOPIC_ID_DOES_NOT_EXIST.format(topic_id=topic_id))
 
             if topic.subject_id != bank.subject_id:
-                raise ValidationError(
-                    f"Bank {bank_id} does not contain Topic {topic_id}"
-                )
+                raise ValidationError(Messages.BANK_BANK_ID_DOES_NOT_CONTAIN_TOPIC_TOPIC_ID.format(bank_id=bank_id, topic_id=topic_id))
             if not self.questions.bank_has_topic(bank_id, topic_id):
                 topic_label = topic.name
-                raise ValidationError(
-                    f"Bank {bank_id} does not contain Topic {topic_label}"
-                )
+                raise ValidationError(Messages.BANK_BANK_ID_DOES_NOT_CONTAIN_TOPIC_TOPIC_LABEL.format(bank_id=bank_id, topic_label=topic_label))
 
             dist = topic_entry["difficulty_distribution"]
             diff_weights = {
@@ -167,10 +160,7 @@ class ExamBlueprintService:
             }
             diff_sum = sum(diff_weights.values())
             if diff_sum != 100:
-                raise ValidationError(
-                    f"Difficulty percentages must total 100% inside Topic {topic.name} "
-                    f"(got {diff_sum}%)"
-                )
+                raise ValidationError(Messages.DIFFICULTY_PERCENTAGES_MUST_TOTAL_100_INSIDE_TOPIC_TOPIC_NAME_GOT_DIFF.format(topic_name=topic.name, diff_sum=diff_sum))
 
             topic_total = topic_counts[str(topic_id)]
             diff_counts = distribute_by_percentages(topic_total, diff_weights)
@@ -207,7 +197,4 @@ class ExamBlueprintService:
                 if available < slot.count:
                     topic = self.topics.get_by_id(slot.topic_id)
                     topic_label = topic.name if topic else str(slot.topic_id)
-                    raise ValidationError(
-                        f"Not enough {slot.difficulty} questions inside Topic {topic_label}: "
-                        f"requested {slot.count}, only {available} exist"
-                    )
+                    raise ValidationError(Messages.NOT_ENOUGH_SLOT_DIFFICULTY_QUESTIONS_INSIDE_TOPIC_TOPIC_LABEL_REQUESTE.format(slot_difficulty=slot.difficulty, topic_label=topic_label, slot_count=slot.count, available=available))

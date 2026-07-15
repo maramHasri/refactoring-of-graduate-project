@@ -1,4 +1,6 @@
 """Proctoring REST routes — nested under exam attempts."""
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -78,7 +80,7 @@ def ingest_proctoring_event(test_id, attempt_id):
         payload=data.get("payload"),
         source="REST",
     )
-    return {"message": "Event recorded", **result}, 201
+    return {"message": Messages.EVENT_RECORDED, **result}, 201
 
 
 @proctoring_bp.route(

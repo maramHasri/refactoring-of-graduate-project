@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.messages import Messages
+
 import os
 import uuid
 from pathlib import Path
@@ -33,23 +35,23 @@ class QuestionImageService:
         owner_user_id: int,
     ) -> str:
         if not image_file:
-            raise ValidationError("image file is required")
+            raise ValidationError(Messages.IMAGE_FILE_IS_REQUIRED)
 
         filename = image_file.filename or ""
         extension = Path(filename).suffix.lower()
         mimetype = (image_file.mimetype or "").lower()
 
         if extension not in _ALLOWED_EXTENSIONS:
-            raise ValidationError("Unsupported image extension. Allowed: JPG, JPEG, PNG, WEBP")
+            raise ValidationError(Messages.UNSUPPORTED_IMAGE_EXTENSION_ALLOWED_JPG_JPEG_PNG_WEBP)
         if mimetype not in _ALLOWED_MIME_TYPES:
-            raise ValidationError("Invalid file type. Only image files are allowed")
+            raise ValidationError(Messages.INVALID_FILE_TYPE_ONLY_IMAGE_FILES_ARE_ALLOWED)
 
         size = self._resolve_file_size(image_file)
         if size <= 0:
-            raise ValidationError("Uploaded image is empty")
+            raise ValidationError(Messages.UPLOADED_IMAGE_IS_EMPTY)
         if size > self.max_bytes:
             max_mb = self.max_bytes / (1024 * 1024)
-            raise ValidationError(f"Image is too large. Maximum allowed size is {max_mb:.0f}MB")
+            raise ValidationError(Messages.IMAGE_IS_TOO_LARGE.format(max_mb=max_mb))
 
         rel_dir = Path(str(workspace_id)) / str(owner_user_id)
         target_dir = Path(self.storage_dir) / rel_dir

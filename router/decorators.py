@@ -3,6 +3,8 @@ RBAC guards and JWT authentication.
 
 Workspace context is NOT embedded in JWT — frontend sends X-Workspace-Id when needed.
 """
+
+from utils.messages import Messages
 from functools import wraps
 
 from flask import current_app, g, jsonify, request
@@ -30,15 +32,15 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         token = _extract_bearer_token()
         if not token:
-            return jsonify({"error": "Missing authorization token"}), 401
+            return jsonify({"error": Messages.MISSING_AUTHORIZATION_TOKEN}), 401
 
         payload = decode_token(token)
         if not payload:
-            return jsonify({"error": "Invalid or expired token"}), 401
+            return jsonify({"error": Messages.INVALID_OR_EXPIRED_TOKEN}), 401
         if payload.get("type") != "access":
             return jsonify(
                 {
-                    "error": "Invalid access token",
+                    "error": Messages.INVALID_ACCESS_TOKEN,
                     "hint": "Use access_token from login, not refresh_token",
                 }
             ), 401
@@ -55,7 +57,7 @@ def require_auth(f):
 
         user = UserRepository().get_by_id(user_id)
         if not user:
-            return jsonify({"error": "User not found"}), 401
+            return jsonify({"error": Messages.USER_NOT_FOUND}), 401
 
         g.current_user = user
         g.access_jti = jti
@@ -70,7 +72,7 @@ def require_superadmin(f):
     @require_auth
     def decorated(*args, **kwargs):
         if not g.current_user.is_superadmin:
-            return jsonify({"error": "Super admin access required"}), 403
+            return jsonify({"error": Messages.SUPER_ADMIN_ACCESS_REQUIRED}), 403
         return f(*args, **kwargs)
 
     return decorated
@@ -89,7 +91,7 @@ def require_workspace_membership(f):
 
         workspace_id = request.headers.get("X-Workspace-Id", type=int)
         if not workspace_id:
-            return jsonify({"error": "X-Workspace-Id header is required"}), 400
+            return jsonify({"error": Messages.X_WORKSPACE_ID_HEADER_IS_REQUIRED}), 400
 
         from repositories.workspace_repository import MembershipRepository
 
@@ -97,14 +99,14 @@ def require_workspace_membership(f):
             g.current_user.id, workspace_id
         )
         if not membership or membership.status != "ACTIVE":
-            return jsonify({"error": "Not an active member of this workspace"}), 403
+            return jsonify({"error": Messages.NOT_AN_ACTIVE_MEMBER_OF_THIS_WORKSPACE}), 403
 
         from repositories.workspace_repository import WorkspaceRepository
         from utils.enums import WorkspaceStatus
 
         workspace = WorkspaceRepository().get_by_id(workspace_id)
         if not workspace or workspace.status != WorkspaceStatus.ACTIVE.value:
-            return jsonify({"error": "Workspace is not active"}), 403
+            return jsonify({"error": Messages.WORKSPACE_IS_NOT_ACTIVE}), 403
 
         g.workspace_id = workspace_id
         g.membership = membership
@@ -120,13 +122,13 @@ def require_active_student(f):
     @require_workspace_membership
     def decorated(*args, **kwargs):
         if g.current_user.is_superadmin:
-            return jsonify({"error": "Student access required"}), 403
+            return jsonify({"error": Messages.STUDENT_ACCESS_REQUIRED}), 403
 
         if g.current_user.user_status != UserStatus.ACTIVE.value:
-            return jsonify({"error": "User account is not active"}), 403
+            return jsonify({"error": Messages.USER_ACCOUNT_IS_NOT_ACTIVE}), 403
 
         if g.membership.role != MembershipRole.STUDENT.value:
-            return jsonify({"error": "Student access required"}), 403
+            return jsonify({"error": Messages.STUDENT_ACCESS_REQUIRED}), 403
 
         return f(*args, **kwargs)
 
@@ -155,7 +157,7 @@ def handle_service_errors(f):
             return jsonify(payload), exc.status_code
         except Exception:
             current_app.logger.exception("Unhandled error in %s", f.__name__)
-            payload = {"error": "Internal server error"}
+            payload = {"error": Messages.INTERNAL_SERVER_ERROR}
             if current_app.config.get("DEBUG"):
                 payload["detail"] = "See server logs for traceback"
             return jsonify(payload), 500

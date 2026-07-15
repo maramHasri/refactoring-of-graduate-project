@@ -98,6 +98,11 @@ class Workspace(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
+    reports = relationship(
+        "Report",
+        back_populates="workspace",
+        lazy="dynamic",
+    )
 
     __table_args__ = (
         Index("ix_workspaces_kind", "kind"),

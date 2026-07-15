@@ -4,6 +4,8 @@ Subject APIs — workspace-scoped academic entities.
 Uses X-Workspace-Id for tenant context.
 subject_memberships stores per-subject TEACHER/STUDENT roles (separate from membership.role).
 """
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
@@ -34,7 +36,7 @@ def create_subject():
         description=data.get("description"),
         actor_membership=g.membership,
     )
-    return {"message": "Subject created", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 201
+    return {"message": Messages.SUBJECT_CREATED, "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 201
 
 
 @subject_bp.route("", methods=["GET"])
@@ -64,7 +66,7 @@ def update_subject(subject_id):
     subject = _svc().update_subject(
         subject_id, g.workspace_id, g.membership, data
     )
-    return {"message": "Subject updated", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
+    return {"message": Messages.SUBJECT_UPDATED, "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
 
 
 @subject_bp.route("/<int:subject_id>", methods=["DELETE"])
@@ -73,7 +75,7 @@ def update_subject(subject_id):
 def delete_subject(subject_id):
     """DELETE /subjects/{id} — soft delete / archive (no hard delete)."""
     subject = _svc().archive_subject(subject_id, g.workspace_id, g.membership)
-    return {"message": "Subject archived", "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
+    return {"message": Messages.SUBJECT_ARCHIVED, "subject": _svc()._serialize_subject(subject, workspace_id=g.workspace_id)}, 200
 
 
 @subject_bp.route("/<int:subject_id>/teachers", methods=["POST"])
@@ -89,7 +91,7 @@ def assign_teacher(subject_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Teacher assigned to subject",
+        "message": Messages.TEACHER_ASSIGNED_TO_SUBJECT,
         "assignment": _svc()._serialize_assignment(link),
     }, 201
 
@@ -107,7 +109,7 @@ def remove_teacher(subject_id, membership_id):
         teacher_membership_id=membership_id,
         actor_membership=g.membership,
     )
-    return {"message": "Teacher removed from subject"}, 200
+    return {"message": Messages.TEACHER_REMOVED_FROM_SUBJECT}, 200
 
 
 @subject_bp.route("/<int:subject_id>/teachers", methods=["GET"])
@@ -132,7 +134,7 @@ def enroll_student(subject_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Student enrolled in subject",
+        "message": Messages.STUDENT_ENROLLED_IN_SUBJECT,
         "assignment": _svc()._serialize_assignment(link),
     }, 201
 
@@ -150,7 +152,7 @@ def remove_student(subject_id, membership_id):
         student_membership_id=membership_id,
         actor_membership=g.membership,
     )
-    return {"message": "Student removed from subject"}, 200
+    return {"message": Messages.STUDENT_REMOVED_FROM_SUBJECT}, 200
 
 
 @subject_bp.route("/<int:subject_id>/students", methods=["GET"])
@@ -178,7 +180,7 @@ def create_subject_topic(subject_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Topic created",
+        "message": Messages.TOPIC_CREATED,
         "topic": _topic_svc().serialize_topic(topic),
     }, 201
 
@@ -224,7 +226,7 @@ def update_subject_topic(subject_id, topic_id):
         data=data,
     )
     return {
-        "message": "Topic updated",
+        "message": Messages.TOPIC_UPDATED,
         "topic": _topic_svc().serialize_topic(topic),
     }, 200
 
@@ -240,7 +242,7 @@ def delete_subject_topic(subject_id, topic_id):
         topic_id=topic_id,
         actor_membership=g.membership,
     )
-    return {"message": "Topic deleted"}, 200
+    return {"message": Messages.TOPIC_DELETED}, 200
 
 
 @subject_bp.route("/<int:subject_id>/question-banks", methods=["GET"])

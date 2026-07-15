@@ -1,7 +1,10 @@
 """
 Proctoring orchestration — sessions, events, violations, evidence, audit.
 """
+
 from __future__ import annotations
+
+from utils.messages import Messages
 
 import json
 import logging
@@ -137,7 +140,7 @@ class ProctoringService:
             test_id, attempt_id, workspace_id, actor_membership
         )
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
-            raise ValidationError("Proctoring session requires an in-progress attempt")
+            raise ValidationError(Messages.PROCTORING_SESSION_REQUIRES_AN_IN_PROGRESS_ATTEMPT)
 
         session = self.ensure_session_for_attempt(
             test_attempt=attempt,
@@ -147,9 +150,9 @@ class ProctoringService:
             browser_metadata=browser_metadata,
         )
         if not session:
-            raise ValidationError("Proctoring is not enabled for this test")
+            raise ValidationError(Messages.PROCTORING_IS_NOT_ENABLED_FOR_THIS_TEST)
         return {
-            "message": "Proctoring session active",
+            "message": Messages.PROCTORING_SESSION_ACTIVE,
             "session": self.serialize_session(session),
         }
 
@@ -166,7 +169,7 @@ class ProctoringService:
         )
         session = self.sessions.get_by_attempt_id(attempt.id)
         if not session:
-            raise NotFoundError("Proctoring session not found")
+            raise NotFoundError(Messages.PROCTORING_SESSION_NOT_FOUND)
         return {"session": self.serialize_session(session, include_counts=True)}
 
     def list_test_sessions(
@@ -190,7 +193,7 @@ class ProctoringService:
         skip_violation_check: bool = False,
     ) -> dict:
         if session.status != ProctoringSessionStatus.ACTIVE.value:
-            raise ConflictError("Proctoring session is not active")
+            raise ConflictError(Messages.PROCTORING_SESSION_IS_NOT_ACTIVE)
 
         occurred_at = occurred_at or datetime.now(timezone.utc)
         normalized = (event_type or "").upper()
@@ -257,7 +260,7 @@ class ProctoringService:
         )
         session = self.sessions.get_by_attempt_id(attempt.id)
         if not session:
-            raise NotFoundError("Proctoring session not found — start session first")
+            raise NotFoundError(Messages.PROCTORING_SESSION_NOT_FOUND_START_SESSION_FIRST)
         return self.ingest_event(
             session=session,
             event_type=event_type,
@@ -305,13 +308,13 @@ class ProctoringService:
         )
         session = self.sessions.get_by_attempt_id(attempt.id)
         if not session:
-            raise NotFoundError("Proctoring session not found")
+            raise NotFoundError(Messages.PROCTORING_SESSION_NOT_FOUND)
         violation = self.violations.get_for_session(violation_id, session.id)
         if not violation:
-            raise NotFoundError("Violation not found")
+            raise NotFoundError(Messages.VIOLATION_NOT_FOUND)
         is_student = attempt.student_membership_id == actor_membership.id
         if is_student and violation.severity not in _EVIDENCE_SEVERITIES:
-            raise ForbiddenError("Insufficient permissions to view this violation")
+            raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_VIOLATION)
         return {
             "violation": self.serialize_violation(
                 violation, student_view=is_student
@@ -336,9 +339,9 @@ class ProctoringService:
         )
         violation = self.violations.get_by_id(violation_id)
         if not violation or not violation.evidence_package:
-            raise NotFoundError("Evidence package not found")
+            raise NotFoundError(Messages.EVIDENCE_PACKAGE_NOT_FOUND)
         if violation.severity not in _EVIDENCE_SEVERITIES:
-            raise NotFoundError("Evidence package not generated for LOW severity")
+            raise NotFoundError(Messages.EVIDENCE_PACKAGE_NOT_GENERATED_FOR_LOW_SEVERITY)
         return {
             "evidence": self.serialize_evidence(violation.evidence_package),
             "violation": data["violation"],
@@ -362,10 +365,10 @@ class ProctoringService:
         self._ensure_proctor_access(test, workspace_id, actor_membership)
         session = self.sessions.get_by_attempt_id(attempt.id)
         if not session:
-            raise NotFoundError("Proctoring session not found")
+            raise NotFoundError(Messages.PROCTORING_SESSION_NOT_FOUND)
         violation = self.violations.get_for_session(violation_id, session.id)
         if not violation:
-            raise NotFoundError("Violation not found")
+            raise NotFoundError(Messages.VIOLATION_NOT_FOUND)
 
         allowed = {
             ProctoringViolationStatus.REVIEWED.value,
@@ -373,7 +376,7 @@ class ProctoringService:
             ProctoringViolationStatus.CONFIRMED.value,
         }
         if status not in allowed:
-            raise ValidationError(f"status must be one of: {', '.join(sorted(allowed))}")
+            raise ValidationError(Messages.STATUS_MUST_BE_ONE_OF.format(allowed=", ".join(sorted(allowed))))
 
         violation.status = status
         violation.reviewed_by_membership_id = actor_membership.id
@@ -396,7 +399,7 @@ class ProctoringService:
             actor_membership.id,
         )
         return {
-            "message": "Violation reviewed",
+            "message": Messages.VIOLATION_REVIEWED,
             "violation": self.serialize_violation(violation),
         }
 
@@ -726,15 +729,15 @@ class ProctoringService:
     ) -> tuple[TestAttempt, Test]:
         attempt = self.attempts.get_for_test(attempt_id, test_id)
         if not attempt:
-            raise NotFoundError("Attempt not found")
+            raise NotFoundError(Messages.ATTEMPT_NOT_FOUND)
         if attempt.student_membership_id != actor_membership.id:
-            raise ForbiddenError("You can only access your own attempt")
+            raise ForbiddenError(Messages.YOU_CAN_ONLY_ACCESS_YOUR_OWN_ATTEMPT)
         test = self._get_test_in_workspace(test_id, workspace_id)
         actor_link = self.subject_memberships.find_active(
             actor_membership.id, test.subject_id
         )
         if not verify_subject_student_access(actor_link):
-            raise ForbiddenError("Student subject enrollment required")
+            raise ForbiddenError(Messages.STUDENT_SUBJECT_ENROLLMENT_REQUIRED)
         return attempt, test
 
     def _resolve_attempt_view(
@@ -742,7 +745,7 @@ class ProctoringService:
     ) -> tuple[TestAttempt, Test]:
         attempt = self.attempts.get_for_test(attempt_id, test_id)
         if not attempt:
-            raise NotFoundError("Attempt not found")
+            raise NotFoundError(Messages.ATTEMPT_NOT_FOUND)
         test = self._get_test_in_workspace(test_id, workspace_id)
         if attempt.student_membership_id == actor_membership.id:
             return attempt, test
@@ -763,12 +766,12 @@ class ProctoringService:
             actor_subject_link=actor_link,
             is_test_creator=is_creator,
         ):
-            raise ForbiddenError("Insufficient permissions for proctoring access")
+            raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_FOR_PROCTORING_ACCESS)
 
     def _get_test_in_workspace(self, test_id: int, workspace_id: int) -> Test:
         test = self.tests.get_by_id_in_workspace(test_id, workspace_id)
         if not test:
-            raise NotFoundError("Test not found")
+            raise NotFoundError(Messages.TEST_NOT_FOUND)
         return test
 
     def _load_json(self, value):

@@ -1,6 +1,8 @@
 """
 Question bank APIs — subject-centered content with visibility rules.
 """
+
+from utils.messages import Messages
 from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_auth, require_workspace_membership
@@ -39,7 +41,7 @@ def create_question_bank():
         actor_membership=g.membership,
     )
     return {
-        "message": "Question bank created",
+        "message": Messages.QUESTION_BANK_CREATED,
         "question_bank": _svc()._serialize_bank(bank),
     }, 201
 
@@ -112,7 +114,7 @@ def create_question_in_bank(bank_id):
         try:
             payload = json.loads(request.form.get("payload") or "{}")
         except json.JSONDecodeError as exc:
-            raise ValidationError("Invalid JSON in multipart payload") from exc
+            raise ValidationError(Messages.INVALID_JSON_IN_MULTIPART_PAYLOAD) from exc
     data = CreateQuestionsInBankSchema().load(payload or {})
     svc = QuestionService()
     rows = svc.create_questions_in_bank(
@@ -123,7 +125,7 @@ def create_question_in_bank(bank_id):
         questions=data["questions"],
     )
     return {
-        "message": "Questions created",
+        "message": Messages.QUESTIONS_CREATED,
         "questions": [svc.serialize_question(q) for q in rows],
         "count": len(rows),
     }, 201
@@ -154,7 +156,7 @@ def update_question_in_bank(bank_id, question_id):
         try:
             payload = json.loads(request.form.get("payload") or "{}")
         except json.JSONDecodeError as exc:
-            raise ValidationError("Invalid JSON in multipart payload") from exc
+            raise ValidationError(Messages.INVALID_JSON_IN_MULTIPART_PAYLOAD) from exc
     data = UpdateQuestionInBankSchema().load(payload or {}, partial=True)
     svc = QuestionService()
     question = svc.update_question_in_bank(
@@ -165,7 +167,7 @@ def update_question_in_bank(bank_id, question_id):
         data=data,
     )
     return {
-        "message": "Question updated",
+        "message": Messages.QUESTION_UPDATED,
         "question": svc.serialize_question(question),
     }, 200
 
@@ -183,7 +185,7 @@ def delete_question_in_bank(bank_id, question_id):
         actor_membership=g.membership,
     )
     return {
-        "message": "Question deleted",
+        "message": Messages.QUESTION_DELETED,
         "question": svc.serialize_question(question),
     }, 200
 
@@ -198,7 +200,7 @@ def update_question_bank(bank_id):
         bank_id, g.workspace_id, g.membership, data
     )
     return {
-        "message": "Question bank updated",
+        "message": Messages.QUESTION_BANK_UPDATED,
         "question_bank": _svc()._serialize_bank(bank),
     }, 200
 
@@ -210,7 +212,7 @@ def delete_question_bank(bank_id):
     """DELETE /question-banks/{id} — soft delete."""
     bank = _svc().archive_question_bank(bank_id, g.workspace_id, g.membership)
     return {
-        "message": "Question bank archived",
+        "message": Messages.QUESTION_BANK_ARCHIVED,
         "question_bank": _svc()._serialize_bank(bank),
     }, 200
 

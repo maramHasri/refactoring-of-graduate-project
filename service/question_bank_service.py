@@ -1,6 +1,8 @@
 """
 Question banks — subject-centered, visibility-aware.
 """
+
+from utils.messages import Messages
 from datetime import datetime, timezone
 
 from models import QuestionBank
@@ -37,7 +39,7 @@ class QuestionBankService:
     ) -> QuestionBank:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         self.resolve_bank_subject_for_teacher_write(
             workspace=workspace,
@@ -46,7 +48,7 @@ class QuestionBankService:
         )
 
         if visibility not in [v.value for v in QuestionBankVisibility]:
-            raise ValidationError("Invalid visibility value")
+            raise ValidationError(Messages.INVALID_VISIBILITY_VALUE)
 
         bank = QuestionBank(
             title=title.strip(),
@@ -76,7 +78,7 @@ class QuestionBankService:
     ) -> dict:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         if can_manage_subjects(workspace, actor_membership):
             subject_ids = [
@@ -147,13 +149,13 @@ class QuestionBankService:
         workspace = self.workspaces.get_by_id(workspace_id)
         subject = self.subjects.get_active_by_id(subject_id, workspace_id)
         if not subject:
-            raise NotFoundError("Subject not found")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND)
 
         actor_link = self.subject_memberships.find_active(
             actor_membership.id, subject_id
         )
         if not can_manage_subjects(workspace, actor_membership) and not actor_link:
-            raise ForbiddenError("You do not have access to this subject")
+            raise ForbiddenError(Messages.YOU_DO_NOT_HAVE_ACCESS_TO_THIS_SUBJECT)
 
         rows = self.banks.list_by_subject(subject_id, workspace_id)
         result = []
@@ -178,13 +180,13 @@ class QuestionBankService:
         workspace = self.workspaces.get_by_id(workspace_id)
         bank = self.banks.get_active_by_id(bank_id, workspace_id)
         if not bank:
-            raise NotFoundError("Question bank not found")
+            raise NotFoundError(Messages.QUESTION_BANK_NOT_FOUND)
 
         is_creator = bank.created_by_membership_id == actor_membership.id
         if not can_modify_question_bank(
             workspace, actor_membership, is_bank_creator=is_creator
         ):
-            raise ForbiddenError("Only the creator or workspace admin can update this bank")
+            raise ForbiddenError(Messages.ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_UPDATE_THIS_BANK)
 
         if "title" in data and data["title"]:
             bank.title = data["title"].strip()
@@ -192,7 +194,7 @@ class QuestionBankService:
             bank.description = data["description"]
         if "visibility" in data and data["visibility"]:
             if data["visibility"] not in [v.value for v in QuestionBankVisibility]:
-                raise ValidationError("Invalid visibility value")
+                raise ValidationError(Messages.INVALID_VISIBILITY_VALUE)
             bank.visibility = data["visibility"]
 
         db.session.commit()
@@ -204,13 +206,13 @@ class QuestionBankService:
         workspace = self.workspaces.get_by_id(workspace_id)
         bank = self.banks.get_active_by_id(bank_id, workspace_id)
         if not bank:
-            raise NotFoundError("Question bank not found")
+            raise NotFoundError(Messages.QUESTION_BANK_NOT_FOUND)
 
         is_creator = bank.created_by_membership_id == actor_membership.id
         if not can_modify_question_bank(
             workspace, actor_membership, is_bank_creator=is_creator
         ):
-            raise ForbiddenError("Only the creator or workspace admin can delete this bank")
+            raise ForbiddenError(Messages.ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_DELETE_THIS_BANK)
 
         now = datetime.now(timezone.utc)
         bank.is_archived = True
@@ -227,11 +229,11 @@ class QuestionBankService:
         """
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         bank = self.banks.get_active_by_id(bank_id, workspace_id)
         if not bank:
-            raise NotFoundError("Question bank not found")
+            raise NotFoundError(Messages.QUESTION_BANK_NOT_FOUND)
 
         self.resolve_bank_subject_for_teacher_write(
             workspace=workspace,
@@ -267,10 +269,7 @@ class QuestionBankService:
             raise
 
         if bank.subject_id != test_subject_id:
-            raise ValidationError(
-                f"Bank {bank.id} belongs to subject {bank.subject_id}, "
-                f"but the exam is for subject {test_subject_id}"
-            )
+            raise ValidationError(Messages.BANK_BANK_ID_BELONGS_TO_SUBJECT_BANK_SUBJECT_ID_BUT_THE_EXAM.format(bank_id=bank.id, bank_subject_id=bank.subject_id, test_subject_id=test_subject_id))
         return bank
 
     def resolve_bank_for_question_view(
@@ -278,13 +277,13 @@ class QuestionBankService:
     ) -> QuestionBank:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         bank = self.banks.get_active_by_id(bank_id, workspace_id)
         if not bank:
             bank = self.banks.get_active_community_by_id(bank_id)
         if not bank:
-            raise NotFoundError("Question bank not found")
+            raise NotFoundError(Messages.QUESTION_BANK_NOT_FOUND)
 
         actor_link = None
         if bank.workspace_id == workspace_id:
@@ -299,7 +298,7 @@ class QuestionBankService:
             actor_subject_link=actor_link,
             is_bank_creator=bank.created_by_membership_id == actor_membership.id,
         ):
-            raise ForbiddenError("You do not have access to this question bank")
+            raise ForbiddenError(Messages.YOU_DO_NOT_HAVE_ACCESS_TO_THIS_QUESTION_BANK)
 
         return bank
 
@@ -312,7 +311,7 @@ class QuestionBankService:
     ) -> None:
         subject = self.subjects.get_active_by_id(subject_id, workspace.id)
         if not subject:
-            raise NotFoundError("Subject not found in this workspace")
+            raise NotFoundError(Messages.SUBJECT_NOT_FOUND_IN_THIS_WORKSPACE)
 
         actor_link = self.subject_memberships.find_active(
             actor_membership.id, subject_id
@@ -321,9 +320,7 @@ class QuestionBankService:
             return
         if verify_subject_teacher_access(actor_link):
             return
-        raise ForbiddenError(
-            "You must be assigned to this subject as TEACHER to manage question banks"
-        )
+        raise ForbiddenError(Messages.YOU_MUST_BE_ASSIGNED_TO_THIS_SUBJECT_AS_TEACHER_TO_MANAGE_QUESTION_BANKS)
 
     def _serialize_bank(self, bank: QuestionBank) -> dict:
         subject = bank.subject

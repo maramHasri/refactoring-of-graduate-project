@@ -1,5 +1,7 @@
 """Percentage-to-integer allocation using the largest-remainder method."""
 
+from utils.messages import Messages
+
 
 def distribute_by_percentages(total: int, weights: dict[str, int]) -> dict[str, int]:
     """
@@ -8,12 +10,14 @@ def distribute_by_percentages(total: int, weights: dict[str, int]) -> dict[str, 
     Example: total=20, weights={"a": 30, "b": 50, "c": 20} -> {a: 6, b: 10, c: 4}
     """
     if total < 0:
-        raise ValueError("total must be non-negative")
+        raise ValueError(Messages.TOTAL_MUST_BE_NON_NEGATIVE)
     if not weights:
         return {}
     weight_sum = sum(weights.values())
     if weight_sum != 100:
-        raise ValueError(f"weights must sum to 100 (got {weight_sum})")
+        raise ValueError(
+            Messages.WEIGHTS_MUST_SUM_TO_100_GOT_WEIGHT_SUM.format(weight_sum=weight_sum)
+        )
     if total == 0:
         return {key: 0 for key in weights}
 

@@ -6,6 +6,8 @@ Owner vs admin:
 - Owner can delete workspace, transfer ownership, remove admins.
 - Regular admins cannot remove other admins.
 """
+
+from utils.messages import Messages
 import re
 from datetime import datetime, timedelta
 
@@ -67,17 +69,15 @@ class WorkspaceService:
         )
         row = self.memberships.get_with_user(membership_id)
         if not row:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         target, user = row
         if target.workspace_id != workspace.id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if target.role not in (
             MembershipRole.STUDENT.value,
             MembershipRole.TEACHER.value,
         ):
-            raise ValidationError(
-                "Member details are only available for students and teachers"
-            )
+            raise ValidationError(Messages.MEMBER_DETAILS_ARE_ONLY_AVAILABLE_FOR_STUDENTS_AND_TEACHERS)
 
         last_activity_at = self._resolve_member_last_activity_at(user, workspace.id)
         subjects = self._serialize_member_subjects(target, workspace.id)
@@ -173,13 +173,13 @@ class WorkspaceService:
 
         target = self.memberships.get_by_id(membership_id)
         if not target or target.workspace_id != workspace.id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if target.status != "ACTIVE":
-            raise ValidationError("Membership is not active")
+            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
 
         user = self.user_repo.get_by_id(target.user_id)
         if not user:
-            raise NotFoundError("User not found")
+            raise NotFoundError(Messages.USER_NOT_FOUND)
 
         self.user_service.update_profile(user, data)
 
@@ -193,7 +193,7 @@ class WorkspaceService:
             subject_count_field=subject_count_field,
         )
         return {
-            "message": "Workspace member updated successfully",
+            "message": Messages.WORKSPACE_MEMBER_UPDATED_SUCCESSFULLY,
             "member": member,
         }
 
@@ -212,11 +212,11 @@ class WorkspaceService:
         Side effects: workspace, ADMIN membership, owner_membership_id, join_code.
         """
         if kind not in (WorkspaceKind.SOLO.value, WorkspaceKind.INSTITUTION.value):
-            raise ValidationError("Invalid workspace kind")
+            raise ValidationError(Messages.INVALID_WORKSPACE_KIND)
 
         slug = slug or _slugify(name)
         if self.workspaces.find_by_slug(slug):
-            raise ConflictError("Workspace slug already exists")
+            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
 
         workspace = Workspace(
             name=name,
@@ -339,7 +339,7 @@ class WorkspaceService:
         self._cleanup_teacher_workspace_relationships(membership_id, workspace_id)
         db.session.delete(target)
         db.session.commit()
-        return {"message": "Teacher removed from workspace successfully."}
+        return {"message": Messages.TEACHER_REMOVED_FROM_WORKSPACE_SUCCESSFULLY}
 
     def remove_student_from_workspace(
         self,
@@ -361,7 +361,7 @@ class WorkspaceService:
         self._cleanup_student_workspace_relationships(membership_id, workspace_id)
         db.session.delete(target)
         db.session.commit()
-        return {"message": "Student removed from workspace successfully."}
+        return {"message": Messages.STUDENT_REMOVED_FROM_WORKSPACE_SUCCESSFULLY}
 
     def _get_removable_workspace_member(
         self,
@@ -372,15 +372,15 @@ class WorkspaceService:
     ) -> Membership:
         target = self.memberships.get_by_id(membership_id)
         if not target or target.workspace_id != workspace.id:
-            raise NotFoundError("Membership not found in this workspace")
+            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
         if target.status != "ACTIVE":
-            raise ValidationError("Membership is not active")
+            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
         if target.role != expected_role:
             raise ValidationError(
-                f"Membership is not a workspace {expected_role.lower()}"
+                Messages.MEMBERSHIP_IS_NOT_A_WORKSPACE_ROLE.format(role=expected_role.lower())
             )
         if workspace.owner_membership_id == target.id:
-            raise ForbiddenError("Cannot remove the workspace owner")
+            raise ForbiddenError(Messages.CANNOT_REMOVE_THE_WORKSPACE_OWNER)
         return target
 
     def _cleanup_teacher_workspace_relationships(
@@ -497,13 +497,9 @@ class WorkspaceService:
     ) -> Workspace:
         workspace = self._get_workspace_or_404(workspace_id)
         if workspace.kind != WorkspaceKind.INSTITUTION.value:
-            raise ForbiddenError(
-                "This endpoint is only available for institution workspaces"
-            )
+            raise ForbiddenError(Messages.THIS_ENDPOINT_IS_ONLY_AVAILABLE_FOR_INSTITUTION_WORKSPACES)
         if not can_list_institution_workspace_teachers(workspace, actor_membership):
-            raise ForbiddenError(
-                "Only the institution owner or workspace admin can list workspace members"
-            )
+            raise ForbiddenError(Messages.ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS)
         return workspace
 
     def _ensure_can_manage_workspace_members(
@@ -518,11 +514,9 @@ class WorkspaceService:
             WorkspaceKind.INSTITUTION.value,
             WorkspaceKind.SOLO.value,
         ):
-            raise ForbiddenError("Unsupported workspace type for member management")
+            raise ForbiddenError(Messages.UNSUPPORTED_WORKSPACE_TYPE_FOR_MEMBER_MANAGEMENT)
         if not can_manage_workspace_members(workspace, actor_membership):
-            raise ForbiddenError(
-                "Only the workspace owner or admin can manage workspace members"
-            )
+            raise ForbiddenError(Messages.ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_MANAGE_WORKSPACE_MEMBERS)
         return workspace
 
     def _ensure_workspace_student_list_access(
@@ -532,17 +526,15 @@ class WorkspaceService:
             WorkspaceKind.INSTITUTION.value,
             WorkspaceKind.SOLO.value,
         ):
-            raise ForbiddenError("Unsupported workspace type for student listing")
+            raise ForbiddenError(Messages.UNSUPPORTED_WORKSPACE_TYPE_FOR_STUDENT_LISTING)
 
         if not can_list_workspace_students(workspace, actor_membership):
-            raise ForbiddenError(
-                "Only the workspace owner or admin can list students"
-            )
+            raise ForbiddenError(Messages.ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_LIST_STUDENTS)
 
     def _get_workspace_or_404(self, workspace_id: int) -> Workspace:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
         return workspace
 
     def list_accessible_workspaces(self, user_id: int, *, is_superadmin: bool) -> list[dict]:
@@ -570,13 +562,13 @@ class WorkspaceService:
     def get_workspace(self, workspace_id: int, actor_user_id: int, *, is_superadmin: bool) -> dict:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
         if not is_superadmin:
             m = self.memberships.find_by_user_and_workspace(actor_user_id, workspace_id)
             if not m or m.status != "ACTIVE":
-                raise ForbiddenError("Not a member of this workspace")
+                raise ForbiddenError(Messages.NOT_A_MEMBER_OF_THIS_WORKSPACE)
             if workspace.status != WorkspaceStatus.ACTIVE.value:
-                raise ForbiddenError("Workspace is not active")
+                raise ForbiddenError(Messages.WORKSPACE_IS_NOT_ACTIVE)
         return self._serialize_workspace_detail(workspace)
 
     def update_workspace(
@@ -589,14 +581,14 @@ class WorkspaceService:
     ) -> Workspace:
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         if not is_superadmin:
             m = self.memberships.find_by_user_and_workspace(actor_user_id, workspace_id)
             if not m or m.role not in (
                 MembershipRole.ADMIN.value,
             ):
-                raise ForbiddenError("Admin access required")
+                raise ForbiddenError(Messages.ADMIN_ACCESS_REQUIRED)
 
         for field in ("name", "slug", "status", "subject_assignment_mode"):
             if field in data and data[field] is not None:
@@ -614,7 +606,7 @@ class WorkspaceService:
         if "slug" in data and data["slug"]:
             existing = self.workspaces.find_by_slug(data["slug"])
             if existing and existing.id != workspace.id:
-                raise ConflictError("Slug already in use")
+                raise ConflictError(Messages.SLUG_ALREADY_IN_USE)
 
         db.session.commit()
         return workspace
@@ -628,12 +620,12 @@ class WorkspaceService:
         """
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
-            raise NotFoundError("Workspace not found")
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
 
         if not is_superadmin:
             m = self.memberships.find_by_user_and_workspace(actor_user_id, workspace_id)
             if not m or workspace.owner_membership_id != m.id:
-                raise ForbiddenError("Only the workspace owner can delete this workspace")
+                raise ForbiddenError(Messages.ONLY_THE_WORKSPACE_OWNER_CAN_DELETE_THIS_WORKSPACE)
 
         db.session.delete(workspace)
         db.session.commit()
@@ -649,7 +641,7 @@ class WorkspaceService:
             code = generate_workspace_join_code()
             if not self.workspaces.find_by_join_code(code):
                 return code
-        raise ConflictError("Could not generate unique join code")
+        raise ConflictError(Messages.COULD_NOT_GENERATE_UNIQUE_JOIN_CODE)
 
     def _set_workspace_description(
         self, workspace: Workspace, description: str | None
