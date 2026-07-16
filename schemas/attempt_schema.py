@@ -51,3 +51,9 @@ class GradeAttemptEssaysSchema(Schema):
         required=True,
         validate=validate.Length(min=1),
     )
+
+
+class ApproveFinalScoreSchema(Schema):
+    approved = fields.Bool(required=True)
+    final_score = fields.Float(allow_none=True, validate=validate.Range(min=0))
+    reason = fields.Str(allow_none=True)

@@ -168,3 +168,21 @@ def list_audit_logs(test_id, attempt_id):
         actor_membership=g.membership,
     )
     return {"audit_logs": items, "count": len(items)}, 200
+
+
+@proctoring_bp.route(
+    "/<int:test_id>/attempts/<int:attempt_id>/proctoring/grading-review",
+    methods=["GET"],
+)
+@require_workspace_membership
+@handle_service_errors
+def get_proctoring_grading_review(test_id, attempt_id):
+    """GET /tests/{test_id}/attempts/{attempt_id}/proctoring/grading-review"""
+    from service.attempt_service import AttemptService
+
+    return AttemptService().get_proctoring_grading_review(
+        test_id=test_id,
+        attempt_id=attempt_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    ), 200

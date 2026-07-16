@@ -479,6 +479,51 @@ class AttemptService:
             raise ValidationError(Messages.GRADING_RESULTS_ARE_AVAILABLE_ONLY_AFTER_SUBMISSION)
         return self.grading.build_grading_result(attempt, test)
 
+    def get_proctoring_grading_review(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+        return self.grading.build_proctoring_grading_review(attempt, test)
+
+    def approve_final_score(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+        approved: bool,
+        final_score: float | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        attempt = self._get_attempt_or_404(attempt_id, test_id)
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        self._ensure_teacher_attempt_access(test, workspace_id, actor_membership)
+        result = self.grading.approve_final_score(
+            attempt,
+            test,
+            approved=approved,
+            final_score=final_score,
+            reason=reason,
+            actor_membership_id=actor_membership.id,
+            actor_user_id=actor_membership.user_id,
+        )
+        became_graded_first_time = bool(result.pop("became_graded_first_time", False))
+        self.grading.maybe_send_grading_notification(
+            attempt,
+            test,
+            became_graded_first_time=became_graded_first_time,
+        )
+        db.session.commit()
+        return result
+
     def timeout_attempt(
         self, *, test_id: int, attempt_id: int, workspace_id: int, actor_membership
     ) -> dict:

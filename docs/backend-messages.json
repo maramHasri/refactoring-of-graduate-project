@@ -867,6 +867,38 @@
     "message": "Proctoring is not enabled for this test",
     "description": "API response message."
   },
+  "PROCTORING_FINAL_SCORE_ALREADY_APPROVED": {
+    "message": "Proctoring final score already approved",
+    "description": "Validation or authorization failure message."
+  },
+  "PROCTORING_FINAL_SCORE_APPROVAL_NOT_REQUIRED": {
+    "message": "Proctoring final score approval is not required for this attempt",
+    "description": "Validation or authorization failure message."
+  },
+  "PROCTORING_GRADING_REVIEW_NOT_AVAILABLE": {
+    "message": "Proctoring grading review is not available for this attempt",
+    "description": "Validation or authorization failure message."
+  },
+  "FINAL_SCORE_APPROVED_SUCCESSFULLY": {
+    "message": "Final score approved successfully",
+    "description": "Returned after a successful operation."
+  },
+  "FINAL_SCORE_CANNOT_EXCEED_MAXIMUM_SCORE": {
+    "message": "Final score cannot exceed maximum score",
+    "description": "Validation or authorization failure message."
+  },
+  "FINAL_SCORE_IS_REQUIRED_WHEN_NOT_APPROVING_SUGGESTION": {
+    "message": "Final score is required when not approving the suggested score",
+    "description": "Validation or authorization failure message."
+  },
+  "ATTEMPT_IS_NOT_READY_FOR_PROCTORING_FINAL_SCORE_APPROVAL": {
+    "message": "Attempt is not ready for proctoring final score approval",
+    "description": "Validation or authorization failure message."
+  },
+  "THIS_ATTEMPT_IS_WAITING_FOR_PROCTORING_FINAL_SCORE_APPROVAL": {
+    "message": "This attempt is waiting for proctoring final score approval",
+    "description": "API response message."
+  },
   "PROCTORING_SESSION_ACTIVE": {
     "message": "Proctoring session active",
     "description": "API response message."

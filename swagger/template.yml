@@ -2799,6 +2799,47 @@ paths:
               grading_summary: { type: object }
               submitted_at: { type: string, format: date-time }
               graded_at: { type: string, format: date-time }
+  /tests/{test_id}/attempts/{attempt_id}/grading/final-score:
+    patch:
+      tags: [Grading]
+      summary: Approve or override proctoring-adjusted final score
+      description: |
+        Teacher approves the suggested proctoring-adjusted score or sets a custom final score.
+        Required when proctoring is enabled and the attempt has a proctoring session.
+        Sets `final_score`, moves attempt to GRADED, and may trigger grading notification.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required: [approved]
+            properties:
+              approved: { type: boolean, example: true }
+              final_score: { type: number, example: 85 }
+              reason: { type: string, example: "Student violation was accidental" }
+      responses:
+        200:
+          description: Final score approved
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Final score approved successfully" }
+              attempt_id: { type: integer, example: 12 }
+              raw_score: { type: number, example: 90 }
+              suggested_final_score: { type: number, example: 76.5 }
+              final_score: { type: number, example: 85 }
+              modified_by: { type: integer, example: 25 }
+              status: { type: string, example: GRADED }
   /student/tests/results:
     get:
       tags: [Grading]
@@ -3127,6 +3168,47 @@ paths:
       responses:
         200:
           description: Violation reviewed
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/grading-review:
+    get:
+      tags: [Proctoring, Grading]
+      summary: Get proctoring grading review for teacher
+      description: |
+        Returns raw score, proctoring risk percentage, suggested final score, and approval state.
+        Available when proctoring is enabled and the attempt has a proctoring session.
+        Requires all answers to be graded (no PENDING_REVIEW essay answers).
+        Teacher/admin access only.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Proctoring grading review payload
+          schema:
+            type: object
+            properties:
+              attempt_id: { type: integer, example: 12 }
+              raw_score: { type: number, example: 90 }
+              maximum_score: { type: number, example: 100 }
+              proctoring:
+                type: object
+                properties:
+                  risk_percentage: { type: number, example: 15 }
+                  effective_violation_score: { type: integer, example: 30 }
+                  violations_count: { type: integer, example: 4 }
+                  high_severity_count: { type: integer, example: 1 }
+                  medium_severity_count: { type: integer, example: 2 }
+                  low_severity_count: { type: integer, example: 1 }
+              penalty: { type: number, example: 13.5 }
+              suggested_final_score: { type: number, example: 76.5 }
+              current_final_score: { type: number }
+              requires_teacher_approval: { type: boolean, example: true }
   /tests/{test_id}/attempts/{attempt_id}/proctoring/audit-logs:
     get:
       tags: [Proctoring]

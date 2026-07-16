@@ -22,6 +22,7 @@ from repositories.attempt_repository import (
 )
 from service.email_delivery_service import EmailDeliveryError, EmailDeliveryService
 from service.exceptions import ValidationError
+from service.proctoring_risk_service import ProctoringRiskService
 from utils.enums import (
     AnswerGradingStatus,
     AttemptGradingAuditAction,
@@ -39,6 +40,7 @@ class ExamGradingService:
         self.test_questions = TestQuestionRepositoryExtended()
         self.audit = AttemptGradingAuditRepository()
         self.email = EmailDeliveryService()
+        self.proctoring_risk = ProctoringRiskService()
 
     def process_submission_grading(
         self,
@@ -164,11 +166,18 @@ class ExamGradingService:
         """Finalize attempt to GRADED when no answers are pending review."""
         if self.has_pending_review(attempt):
             attempt.status = TestAttemptStatus.SUBMITTED.value
+            self.recompute_attempt_scores(attempt, test)
+            return False
+
+        self.recompute_attempt_scores(attempt, test)
+
+        if self.awaiting_proctoring_final_score_approval(attempt, test):
+            attempt.status = TestAttemptStatus.SUBMITTED.value
+            self._log_proctoring_risk(attempt, test, actor_membership_id, actor_user_id)
             return False
 
         first_time = attempt.graded_at is None
         attempt.status = TestAttemptStatus.GRADED.value
-        self.recompute_attempt_scores(attempt, test)
         if first_time:
             attempt.graded_at = datetime.now(timezone.utc)
             self._log_audit(
@@ -247,15 +256,173 @@ class ExamGradingService:
             if answer.earned_score is not None:
                 total_earned += Decimal(str(answer.earned_score))
         attempt.raw_score = float(total_earned)
+
+        if self.proctoring_risk.requires_teacher_approval(test, attempt):
+            attempt.final_score = None
+            self._set_percentage_from_score(attempt, test, float(total_earned))
+            return
+
         attempt.final_score = float(total_earned)
+        self._set_percentage_from_score(attempt, test, float(total_earned))
+
+    def awaiting_proctoring_final_score_approval(
+        self, attempt: TestAttempt, test: Test
+    ) -> bool:
+        return (
+            self.proctoring_risk.requires_teacher_approval(test, attempt)
+            and attempt.final_score is None
+        )
+
+    def approve_final_score(
+        self,
+        attempt: TestAttempt,
+        test: Test,
+        *,
+        approved: bool,
+        final_score: float | None,
+        reason: str | None,
+        actor_membership_id: int,
+        actor_user_id: int | None = None,
+    ) -> dict:
+        if not self.proctoring_risk.requires_teacher_approval(test, attempt):
+            raise ValidationError(Messages.PROCTORING_FINAL_SCORE_APPROVAL_NOT_REQUIRED)
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            raise ValidationError(Messages.GRADING_RESULTS_ARE_AVAILABLE_ONLY_AFTER_SUBMISSION)
+        if self.has_pending_review(attempt):
+            raise ValidationError(Messages.ATTEMPT_IS_NOT_READY_FOR_PROCTORING_FINAL_SCORE_APPROVAL)
+        if attempt.final_score is not None and attempt.status == TestAttemptStatus.GRADED.value:
+            raise ValidationError(Messages.PROCTORING_FINAL_SCORE_ALREADY_APPROVED)
+
+        risk_payload = self._build_risk_payload(attempt, test)
+        suggested = risk_payload["suggested_final_score"]
+        if approved:
+            resolved_final = suggested
+        else:
+            if final_score is None:
+                raise ValidationError(
+                    Messages.FINAL_SCORE_IS_REQUIRED_WHEN_NOT_APPROVING_SUGGESTION
+                )
+            resolved_final = float(final_score)
+
+        maximum_score = self.maximum_score(test)
+        if resolved_final > maximum_score:
+            raise ValidationError(Messages.FINAL_SCORE_CANNOT_EXCEED_MAXIMUM_SCORE)
+
+        attempt.final_score = round(resolved_final, 2)
+        self._set_percentage_from_score(attempt, test, attempt.final_score)
+
+        first_time = attempt.graded_at is None
+        attempt.status = TestAttemptStatus.GRADED.value
+        if first_time:
+            attempt.graded_at = datetime.now(timezone.utc)
+
+        self._log_audit(
+            attempt.id,
+            AttemptGradingAuditAction.FINAL_SCORE_APPROVED.value,
+            actor_membership_id=actor_membership_id,
+            actor_user_id=actor_user_id,
+            details={
+                "approved": approved,
+                "raw_score": attempt.raw_score,
+                "suggested_final_score": suggested,
+                "final_score": attempt.final_score,
+                "proctoring_risk_percentage": risk_payload["proctoring_risk_percentage"],
+                "reason": (reason or "").strip() or None,
+            },
+        )
+        if first_time:
+            self._log_audit(
+                attempt.id,
+                AttemptGradingAuditAction.ATTEMPT_FULLY_GRADED.value,
+                actor_membership_id=actor_membership_id,
+                actor_user_id=actor_user_id,
+                details={
+                    "raw_score": attempt.raw_score,
+                    "final_score": attempt.final_score,
+                    "percentage": attempt.percentage,
+                },
+            )
+
+        return {
+            "message": Messages.FINAL_SCORE_APPROVED_SUCCESSFULLY,
+            "attempt_id": attempt.id,
+            "raw_score": attempt.raw_score,
+            "suggested_final_score": suggested,
+            "final_score": attempt.final_score,
+            "modified_by": actor_membership_id,
+            "status": attempt.status,
+            "became_graded_first_time": first_time,
+        }
+
+    def build_proctoring_grading_review(self, attempt: TestAttempt, test: Test) -> dict:
+        if not self.proctoring_risk.requires_teacher_approval(test, attempt):
+            raise ValidationError(Messages.PROCTORING_GRADING_REVIEW_NOT_AVAILABLE)
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            raise ValidationError(Messages.GRADING_RESULTS_ARE_AVAILABLE_ONLY_AFTER_SUBMISSION)
+        self._ensure_grading_complete_for_proctoring(attempt)
+
+        violations = self._list_active_violations(attempt)
+        question_count = len(self.test_questions.list_active_for_test(test.id))
+        payload = self.proctoring_risk.build_grading_review(
+            attempt=attempt,
+            test=test,
+            violations=violations,
+            question_count=question_count,
+        )
+        payload["maximum_score"] = self.maximum_score(test)
+        return payload
+
+    def _set_percentage_from_score(
+        self, attempt: TestAttempt, test: Test, score: float
+    ) -> None:
         max_score = self.maximum_score(test)
         if max_score > 0:
-            attempt.percentage = round(
-                float((total_earned / Decimal(str(max_score))) * Decimal("100")),
-                2,
-            )
+            attempt.percentage = round((score / max_score) * 100, 2)
         else:
             attempt.percentage = 0.0
+
+    def _build_risk_payload(self, attempt: TestAttempt, test: Test) -> dict:
+        self._ensure_grading_complete_for_proctoring(attempt)
+        violations = self._list_active_violations(attempt)
+        question_count = len(self.test_questions.list_active_for_test(test.id))
+        return self.proctoring_risk.calculate(
+            attempt=attempt,
+            test=test,
+            violations=violations,
+            question_count=question_count,
+        )
+
+    def _list_active_violations(self, attempt: TestAttempt):
+        session = attempt.proctoring_session
+        if not session:
+            return []
+        from repositories.proctoring_repository import ProctoringViolationRepository
+
+        return ProctoringViolationRepository().list_for_session(session.id)
+
+    def _ensure_grading_complete_for_proctoring(self, attempt: TestAttempt) -> None:
+        if self.has_pending_review(attempt):
+            raise ValidationError(
+                Messages.ATTEMPT_IS_NOT_READY_FOR_PROCTORING_FINAL_SCORE_APPROVAL
+            )
+
+    def _log_proctoring_risk(
+        self,
+        attempt: TestAttempt,
+        test: Test,
+        actor_membership_id: int | None,
+        actor_user_id: int | None,
+    ) -> None:
+        if self.has_pending_review(attempt):
+            return
+        risk_payload = self._build_risk_payload(attempt, test)
+        self._log_audit(
+            attempt.id,
+            AttemptGradingAuditAction.PROCTORING_RISK_CALCULATED.value,
+            actor_membership_id=actor_membership_id,
+            actor_user_id=actor_user_id,
+            details=risk_payload,
+        )
 
     def maximum_score(self, test: Test) -> float:
         rows = self.test_questions.list_active_for_test(test.id)
@@ -268,6 +435,16 @@ class ExamGradingService:
 
     def build_grading_result(self, attempt: TestAttempt, test: Test) -> dict:
         if attempt.status == TestAttemptStatus.SUBMITTED.value:
+            if self.has_pending_review(attempt):
+                return {
+                    "grading_completed": False,
+                    "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_MANUAL_GRADING,
+                }
+            if self.awaiting_proctoring_final_score_approval(attempt, test):
+                return {
+                    "grading_completed": False,
+                    "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_PROCTORING_FINAL_SCORE_APPROVAL,
+                }
             return {
                 "grading_completed": False,
                 "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_MANUAL_GRADING,

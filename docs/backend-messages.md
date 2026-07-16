@@ -411,6 +411,15 @@ Do not change these strings casually — they are part of the API contract.
 | EVIDENCE_PACKAGE_NOT_GENERATED_FOR_LOW_SEVERITY | Evidence package not generated for LOW severity | API response message. |
 | INSUFFICIENT_PERMISSIONS_FOR_PROCTORING_ACCESS | Insufficient permissions for proctoring access | Authorization / permission failure message. |
 | INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_VIOLATION | Insufficient permissions to view this violation | Authorization / permission failure message. |
+| PROCTORING_FINAL_SCORE_ALREADY_APPROVED | Proctoring final score already approved | Validation or authorization failure message. |
+| PROCTORING_FINAL_SCORE_APPROVAL_NOT_REQUIRED | Proctoring final score approval is not required for this attempt | Validation or authorization failure message. |
+| PROCTORING_GRADING_REVIEW_NOT_AVAILABLE | Proctoring grading review is not available for this attempt | Validation or authorization failure message. |
+| PROCTORING_IS_NOT_ENABLED_FOR_THIS_TEST | Proctoring is not enabled for this test | Validation or authorization failure message. |
+| FINAL_SCORE_APPROVED_SUCCESSFULLY | Final score approved successfully | Returned after a successful operation. |
+| FINAL_SCORE_CANNOT_EXCEED_MAXIMUM_SCORE | Final score cannot exceed maximum score | Validation or authorization failure message. |
+| FINAL_SCORE_IS_REQUIRED_WHEN_NOT_APPROVING_SUGGESTION | Final score is required when not approving the suggested score | Validation or authorization failure message. |
+| ATTEMPT_IS_NOT_READY_FOR_PROCTORING_FINAL_SCORE_APPROVAL | Attempt is not ready for proctoring final score approval | Validation or authorization failure message. |
+| THIS_ATTEMPT_IS_WAITING_FOR_PROCTORING_FINAL_SCORE_APPROVAL | This attempt is waiting for proctoring final score approval | API response message. |
 | SETTINGS_CONFIGPROCTORING_MUST_BE_AN_OBJECT | settings_config.proctoring must be an object | Validation or authorization failure message. |
 | VIOLATION_NOT_FOUND | Violation not found | Returned when the requested resource does not exist. |
 | VIOLATION_REVIEWED | Violation reviewed | API response message. |
