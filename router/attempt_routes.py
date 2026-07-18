@@ -36,6 +36,7 @@ def start_attempt(test_id):
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
         actor_user_id=g.current_user.id,
+        student_name=g.current_user.full_name,
     )
     status = 200 if result.get("resumed") else 201
     return result, status

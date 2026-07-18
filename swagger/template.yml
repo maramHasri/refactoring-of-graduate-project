@@ -2605,6 +2605,10 @@ paths:
         Student must be enrolled in the test subject and assigned in exam whitelist.
         Returns 200 when resuming an in-progress attempt, 201 when starting new.
 
+        Response includes attempt runtime payload plus exam context (`name`,
+        `description`, `subject_name`) and the starter's name as `user_name`
+        (also mirrored as `student_name` and on `attempt.user_name`).
+
         **SCHEDULED mode:** Entry window applies only on first attempt. All students share
         `global_end_at = starts_at + duration_minutes`. Resume allowed until global end.
 
@@ -4408,13 +4412,36 @@ definitions:
             type: array
             items:
               $ref: "#/definitions/AttemptAnswer"
+  StartAttemptExamInfo:
+    type: object
+    properties:
+      name: { type: string, example: "Midterm Calculus" }
+      description: { type: string, example: "Chapters 1-4", x-nullable: true }
+      subject_name: { type: string, example: "Mathematics", x-nullable: true }
   StartAttemptResponse:
     type: object
     properties:
       message: { type: string }
       resumed: { type: boolean }
       attempt:
-        $ref: "#/definitions/TestAttemptRuntime"
+        allOf:
+          - $ref: "#/definitions/TestAttemptRuntime"
+          - type: object
+            properties:
+              user_name:
+                type: string
+                description: Full name of the user who started/resumed this attempt
+                example: "Ahmed Ali"
+      exam:
+        $ref: "#/definitions/StartAttemptExamInfo"
+      student_name:
+        type: string
+        description: Full name of the user who started/resumed this attempt
+        example: "Ahmed Ali"
+      user_name:
+        type: string
+        description: Full name of the user who started/resumed this attempt
+        example: "Ahmed Ali"
   SubmitAttemptResponse:
     type: object
     properties:

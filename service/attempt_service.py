@@ -151,6 +151,7 @@ class AttemptService:
         workspace_id: int,
         actor_membership,
         actor_user_id: int,
+        student_name: str | None = None,
     ) -> dict:
         test, _ = self._resolve_student_test_access(test_id, workspace_id, actor_membership)
         existing = self.attempts.find_active_for_student(test.id, actor_membership.id)
@@ -187,11 +188,13 @@ class AttemptService:
                     test.id,
                     actor_membership.id,
                 )
-                return {
-                    "message": Messages.ATTEMPT_RESUMED,
-                    "attempt": self.serialize_attempt(existing, include_answers=True),
-                    "resumed": True,
-                }
+                return self._build_start_or_resume_response(
+                    message=Messages.ATTEMPT_RESUMED,
+                    attempt=existing,
+                    test=test,
+                    resumed=True,
+                    student_name=student_name,
+                )
 
         if self.attempts.find_completed_for_student(test.id, actor_membership.id):
             completed_count = self.attempts.count_completed_for_student(
@@ -247,11 +250,13 @@ class AttemptService:
             test.id,
             actor_membership.id,
         )
-        return {
-            "message": Messages.ATTEMPT_STARTED,
-            "attempt": self.serialize_attempt(attempt, include_answers=True),
-            "resumed": False,
-        }
+        return self._build_start_or_resume_response(
+            message=Messages.ATTEMPT_STARTED,
+            attempt=attempt,
+            test=test,
+            resumed=False,
+            student_name=student_name,
+        )
 
     def get_current_attempt(
         self, *, test_id: int, workspace_id: int, actor_membership
@@ -912,6 +917,37 @@ class AttemptService:
             "grading_status": answer.grading_status,
             "teacher_feedback": answer.teacher_feedback,
             "updated_at": answer.updated_at.isoformat() if answer.updated_at else None,
+        }
+
+    def _build_start_or_resume_response(
+        self,
+        *,
+        message: str,
+        attempt: TestAttempt,
+        test: Test,
+        resumed: bool,
+        student_name: str | None,
+    ) -> dict:
+        resolved_user_name = student_name
+        if not resolved_user_name:
+            user = attempt.user
+            if user is not None:
+                resolved_user_name = user.full_name
+
+        attempt_payload = self.serialize_attempt(attempt, include_answers=True)
+        attempt_payload["user_name"] = resolved_user_name
+
+        return {
+            "message": message,
+            "resumed": resumed,
+            "attempt": attempt_payload,
+            "exam": {
+                "name": test.name,
+                "description": test.description,
+                "subject_name": test.subject.name if test.subject else None,
+            },
+            "student_name": resolved_user_name,
+            "user_name": resolved_user_name,
         }
 
     def _serialize_test_summary(self, test: Test) -> dict:
