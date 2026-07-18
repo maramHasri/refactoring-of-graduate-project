@@ -2606,8 +2606,9 @@ paths:
         Returns 200 when resuming an in-progress attempt, 201 when starting new.
 
         Response includes attempt runtime payload plus exam context (`name`,
-        `description`, `subject_name`) and the starter's name as `user_name`
-        (also mirrored as `student_name` and on `attempt.user_name`).
+        `description`, `subject_name`, `teacher_name`), the starter's name as
+        `user_name` (also mirrored as `student_name` and on `attempt.user_name`),
+        and top-level `teacher_name` for the exam creator.
 
         **SCHEDULED mode:** Entry window applies only on first attempt. All students share
         `global_end_at = starts_at + duration_minutes`. Resume allowed until global end.
@@ -4418,6 +4419,11 @@ definitions:
       name: { type: string, example: "Midterm Calculus" }
       description: { type: string, example: "Chapters 1-4", x-nullable: true }
       subject_name: { type: string, example: "Mathematics", x-nullable: true }
+      teacher_name:
+        type: string
+        description: Full name of the teacher/user who created the exam
+        example: "Sara Hassan"
+        x-nullable: true
   StartAttemptResponse:
     type: object
     properties:
@@ -4442,6 +4448,11 @@ definitions:
         type: string
         description: Full name of the user who started/resumed this attempt
         example: "Ahmed Ali"
+      teacher_name:
+        type: string
+        description: Full name of the teacher/user who created the exam
+        example: "Sara Hassan"
+        x-nullable: true
   SubmitAttemptResponse:
     type: object
     properties:

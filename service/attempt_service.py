@@ -934,6 +934,10 @@ class AttemptService:
             if user is not None:
                 resolved_user_name = user.full_name
 
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+
         attempt_payload = self.serialize_attempt(attempt, include_answers=True)
         attempt_payload["user_name"] = resolved_user_name
 
@@ -945,9 +949,11 @@ class AttemptService:
                 "name": test.name,
                 "description": test.description,
                 "subject_name": test.subject.name if test.subject else None,
+                "teacher_name": teacher_name,
             },
             "student_name": resolved_user_name,
             "user_name": resolved_user_name,
+            "teacher_name": teacher_name,
         }
 
     def _serialize_test_summary(self, test: Test) -> dict:
