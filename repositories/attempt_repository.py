@@ -217,6 +217,61 @@ class TestAttemptRepository(BaseRepository):
             .all()
         )
 
+    def list_recent_for_student(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+        offset: int = 0,
+        limit: int = 10,
+    ) -> tuple[list[TestAttempt], int]:
+        """Submitted/graded attempts for the student dashboard Recent Exams table."""
+        filters = [
+            TestAttempt.student_membership_id == student_membership_id,
+            TestAttempt.user_id == student_user_id,
+            TestAttempt.status.in_(
+                [
+                    TestAttemptStatus.SUBMITTED.value,
+                    TestAttemptStatus.GRADED.value,
+                ]
+            ),
+            TestAttempt.submitted_at.is_not(None),
+            Test.archived_at.is_(None),
+            Test.created_by.has(workspace_id=workspace_id),
+        ]
+
+        total = (
+            db.session.execute(
+                db.select(func.count(TestAttempt.id))
+                .select_from(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .where(*filters)
+            ).scalar_one()
+            or 0
+        )
+
+        rows = list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(
+                    joinedload(TestAttempt.test).joinedload(Test.subject),
+                )
+                .where(*filters)
+                .order_by(
+                    TestAttempt.submitted_at.desc(),
+                    TestAttempt.id.desc(),
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        return rows, int(total)
+
     def find_graded_for_student_test(
         self,
         *,
@@ -364,6 +419,79 @@ class TestAttemptRepository(BaseRepository):
             for topic_id, topic_name, weighted_earned, weighted_possible in rows
         ]
 
+    def list_topic_weighted_rows_for_attempt_ids(
+        self,
+        *,
+        attempt_ids: list[int],
+    ) -> list[tuple[int | None, str | None, int | None, str | None, float, float]]:
+        """
+        Topic mastery rows across many attempts, including subject context.
+        Returns:
+          (subject_id, subject_name, topic_id, topic_name, weighted_earned, weighted_possible)
+        """
+        if not attempt_ids:
+            return []
+
+        difficulty_weight = case(
+            (TestQuestion.snapshot_difficulty == "HARD", 2.0),
+            (TestQuestion.snapshot_difficulty == "MEDIUM", 1.5),
+            else_=1.0,
+        )
+        rows = db.session.execute(
+            db.select(
+                Test.subject_id.label("subject_id"),
+                Subject.name.label("subject_name"),
+                TestQuestion.snapshot_topic_id.label("topic_id"),
+                func.coalesce(
+                    TestQuestion.snapshot_topic_name,
+                    Topic.name,
+                    "General",
+                ).label("topic_name"),
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).label("weighted_earned"),
+                func.sum(
+                    func.coalesce(TestQuestion.points, TestQuestion.snapshot_points, 0.0)
+                    * difficulty_weight
+                ).label("weighted_possible"),
+            )
+            .select_from(AttemptAnswer)
+            .join(TestAttempt, TestAttempt.id == AttemptAnswer.attempt_id)
+            .join(Test, Test.id == TestAttempt.test_id)
+            .outerjoin(Subject, Subject.id == Test.subject_id)
+            .join(TestQuestion, TestQuestion.id == AttemptAnswer.test_question_id)
+            .outerjoin(Topic, Topic.id == TestQuestion.snapshot_topic_id)
+            .where(
+                AttemptAnswer.attempt_id.in_(attempt_ids),
+                TestQuestion.status == QuestionStatus.ACTIVE.value,
+            )
+            .group_by(
+                Test.subject_id,
+                Subject.name,
+                TestQuestion.snapshot_topic_id,
+                TestQuestion.snapshot_topic_name,
+                Topic.name,
+            )
+        ).all()
+        return [
+            (
+                subject_id,
+                subject_name,
+                topic_id,
+                topic_name,
+                float(weighted_earned or 0.0),
+                float(weighted_possible or 0.0),
+            )
+            for (
+                subject_id,
+                subject_name,
+                topic_id,
+                topic_name,
+                weighted_earned,
+                weighted_possible,
+            ) in rows
+        ]
+
     def list_in_progress_on_published_tests(self) -> list[TestAttempt]:
         return list(
             db.session.execute(
@@ -451,6 +579,19 @@ class TestQuestionRepositoryExtended(BaseRepository):
                 )
                 .order_by(TestQuestion.id)
             ).scalars().all()
+        )
+
+    def count_active_for_test(self, test_id: int) -> int:
+        from utils.enums import QuestionStatus
+
+        return int(
+            db.session.execute(
+                db.select(db.func.count(TestQuestion.id)).where(
+                    TestQuestion.test_id == test_id,
+                    TestQuestion.status == QuestionStatus.ACTIVE.value,
+                )
+            ).scalar_one()
+            or 0
         )
 
     def map_ids_for_test(self, test_id: int, test_question_ids: list[int]) -> dict[int, TestQuestion]:

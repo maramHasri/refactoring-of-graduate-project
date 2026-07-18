@@ -2525,6 +2525,48 @@ paths:
         200:
           description: Test archived
   # ── Student Exams — runtime (take exam, attempts, submit) ───────────────
+  /student/recent-exams:
+    get:
+      tags: [Student Exams]
+      summary: List recent exams for the student dashboard
+      description: |
+        Returns the authenticated student's most recent submitted/graded attempts
+        for the Student Dashboard **Recent Exams** table.
+
+        Student is resolved from JWT + `X-Workspace-Id` (no `student_id` parameter).
+        Only the caller's own attempts are returned.
+
+        **UI status mapping:**
+        - `GRADED` — grading completed and results published (`allow_review_after_grading`)
+        - `PENDING_GRADING` — attempt submitted; teacher has not finished grading
+        - `WAITING_PUBLICATION` — graded, but results not yet published to the student
+
+        **Score rules:** `score` is an object only when status is `GRADED`; otherwise `null`.
+
+        Ordered by `submitted_at` descending. Default page size is 10.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+          description: Page number (1-based)
+        - name: per_page
+          in: query
+          type: integer
+          default: 10
+          description: Items per page (max 100)
+      responses:
+        200:
+          description: Paginated recent exam attempts
+          schema:
+            $ref: "#/definitions/StudentRecentExamsResponse"
+        400:
+          description: Invalid pagination query
+        401:
+          description: Missing or invalid access token
+        403:
+          description: Not an active student in the workspace
   /student/tests/upcoming:
     get:
       tags: [Student Exams]
@@ -2553,6 +2595,81 @@ paths:
               $ref: "#/definitions/UpcomingTest"
         403:
           description: Not an active student
+  /student/tests/{test_id}/entry:
+    get:
+      tags: [Student Exams]
+      summary: Exam Entry Screen (pre-start)
+      description: |
+        Read-only payload for the Student Exam Entry Screen shown before starting an exam.
+
+        **Does not:**
+        - create or resume an attempt
+        - start the countdown timer
+        - initialize proctoring
+        - return questions or answers
+
+        Verifies the authenticated student is enrolled in the subject and assigned to the exam
+        (same access rules as start attempt). Returns exam metadata, timing, rules, instructions,
+        and student start/resume state (`can_start`, `already_started`, `resume_attempt_id`).
+
+        Soft blockers (entry window closed, max attempts reached, exam not started yet) set
+        `student.can_start=false` so the UI can still render the screen.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+          description: Exam id
+      responses:
+        200:
+          description: Exam entry screen payload
+          schema:
+            $ref: "#/definitions/StudentExamEntryResponse"
+          examples:
+            application/json:
+              exam:
+                id: 39
+                title: Midterm Calculus
+                description: Covers Chapters 1-4
+                subject: { id: 28, name: Mathematics }
+                teacher: { name: Sara Hassan }
+              time:
+                availability_mode: SCHEDULED
+                duration_minutes: 60
+                starts_at: "2026-07-20T10:00:00+00:00"
+                ends_at: "2026-07-20T11:00:00+00:00"
+                entry_window_minutes: 5
+              summary:
+                questions_count: 25
+                total_score: 100
+                passing_score: 50
+              rules:
+                allow_back_navigation: false
+                allow_skip_questions: true
+                require_answer_all: false
+                shuffle_questions: true
+                shuffle_choices: true
+                max_attempts: 2
+                proctoring_enabled: true
+              instructions:
+                - Ensure that your internet connection is stable.
+                - Allow camera and microphone access.
+                - Do not leave the exam page.
+                - The exam will be submitted automatically when the timer expires.
+              student:
+                remaining_attempts: 1
+                can_start: true
+                already_started: false
+                resume_attempt_id: null
+        401:
+          description: Missing or invalid access token
+        403:
+          description: Not enrolled, not assigned, or student access required
+        404:
+          description: Test not found in workspace
+        422:
+          description: Exam unavailable (not published / duration not configured)
   /tests/available:
     get:
       tags: [Student Exams]
@@ -2910,6 +3027,33 @@ paths:
               $ref: "#/definitions/StudentGradedResult"
         403:
           description: Not an active student
+  /student/dashboard:
+    get:
+      tags: [Grading]
+      summary: Student dashboard performance analytics
+      description: |
+        High-level performance summary for the authenticated student's dashboard.
+        Student is resolved from JWT + `X-Workspace-Id` (no `student_id`).
+
+        Includes only attempts that are fully **graded** and have **published** results
+        (`settings_config.review_settings.allow_review_after_grading=true`).
+        Pending and unpublished grades are excluded.
+
+        Returns overview averages, best/weakest subjects, and weak topics using the same
+        topic mastery classification as subject analytics
+        (`NEEDS_IMPROVEMENT` / `WEAKNESS`).
+
+        Empty state (no published graded exams) returns zeros/`null`/`[]` with HTTP 200.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Dashboard analytics summary
+          schema:
+            $ref: "#/definitions/StudentDashboardAnalytics"
+        401:
+          description: Missing or invalid access token
+        403:
+          description: Not an active student in the workspace
   /student/subjects/{subject_id}/analytics:
     get:
       tags: [Student Exams]
@@ -4336,6 +4480,59 @@ definitions:
         properties:
           available_from: { type: string, format: date-time }
           available_until: { type: string, format: date-time }
+  StudentExamEntryResponse:
+    type: object
+    properties:
+      exam:
+        type: object
+        properties:
+          id: { type: integer, example: 39 }
+          title: { type: string, example: "Midterm Calculus" }
+          description: { type: string, x-nullable: true }
+          subject:
+            type: object
+            x-nullable: true
+            properties:
+              id: { type: integer }
+              name: { type: string }
+          teacher:
+            type: object
+            properties:
+              name: { type: string, x-nullable: true }
+      time:
+        type: object
+        properties:
+          availability_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+          duration_minutes: { type: integer, example: 60 }
+          starts_at: { type: string, format: date-time, x-nullable: true }
+          ends_at: { type: string, format: date-time, x-nullable: true }
+          entry_window_minutes: { type: integer, x-nullable: true }
+      summary:
+        type: object
+        properties:
+          questions_count: { type: integer, example: 25 }
+          total_score: { type: number, example: 100 }
+          passing_score: { type: number, example: 50, x-nullable: true }
+      rules:
+        type: object
+        properties:
+          allow_back_navigation: { type: boolean }
+          allow_skip_questions: { type: boolean }
+          require_answer_all: { type: boolean }
+          shuffle_questions: { type: boolean }
+          shuffle_choices: { type: boolean }
+          max_attempts: { type: integer, example: 2 }
+          proctoring_enabled: { type: boolean }
+      instructions:
+        type: array
+        items: { type: string }
+      student:
+        type: object
+        properties:
+          remaining_attempts: { type: integer, example: 1 }
+          can_start: { type: boolean, example: true }
+          already_started: { type: boolean, example: false }
+          resume_attempt_id: { type: integer, x-nullable: true, example: null }
   StudentGradedResult:
     type: object
     properties:
@@ -4349,6 +4546,86 @@ definitions:
       percentage: { type: number }
       status: { type: string, example: GRADED }
       graded_at: { type: string, format: date-time }
+  StudentDashboardSubjectSummary:
+    type: object
+    x-nullable: true
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Advanced Web Programming" }
+      average_percentage: { type: number, example: 96 }
+  StudentDashboardWeakTopic:
+    type: object
+    properties:
+      subject_id: { type: integer, example: 8 }
+      subject_name: { type: string, example: "Information Security" }
+      topic_id: { type: integer, example: 41 }
+      topic_name: { type: string, example: "Encryption" }
+      mastery: { type: number, example: 58 }
+  StudentDashboardAnalytics:
+    type: object
+    properties:
+      overview:
+        type: object
+        properties:
+          overall_average: { type: number, example: 88.5 }
+          highest_score: { type: number, example: 99, x-nullable: true }
+          lowest_score: { type: number, example: 61, x-nullable: true }
+          total_exams: { type: integer, example: 24 }
+          passed_exams: { type: integer, example: 22 }
+          failed_exams: { type: integer, example: 2 }
+      best_subject:
+        $ref: "#/definitions/StudentDashboardSubjectSummary"
+      weakest_subject:
+        $ref: "#/definitions/StudentDashboardSubjectSummary"
+      weak_topics:
+        type: array
+        items:
+          $ref: "#/definitions/StudentDashboardWeakTopic"
+  StudentRecentExamScore:
+    type: object
+    properties:
+      earned: { type: number, example: 46 }
+      maximum: { type: number, example: 50 }
+      percentage: { type: number, example: 92, x-nullable: true }
+  StudentRecentExamItem:
+    type: object
+    properties:
+      attempt_id: { type: integer, example: 91 }
+      status:
+        type: string
+        enum: [GRADED, PENDING_GRADING, WAITING_PUBLICATION]
+        example: GRADED
+      submitted_at: { type: string, format: date-time, example: "2026-10-12T09:10:00+00:00" }
+      subject:
+        type: object
+        x-nullable: true
+        properties:
+          id: { type: integer, example: 4 }
+          name: { type: string, example: "Mathematics" }
+      test:
+        type: object
+        properties:
+          id: { type: integer, example: 17 }
+          title: { type: string, example: "Calculus 1" }
+          published_at: { type: string, format: date-time, x-nullable: true }
+      score:
+        description: Present only when status is GRADED; otherwise null
+        x-nullable: true
+        allOf:
+          - $ref: "#/definitions/StudentRecentExamScore"
+      grading_completed: { type: boolean, example: true }
+      result_published: { type: boolean, example: true }
+  StudentRecentExamsResponse:
+    type: object
+    properties:
+      items:
+        type: array
+        items:
+          $ref: "#/definitions/StudentRecentExamItem"
+      total: { type: integer, example: 24 }
+      page: { type: integer, example: 1 }
+      per_page: { type: integer, example: 10 }
+      pages: { type: integer, example: 3 }
   ScheduleConflictError:
     type: object
     properties:

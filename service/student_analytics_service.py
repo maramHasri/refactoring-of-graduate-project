@@ -6,11 +6,15 @@ from __future__ import annotations
 
 from utils.messages import Messages
 
+from models import Test, TestAttempt
 from repositories.attempt_repository import TestAttemptRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
 from service.exceptions import NotFoundError, ValidationError
 from utils.academic_rbac import verify_subject_student_access
 from utils.enums import MembershipRole, SubjectRole, TestAttemptStatus
+from utils.review_settings import allow_review_after_grading
+
+_WEAK_TOPIC_CLASSIFICATIONS = frozenset({"NEEDS_IMPROVEMENT", "WEAKNESS"})
 
 
 class StudentAnalyticsService:
@@ -18,6 +22,49 @@ class StudentAnalyticsService:
         self.attempts = TestAttemptRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
+
+    def get_dashboard_analytics(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+    ) -> dict:
+        """
+        High-level Student Dashboard performance summary.
+
+        Uses only graded attempts whose results are published
+        (`review_settings.allow_review_after_grading`).
+        """
+        self._ensure_student_scope(actor_membership)
+        graded_attempts = self.attempts.list_graded_for_student(
+            workspace_id=workspace_id,
+            student_membership_id=actor_membership.id,
+            student_user_id=actor_user_id,
+        )
+        published_attempts = [
+            attempt
+            for attempt in graded_attempts
+            if attempt.test is not None
+            and self._is_published_graded_result(attempt.test, attempt)
+            and attempt.percentage is not None
+        ]
+
+        if not published_attempts:
+            return self._empty_dashboard()
+
+        overview = self._build_overview(published_attempts)
+        best_subject, weakest_subject = self._build_subject_extremes(published_attempts)
+        weak_topics = self._build_weak_topics(
+            [attempt.id for attempt in published_attempts]
+        )
+
+        return {
+            "overview": overview,
+            "best_subject": best_subject,
+            "weakest_subject": weakest_subject,
+            "weak_topics": weak_topics,
+        }
 
     def get_subject_analytics(
         self,
@@ -59,7 +106,7 @@ class StudentAnalyticsService:
             "weaknesses": [
                 item
                 for item in topics
-                if item["classification"] in ("NEEDS_IMPROVEMENT", "WEAKNESS")
+                if item["classification"] in _WEAK_TOPIC_CLASSIFICATIONS
             ],
         }
 
@@ -127,6 +174,144 @@ class StudentAnalyticsService:
     def _ensure_student_scope(actor_membership) -> None:
         if actor_membership.role != MembershipRole.STUDENT.value:
             raise ValidationError(Messages.STUDENT_ACCESS_REQUIRED)
+
+    @staticmethod
+    def _is_published_graded_result(test: Test, attempt: TestAttempt) -> bool:
+        if attempt.status != TestAttemptStatus.GRADED.value:
+            return False
+        return allow_review_after_grading(test.settings_config)
+
+    @staticmethod
+    def _empty_dashboard() -> dict:
+        return {
+            "overview": {
+                "overall_average": 0,
+                "highest_score": None,
+                "lowest_score": None,
+                "total_exams": 0,
+                "passed_exams": 0,
+                "failed_exams": 0,
+            },
+            "best_subject": None,
+            "weakest_subject": None,
+            "weak_topics": [],
+        }
+
+    def _build_overview(self, published_attempts: list[TestAttempt]) -> dict:
+        percentages = [float(attempt.percentage) for attempt in published_attempts]
+        passed_exams = 0
+        failed_exams = 0
+        for attempt in published_attempts:
+            if self._attempt_is_passed(attempt, attempt.test):
+                passed_exams += 1
+            else:
+                failed_exams += 1
+
+        return {
+            "overall_average": round(sum(percentages) / len(percentages), 2),
+            "highest_score": round(max(percentages), 2),
+            "lowest_score": round(min(percentages), 2),
+            "total_exams": len(published_attempts),
+            "passed_exams": passed_exams,
+            "failed_exams": failed_exams,
+        }
+
+    @staticmethod
+    def _attempt_is_passed(attempt: TestAttempt, test: Test) -> bool:
+        """Pass/fail uses the exam's configured passing_score (absolute points)."""
+        if test.passing_score is not None and attempt.final_score is not None:
+            return float(attempt.final_score) >= float(test.passing_score)
+        # No passing threshold configured — treat as passed (cannot fail without a bar).
+        return True
+
+    def _build_subject_extremes(
+        self, published_attempts: list[TestAttempt]
+    ) -> tuple[dict | None, dict | None]:
+        subject_stats: dict[int, dict] = {}
+        for attempt in published_attempts:
+            test = attempt.test
+            subject = test.subject if test else None
+            if subject is None:
+                continue
+            entry = subject_stats.get(subject.id)
+            if entry is None:
+                entry = {
+                    "id": subject.id,
+                    "name": subject.name,
+                    "percentages": [],
+                }
+                subject_stats[subject.id] = entry
+            entry["percentages"].append(float(attempt.percentage))
+
+        if not subject_stats:
+            return None, None
+
+        ranked: list[dict] = []
+        for entry in subject_stats.values():
+            percentages = entry["percentages"]
+            ranked.append(
+                {
+                    "id": entry["id"],
+                    "name": entry["name"],
+                    "average_percentage": round(sum(percentages) / len(percentages), 2),
+                    "attempt_count": len(percentages),
+                }
+            )
+
+        best = max(
+            ranked,
+            key=lambda item: (item["average_percentage"], item["attempt_count"]),
+        )
+        weakest = min(
+            ranked,
+            key=lambda item: (item["average_percentage"], -item["attempt_count"]),
+        )
+
+        return (
+            {
+                "id": best["id"],
+                "name": best["name"],
+                "average_percentage": best["average_percentage"],
+            },
+            {
+                "id": weakest["id"],
+                "name": weakest["name"],
+                "average_percentage": weakest["average_percentage"],
+            },
+        )
+
+    def _build_weak_topics(self, published_attempt_ids: list[int]) -> list[dict]:
+        rows = self.attempts.list_topic_weighted_rows_for_attempt_ids(
+            attempt_ids=published_attempt_ids
+        )
+        weak_topics: list[dict] = []
+        for (
+            subject_id,
+            subject_name,
+            topic_id,
+            topic_name,
+            weighted_earned,
+            weighted_possible,
+        ) in rows:
+            if weighted_possible <= 0:
+                mastery = 0.0
+            else:
+                mastery = round((weighted_earned / weighted_possible) * 100, 2)
+            classification = self._classify(mastery)
+            if classification not in _WEAK_TOPIC_CLASSIFICATIONS:
+                continue
+            weak_topics.append(
+                {
+                    "subject_id": subject_id,
+                    "subject_name": subject_name,
+                    "topic_id": topic_id,
+                    "topic_name": topic_name or "General",
+                    "mastery": mastery,
+                }
+            )
+
+        weak_topics.sort(key=lambda item: item["mastery"])
+        return weak_topics
 
     @staticmethod
     def _classify(performance: float) -> str:

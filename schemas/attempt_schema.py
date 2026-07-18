@@ -18,6 +18,13 @@ class AttemptAnswerSchema(Schema):
     updated_at = fields.DateTime(dump_only=True)
 
 
+class StudentRecentExamsQuerySchema(Schema):
+    """GET /student/recent-exams — pagination query params."""
+
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=10, validate=validate.Range(min=1, max=100))
+
+
 class SaveAttemptAnswerItemSchema(Schema):
     test_question_id = fields.Int(required=True, validate=validate.Range(min=1))
     answer_text = fields.Str(allow_none=True)

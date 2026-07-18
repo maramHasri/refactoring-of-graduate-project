@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.orm import joinedload
 
 from models import Test, TestQuestion, TestStudentAssignment
+from models.workspace import Membership
 from repositories.base_repository import BaseRepository
 from utils.app_timezone import ensure_local_aware, local_timezone_now
 from utils.db import db
@@ -15,11 +17,16 @@ class TestRepository(BaseRepository):
 
     def get_by_id_in_workspace(self, test_id: int, workspace_id: int) -> Test | None:
         return db.session.execute(
-            db.select(Test).where(
+            db.select(Test)
+            .options(
+                joinedload(Test.subject),
+                joinedload(Test.created_by).joinedload(Membership.user),
+            )
+            .where(
                 Test.id == test_id,
                 Test.created_by.has(workspace_id=workspace_id),
             )
-        ).scalar_one_or_none()
+        ).unique().scalar_one_or_none()
 
     def count_for_creator(self, creator_membership_id: int) -> int:
         return (

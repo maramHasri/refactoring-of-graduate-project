@@ -1,9 +1,10 @@
 """
 Student-facing APIs — upcoming tests, dashboards, etc.
 """
-from flask import Blueprint, g, jsonify
+from flask import Blueprint, g, jsonify, request
 
 from router.decorators import handle_service_errors, require_active_student
+from schemas.attempt_schema import StudentRecentExamsQuerySchema
 from service.attempt_service import AttemptService
 from service.student_analytics_service import StudentAnalyticsService
 
@@ -20,6 +21,45 @@ def list_upcoming_tests():
         actor_membership=g.membership,
     )
     return jsonify(items), 200
+
+
+@student_bp.route("/tests/<int:test_id>/entry", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def get_exam_entry(test_id):
+    """GET /student/tests/{test_id}/entry — read-only Exam Entry Screen payload."""
+    return AttemptService().get_exam_entry(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    ), 200
+
+
+@student_bp.route("/recent-exams", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def list_recent_exams():
+    """GET /student/recent-exams — recent attempts for the Student Dashboard table."""
+    query = StudentRecentExamsQuerySchema().load(request.args.to_dict())
+    return AttemptService().list_recent_exams(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+    ), 200
+
+
+@student_bp.route("/dashboard", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def get_student_dashboard():
+    """GET /student/dashboard — performance overview for the Student Dashboard."""
+    return StudentAnalyticsService().get_dashboard_analytics(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+    ), 200
 
 
 @student_bp.route("/tests/results", methods=["GET"])

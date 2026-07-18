@@ -39,10 +39,16 @@ from utils.enums import (
     TestAttemptStatus,
     TestStatus,
 )
+from utils.pagination import build_pagination_meta, normalize_pagination
 
 logger = logging.getLogger(__name__)
 
 _OBJECTIVE_TYPES = frozenset({"MCQ", "TRUE_FALSE", "MULTI_SELECT"})
+
+# Student dashboard Recent Exams UI statuses (mapped from attempt + review settings).
+_RECENT_STATUS_GRADED = "GRADED"
+_RECENT_STATUS_PENDING_GRADING = "PENDING_GRADING"
+_RECENT_STATUS_WAITING_PUBLICATION = "WAITING_PUBLICATION"
 
 
 class AttemptService:
@@ -143,6 +149,72 @@ class AttemptService:
             for attempt in attempts
             if attempt.test is not None
         ]
+
+    def list_recent_exams(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+        page: int | None = None,
+        per_page: int | None = None,
+    ) -> dict:
+        """Recent submitted/graded attempts for the student dashboard table."""
+        page, per_page, offset = normalize_pagination(page, per_page)
+        attempts, total = self.attempts.list_recent_for_student(
+            workspace_id=workspace_id,
+            student_membership_id=actor_membership.id,
+            student_user_id=actor_user_id,
+            offset=offset,
+            limit=per_page,
+        )
+        items = [
+            self._serialize_recent_exam(attempt)
+            for attempt in attempts
+            if attempt.test is not None
+        ]
+        return {
+            "items": items,
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
+        }
+
+    def get_exam_entry(
+        self,
+        *,
+        test_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        """
+        Read-only Exam Entry Screen payload.
+
+        Does not create/resume attempts, start timers, or start proctoring.
+        """
+        test, _ = self._resolve_student_test_access(
+            test_id, workspace_id, actor_membership
+        )
+        self._ensure_exam_available_for_entry(test)
+
+        student_state = self._build_exam_entry_student_state(test, actor_membership)
+        settings = self._student_facing_exam_settings(test)
+        questions_count = self.test_questions.count_active_for_test(test.id)
+
+        return {
+            "exam": self._serialize_exam_entry_exam(test),
+            "time": self._serialize_exam_entry_time(test),
+            "summary": {
+                "questions_count": questions_count,
+                "total_score": float(test.total_score)
+                if test.total_score is not None
+                else self.grading.maximum_score(test),
+                "passing_score": float(test.passing_score)
+                if test.passing_score is not None
+                else None,
+            },
+            "rules": settings["rules"],
+            "instructions": self._build_exam_entry_instructions(settings["rules"]),
+            "student": student_state,
+        }
 
     def start_or_resume_attempt(
         self,
@@ -1048,6 +1120,54 @@ class AttemptService:
             "graded_at": format_local_datetime(attempt.graded_at),
         }
 
+    def _serialize_recent_exam(self, attempt: TestAttempt) -> dict:
+        test = attempt.test
+        subject = test.subject if test else None
+        result_published = self._allow_student_review_after_grading(test, attempt)
+        grading_completed = attempt.status == TestAttemptStatus.GRADED.value
+
+        if not grading_completed:
+            ui_status = _RECENT_STATUS_PENDING_GRADING
+        elif not result_published:
+            ui_status = _RECENT_STATUS_WAITING_PUBLICATION
+        else:
+            ui_status = _RECENT_STATUS_GRADED
+
+        score = None
+        if ui_status == _RECENT_STATUS_GRADED and attempt.final_score is not None:
+            percentage = (
+                float(attempt.percentage) if attempt.percentage is not None else None
+            )
+            score = {
+                "earned": float(attempt.final_score),
+                "maximum": self.grading.maximum_score(test),
+                "percentage": percentage,
+            }
+
+        return {
+            "attempt_id": attempt.id,
+            "status": ui_status,
+            "submitted_at": attempt.submitted_at.isoformat()
+            if attempt.submitted_at
+            else None,
+            "subject": {
+                "id": subject.id,
+                "name": subject.name,
+            }
+            if subject
+            else None,
+            "test": {
+                "id": test.id,
+                "title": test.name,
+                "published_at": test.published_at.isoformat()
+                if test.published_at
+                else None,
+            },
+            "score": score,
+            "grading_completed": grading_completed,
+            "result_published": result_published,
+        }
+
     def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:
         if self._is_flexible(test):
             if test.closed_at and now >= ensure_local_aware(test.closed_at):
@@ -1100,6 +1220,144 @@ class AttemptService:
         except (TypeError, ValueError):
             value = 1
         return max(1, value)
+
+    def _ensure_exam_available_for_entry(self, test: Test) -> None:
+        if test.status != TestStatus.PUBLISHED.value or test.archived_at is not None:
+            raise ValidationError(Messages.TEST_IS_NOT_PUBLISHED)
+        if not test.duration_minutes:
+            raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
+
+    def _student_facing_exam_settings(self, test: Test) -> dict:
+        settings = self._load_json(test.settings_config) or {}
+        navigation = settings.get("navigation_settings") or {}
+        answer_rules = settings.get("answer_rules") or {}
+        display = settings.get("display_settings") or {}
+        proctoring = settings.get("proctoring") or {}
+        rules = {
+            "allow_back_navigation": bool(navigation.get("allow_back_navigation", True)),
+            "allow_skip_questions": bool(answer_rules.get("allow_skip_questions", True)),
+            "require_answer_all": bool(answer_rules.get("require_answer_all", False)),
+            "shuffle_questions": bool(display.get("shuffle_questions", False)),
+            "shuffle_choices": bool(display.get("shuffle_choices", False)),
+            "max_attempts": self._max_attempts(test),
+            "proctoring_enabled": bool(proctoring.get("enabled", False)),
+        }
+        if rules["require_answer_all"] and rules["allow_skip_questions"]:
+            rules["allow_skip_questions"] = False
+        return {"rules": rules}
+
+    def _serialize_exam_entry_exam(self, test: Test) -> dict:
+        subject = test.subject
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+        return {
+            "id": test.id,
+            "title": test.name,
+            "description": test.description,
+            "subject": {
+                "id": subject.id,
+                "name": subject.name,
+            }
+            if subject
+            else None,
+            "teacher": {"name": teacher_name} if teacher_name else {"name": None},
+        }
+
+    def _serialize_exam_entry_time(self, test: Test) -> dict:
+        mode = self._availability_mode(test)
+        payload = {
+            "availability_mode": mode,
+            "duration_minutes": test.duration_minutes,
+            "starts_at": None,
+            "ends_at": None,
+            "entry_window_minutes": None,
+        }
+        if self._is_scheduled(test):
+            global_end = self._scheduled_global_end_time(test)
+            payload["starts_at"] = (
+                ensure_local_aware(test.starts_at).isoformat() if test.starts_at else None
+            )
+            payload["ends_at"] = global_end.isoformat() if global_end else None
+            payload["entry_window_minutes"] = test.entry_window_minutes
+        return payload
+
+    def _build_exam_entry_instructions(self, rules: dict) -> list[str]:
+        instructions = [
+            "Ensure that your internet connection is stable.",
+            "Do not leave the exam page.",
+            "The exam will be submitted automatically when the timer expires.",
+        ]
+        if rules.get("proctoring_enabled"):
+            instructions.insert(1, "Allow camera and microphone access.")
+        if not rules.get("allow_back_navigation"):
+            instructions.append("You cannot go back to previous questions.")
+        if rules.get("require_answer_all"):
+            instructions.append("You must answer all questions before submitting.")
+        return instructions
+
+    def _build_exam_entry_student_state(
+        self, test: Test, actor_membership
+    ) -> dict:
+        active_attempt = self.attempts.find_active_for_student(
+            test.id, actor_membership.id
+        )
+        max_attempts = self._max_attempts(test)
+        completed_count = self.attempts.count_completed_for_student(
+            test.id, actor_membership.id
+        )
+        remaining_attempts = max(0, max_attempts - completed_count)
+
+        if active_attempt is not None:
+            can_resume = self._can_resume_attempt(active_attempt, test)
+            return {
+                "remaining_attempts": remaining_attempts,
+                "can_start": can_resume,
+                "already_started": True,
+                "resume_attempt_id": active_attempt.id,
+            }
+
+        can_start = remaining_attempts > 0 and self._can_start_first_attempt(test)
+        return {
+            "remaining_attempts": remaining_attempts,
+            "can_start": can_start,
+            "already_started": False,
+            "resume_attempt_id": None,
+        }
+
+    def _can_resume_attempt(self, attempt: TestAttempt, test: Test) -> bool:
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            return False
+        if test.status != TestStatus.PUBLISHED.value:
+            return False
+        deadline = self._attempt_end_deadline(attempt, test)
+        if deadline and local_timezone_now() >= deadline:
+            return False
+        return True
+
+    def _can_start_first_attempt(self, test: Test) -> bool:
+        """Mirror _ensure_test_takeable_for_first_attempt without raising."""
+        if test.status != TestStatus.PUBLISHED.value:
+            return False
+        if not test.duration_minutes:
+            return False
+        if self._is_flexible(test):
+            return True
+
+        now = local_timezone_now()
+        if not test.starts_at:
+            return False
+        starts_at = ensure_local_aware(test.starts_at)
+        if now < starts_at:
+            return False
+        global_end = self._scheduled_global_end_time(test)
+        if global_end and now >= global_end:
+            return False
+        if test.entry_window_minutes:
+            window_end = starts_at + timedelta(minutes=int(test.entry_window_minutes))
+            if now > window_end:
+                return False
+        return True
 
     def _validate_submission_answer_rules(
         self, attempt: TestAttempt, test: Test
@@ -1196,11 +1454,9 @@ class AttemptService:
     ) -> bool:
         if attempt.status != TestAttemptStatus.GRADED.value:
             return False
-        settings = self._load_json(test.settings_config) or {}
-        review_settings = settings.get("review_settings") or {}
-        if not isinstance(review_settings, dict):
-            return False
-        return bool(review_settings.get("allow_review_after_grading", False))
+        from utils.review_settings import allow_review_after_grading
+
+        return allow_review_after_grading(test.settings_config)
 
     def _ensure_teacher_attempt_access(
         self, test: Test, workspace_id: int, actor_membership
