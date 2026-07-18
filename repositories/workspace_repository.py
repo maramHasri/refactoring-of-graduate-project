@@ -1,11 +1,12 @@
 from datetime import datetime
 
 from sqlalchemy import func, or_
+from sqlalchemy.orm import contains_eager, selectinload
 
 from models import Membership, Subject, SubjectMembership, TestAttempt, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import MembershipRole, SubjectMembershipStatus
+from utils.enums import MembershipRole, MembershipStatus, SubjectMembershipStatus, WorkspaceStatus
 
 
 class WorkspaceRepository(BaseRepository):
@@ -101,6 +102,39 @@ class MembershipRepository(BaseRepository):
                 Membership.workspace_id == workspace_id,
             )
         ).scalar_one_or_none()
+
+    def list_for_user(
+        self,
+        user_id: int,
+        *,
+        active_only: bool = False,
+        active_workspace_only: bool = False,
+    ) -> list[Membership]:
+        """List memberships for a user with workspace eager-loaded (avoids N+1)."""
+        filters = [Membership.user_id == user_id]
+        if active_only:
+            filters.append(Membership.status == MembershipStatus.ACTIVE.value)
+
+        if active_workspace_only:
+            stmt = (
+                db.select(Membership)
+                .join(Workspace, Workspace.id == Membership.workspace_id)
+                .options(contains_eager(Membership.workspace))
+                .where(
+                    *filters,
+                    Workspace.status == WorkspaceStatus.ACTIVE.value,
+                )
+                .order_by(Membership.joined_at.desc(), Membership.id)
+            )
+        else:
+            stmt = (
+                db.select(Membership)
+                .options(selectinload(Membership.workspace))
+                .where(*filters)
+                .order_by(Membership.joined_at.desc(), Membership.id)
+            )
+
+        return list(db.session.execute(stmt).scalars().unique().all())
 
     def count_active_for_user(self, user_id: int) -> int:
         return db.session.execute(

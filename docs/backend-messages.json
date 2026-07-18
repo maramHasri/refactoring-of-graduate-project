@@ -435,6 +435,10 @@
     "message": "Insufficient permissions to view this attempt's grading result",
     "description": "Authorization / permission failure message."
   },
+  "INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_USERS_MEMBERSHIPS": {
+    "message": "Insufficient permissions to view this user's memberships",
+    "description": "Authorization / permission failure message."
+  },
   "INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_VIOLATION": {
     "message": "Insufficient permissions to view this violation",
     "description": "Authorization / permission failure message."

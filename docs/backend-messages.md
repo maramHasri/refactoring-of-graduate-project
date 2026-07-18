@@ -75,6 +75,7 @@ Do not change these strings casually — they are part of the API contract.
 | Constant | English Message | Description |
 |----------|-----------------|-------------|
 | AT_LEAST_ONE_PROFILE_FIELD_IS_REQUIRED | At least one profile field is required | Validation or authorization failure message. |
+| INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_USERS_MEMBERSHIPS | Insufficient permissions to view this user's memberships | Authorization / permission failure message. |
 | ORGANIZATION_IS_ALREADY_SUSPENDED | Organization is already suspended | API response message. |
 | ORGANIZATION_IS_NOT_SUSPENDED | Organization is not suspended | API response message. |
 | ORGANIZATION_RESTORED_SUCCESSFULLY | Organization restored successfully | Returned after a successful operation. |

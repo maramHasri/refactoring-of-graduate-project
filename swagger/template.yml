@@ -365,6 +365,49 @@ paths:
               message: { type: string, example: "Profile updated successfully" }
               user:
                 $ref: "#/definitions/UserProfile"
+  /users/{user_id}/memberships:
+    get:
+      tags: [Users]
+      summary: List memberships for a user
+      description: |
+        Returns every workspace membership belonging to the given user.
+        Accessible by the user themselves or by a platform super admin
+        (same audience that may view that user's details).
+        An empty `memberships` array is a successful response when the user has none.
+      security: [{ Bearer: [] }]
+      parameters:
+        - in: path
+          name: user_id
+          type: integer
+          required: true
+          description: Target user id
+      responses:
+        200:
+          description: User memberships
+          schema:
+            $ref: "#/definitions/UserMembershipsResponse"
+        401:
+          description: Missing or invalid access token
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+        403:
+          description: Caller cannot view this user's memberships
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Insufficient permissions to view this user's memberships"
+        404:
+          description: User not found
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "User not found"
   /workspaces:
     get:
       tags: [Workspaces]
@@ -4175,6 +4218,38 @@ definitions:
       last_login_at: { type: string, format: date-time }
       created_at: { type: string, format: date-time }
       updated_at: { type: string, format: date-time }
+  UserMembershipWorkspace:
+    type: object
+    properties:
+      id: { type: integer, example: 4 }
+      name: { type: string, example: "Faculty of Engineering" }
+      kind: { type: string, enum: [SOLO, INSTITUTION], example: "INSTITUTION" }
+  UserMembershipItem:
+    type: object
+    properties:
+      membership_id: { type: integer, example: 91 }
+      workspace:
+        $ref: "#/definitions/UserMembershipWorkspace"
+      role: { type: string, enum: [ADMIN, TEACHER, STUDENT], example: "TEACHER" }
+      is_owner: { type: boolean, example: false }
+      subject_role:
+        type: string
+        x-nullable: true
+        description: >
+          Reserved for subject-level role context. Workspace memberships do not
+          store subject_role; value is always null on this endpoint.
+        example: null
+      status: { type: string, enum: [ACTIVE, SUSPENDED, REMOVED], example: "ACTIVE" }
+      joined_at: { type: string, format: date-time, example: "2026-04-10T12:00:00+00:00" }
+      created_at: { type: string, format: date-time, example: "2026-04-10T12:00:00+00:00" }
+  UserMembershipsResponse:
+    type: object
+    properties:
+      user_id: { type: integer, example: 25 }
+      memberships:
+        type: array
+        items:
+          $ref: "#/definitions/UserMembershipItem"
   WorkspaceTeacherMember:
     type: object
     properties:

@@ -64,6 +64,9 @@ class Messages:
     # Users
 
     AT_LEAST_ONE_PROFILE_FIELD_IS_REQUIRED = "At least one profile field is required"
+    INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_USERS_MEMBERSHIPS = (
+        "Insufficient permissions to view this user's memberships"
+    )
     ORGANIZATION_IS_ALREADY_SUSPENDED = "Organization is already suspended"
     ORGANIZATION_IS_NOT_SUSPENDED = "Organization is not suspended"
     ORGANIZATION_RESTORED_SUCCESSFULLY = "Organization restored successfully"

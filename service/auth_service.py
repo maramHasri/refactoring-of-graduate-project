@@ -596,17 +596,14 @@ class AuthService:
         }
 
     def _serialize_memberships(self, user_id: int) -> list[dict]:
-        rows = db.session.execute(
-            db.select(Membership, Workspace)
-            .join(Workspace, Workspace.id == Membership.workspace_id)
-            .where(
-                Membership.user_id == user_id,
-                Membership.status == "ACTIVE",
-                Workspace.status == WorkspaceStatus.ACTIVE.value,
-            )
-        ).all()
+        memberships = self.memberships.list_for_user(
+            user_id,
+            active_only=True,
+            active_workspace_only=True,
+        )
         result = []
-        for membership, workspace in rows:
+        for membership in memberships:
+            workspace = membership.workspace
             is_owner = workspace.owner_membership_id == membership.id
             result.append(
                 {

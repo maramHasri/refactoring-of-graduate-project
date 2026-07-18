@@ -1,4 +1,4 @@
-"""User profile routes — authenticated self-service only."""
+"""User profile routes — authenticated self-service and user-scoped reads."""
 
 from utils.messages import Messages
 from flask import Blueprint, g, request
@@ -30,3 +30,11 @@ def update_my_profile():
         "message": Messages.PROFILE_UPDATED_SUCCESSFULLY,
         "user": _svc().serialize_profile(user),
     }, 200
+
+
+@user_bp.route("/<int:user_id>/memberships", methods=["GET"])
+@require_auth
+@handle_service_errors
+def list_user_memberships(user_id):
+    """GET /users/{user_id}/memberships — memberships for a viewable user."""
+    return _svc().list_memberships(user_id, actor=g.current_user), 200
