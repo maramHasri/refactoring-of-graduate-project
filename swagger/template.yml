@@ -3159,40 +3159,6 @@ paths:
           description: Graded test result not found
         403:
           description: Not an active student
-  /tests/{test_id}/attempts/{attempt_id}/grade:
-    post:
-      tags: [Grading]
-      summary: Manually grade pending answers (legacy alias)
-      description: Alias of POST .../grading/manual for backward compatibility.
-      security: [{ Bearer: [], WorkspaceId: [] }]
-      parameters:
-        - name: test_id
-          in: path
-          type: integer
-          required: true
-        - name: attempt_id
-          in: path
-          type: integer
-          required: true
-        - in: body
-          name: body
-          required: true
-          schema:
-            type: object
-            required: [answers]
-            properties:
-              answers:
-                type: array
-                items:
-                  type: object
-                  required: [test_question_id, earned_score]
-                  properties:
-                    test_question_id: { type: integer }
-                    earned_score: { type: number, minimum: 0 }
-                    teacher_feedback: { type: string }
-      responses:
-        200:
-          description: Manual grades saved
   /tests/{test_id}/attempts/{attempt_id}/force-submit:
     post:
       tags: [Tests]

@@ -63,18 +63,3 @@ def approve_final_score(test_id, attempt_id):
         final_score=data.get("final_score"),
         reason=data.get("reason"),
     ), 200
-
-
-@grading_bp.route("/<int:test_id>/attempts/<int:attempt_id>/grade", methods=["POST"])
-@require_workspace_membership
-@handle_service_errors
-def grade_pending_answers_legacy(test_id, attempt_id):
-    """Legacy alias for POST .../grading/manual (backward compatibility)."""
-    data = GradeAttemptEssaysSchema().load(request.get_json() or {})
-    return _svc().grade_attempt_essays(
-        test_id=test_id,
-        attempt_id=attempt_id,
-        workspace_id=g.workspace_id,
-        actor_membership=g.membership,
-        grades=data["answers"],
-    ), 200
