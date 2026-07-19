@@ -45,10 +45,9 @@ logger = logging.getLogger(__name__)
 
 _OBJECTIVE_TYPES = frozenset({"MCQ", "TRUE_FALSE", "MULTI_SELECT"})
 
-# Student dashboard Recent Exams UI statuses (mapped from attempt + review settings).
+# Student dashboard Recent Exams UI statuses (mapped from attempt status only).
 _RECENT_STATUS_GRADED = "GRADED"
 _RECENT_STATUS_PENDING_GRADING = "PENDING_GRADING"
-_RECENT_STATUS_WAITING_PUBLICATION = "WAITING_PUBLICATION"
 
 
 class AttemptService:
@@ -362,16 +361,33 @@ class AttemptService:
         )
         self._check_and_apply_timeout(attempt, test)
         is_own_attempt = attempt.student_membership_id == actor_membership.id
-        allow_review = (
+
+        # Review flag gates educational content only; scores stay visible.
+        # include_answers=False skips loading/serializing questions and answers.
+        if (
+            is_own_attempt
+            and attempt.status == TestAttemptStatus.GRADED.value
+            and not self._allow_student_review_after_grading(test, attempt)
+        ):
+            return {
+                "attempt": self.serialize_attempt(attempt, include_answers=False),
+                "review_allowed": False,
+            }
+
+        allow_full_review = (
             is_own_attempt and self._allow_student_review_after_grading(test, attempt)
         )
-        strip = student_view or (is_own_attempt and not allow_review)
+        # During exam taking (non-GRADED), hide correct-answer flags on choices.
+        strip_correctness = student_view or (is_own_attempt and not allow_full_review)
         return {
             "attempt": self.serialize_attempt(
                 attempt,
                 include_answers=True,
-                student_view=strip,
+                student_view=strip_correctness,
             ),
+            "review_allowed": allow_full_review
+            if attempt.status == TestAttemptStatus.GRADED.value
+            else None,
         }
 
     def list_test_attempts(
@@ -1123,18 +1139,15 @@ class AttemptService:
     def _serialize_recent_exam(self, attempt: TestAttempt) -> dict:
         test = attempt.test
         subject = test.subject if test else None
-        result_published = self._allow_student_review_after_grading(test, attempt)
         grading_completed = attempt.status == TestAttemptStatus.GRADED.value
-
-        if not grading_completed:
-            ui_status = _RECENT_STATUS_PENDING_GRADING
-        elif not result_published:
-            ui_status = _RECENT_STATUS_WAITING_PUBLICATION
-        else:
-            ui_status = _RECENT_STATUS_GRADED
+        ui_status = (
+            _RECENT_STATUS_GRADED
+            if grading_completed
+            else _RECENT_STATUS_PENDING_GRADING
+        )
 
         score = None
-        if ui_status == _RECENT_STATUS_GRADED and attempt.final_score is not None:
+        if grading_completed and attempt.final_score is not None:
             percentage = (
                 float(attempt.percentage) if attempt.percentage is not None else None
             )
@@ -1165,7 +1178,9 @@ class AttemptService:
             },
             "score": score,
             "grading_completed": grading_completed,
-            "result_published": result_published,
+            "review_allowed": self._allow_student_review_after_grading(test, attempt)
+            if grading_completed
+            else False,
         }
 
     def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:

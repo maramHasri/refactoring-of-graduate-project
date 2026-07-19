@@ -20,7 +20,12 @@ def parse_settings_config(value) -> dict:
 
 
 def allow_review_after_grading(settings_config) -> bool:
-    """True when graded results are published for student review."""
+    """
+    Whether students may open graded attempt content for study/review.
+
+    Controls educational content only (questions, answers, correct choices,
+    feedback). Does not control score visibility, results lists, or analytics.
+    """
     settings = parse_settings_config(settings_config)
     review_settings = settings.get("review_settings") or {}
     if not isinstance(review_settings, dict):

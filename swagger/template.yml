@@ -1912,7 +1912,7 @@ paths:
                     properties:
                       allow_review_after_grading:
                         type: boolean
-                        description: "When enabled, students may review their graded attempts, including their answers, correct answers, explanations, and final score."
+                        description: "When enabled, students may open graded attempt content for study (questions, their answers, correct answers, explanations, and teacher feedback). Does not control score or results visibility."
               availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
               starts_at: { type: string, format: date-time }
               duration_minutes: { type: integer }
@@ -2536,12 +2536,13 @@ paths:
         Student is resolved from JWT + `X-Workspace-Id` (no `student_id` parameter).
         Only the caller's own attempts are returned.
 
-        **UI status mapping:**
-        - `GRADED` — grading completed and results published (`allow_review_after_grading`)
+        **UI status mapping (from attempt status only):**
+        - `GRADED` — grading completed (`status=GRADED`); score is visible
         - `PENDING_GRADING` — attempt submitted; teacher has not finished grading
-        - `WAITING_PUBLICATION` — graded, but results not yet published to the student
 
-        **Score rules:** `score` is an object only when status is `GRADED`; otherwise `null`.
+        **Score rules:** `score` is an object when grading is complete; otherwise `null`.
+        `review_allowed` indicates whether the student may open attempt content for study
+        (`settings_config.review_settings.allow_review_after_grading`); it does not hide scores.
 
         Ordered by `submitted_at` descending. Default page size is 10.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -2778,7 +2779,17 @@ paths:
     get:
       tags: [Student Exams, Tests]
       summary: Get attempt details
-      description: Student sees own attempt without correct answers. Teachers see full grading data.
+      description: |
+        Teachers/admins with access see full grading data (questions and answers).
+
+        For the student owner of a **GRADED** attempt:
+        - If `allow_review_after_grading=true`: full educational content (questions,
+          answers, correct choices, explanations, feedback) plus scores.
+        - If `allow_review_after_grading=false`: scores and attempt metadata only;
+          `questions` and `answers` are not loaded or returned (`review_allowed=false`).
+
+        During an in-progress attempt, correct-answer flags on choices are hidden
+        from the student.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -2797,6 +2808,13 @@ paths:
             properties:
               attempt:
                 $ref: "#/definitions/TestAttemptRuntime"
+              review_allowed:
+                type: boolean
+                x-nullable: true
+                description: |
+                  For graded own attempts: whether educational content is included.
+                  Null when the attempt is not yet graded (or caller is not reviewing
+                  a graded own attempt in student mode).
   /tests/{test_id}/attempts/{attempt_id}/answers:
     put:
       tags: [Student Exams]
@@ -3035,15 +3053,14 @@ paths:
         High-level performance summary for the authenticated student's dashboard.
         Student is resolved from JWT + `X-Workspace-Id` (no `student_id`).
 
-        Includes only attempts that are fully **graded** and have **published** results
-        (`settings_config.review_settings.allow_review_after_grading=true`).
-        Pending and unpublished grades are excluded.
+        Includes every attempt with `status=GRADED` (and a percentage).
+        Review settings do not affect inclusion or score visibility.
 
         Returns overview averages, best/weakest subjects, and weak topics using the same
         topic mastery classification as subject analytics
         (`NEEDS_IMPROVEMENT` / `WEAKNESS`).
 
-        Empty state (no published graded exams) returns zeros/`null`/`[]` with HTTP 200.
+        Empty state (no graded exams) returns zeros/`null`/`[]` with HTTP 200.
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
         200:
@@ -4593,7 +4610,7 @@ definitions:
       attempt_id: { type: integer, example: 91 }
       status:
         type: string
-        enum: [GRADED, PENDING_GRADING, WAITING_PUBLICATION]
+        enum: [GRADED, PENDING_GRADING]
         example: GRADED
       submitted_at: { type: string, format: date-time, example: "2026-10-12T09:10:00+00:00" }
       subject:
@@ -4609,12 +4626,15 @@ definitions:
           title: { type: string, example: "Calculus 1" }
           published_at: { type: string, format: date-time, x-nullable: true }
       score:
-        description: Present only when status is GRADED; otherwise null
+        description: Present when grading is complete (status GRADED); otherwise null
         x-nullable: true
         allOf:
           - $ref: "#/definitions/StudentRecentExamScore"
       grading_completed: { type: boolean, example: true }
-      result_published: { type: boolean, example: true }
+      review_allowed:
+        type: boolean
+        example: true
+        description: Whether the student may open attempt content for study (not score visibility)
   StudentRecentExamsResponse:
     type: object
     properties:
