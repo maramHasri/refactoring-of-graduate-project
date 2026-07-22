@@ -13,6 +13,9 @@ Do not change these strings casually — they are part of the API contract.
 | Constant | English Message | Description |
 |----------|-----------------|-------------|
 | ACCOUNT_ALREADY_EXISTS_PLEASE_LOGIN_FIRST | Account already exists. Please login first. | API response message. |
+| ACCOUNT_ALREADY_DELETED | Account is already deleted | API response message. |
+| ACCOUNT_DELETED_SUCCESSFULLY | Account deleted successfully | Returned after a successful operation. |
+| ACCOUNT_IS_DELETED | Account is deleted | API response message. |
 | ACCOUNT_IS_DISABLED | Account is disabled | API response message. |
 | ACCOUNT_IS_SUSPENDED | Account is suspended | API response message. |
 | ALL_SESSIONS_REVOKED | All sessions revoked | API response message. |
@@ -83,6 +86,8 @@ Do not change these strings casually — they are part of the API contract.
 | PROFILE_UPDATED_SUCCESSFULLY | Profile updated successfully | Returned after a successful operation. |
 | SUPER_ADMIN_ACCESS_REQUIRED | Super admin access required | Validation or authorization failure message. |
 | SUSPENSION_REASON_IS_REQUIRED | Suspension reason is required | Validation or authorization failure message. |
+| USER_ACCOUNT_IS_NOT_DELETED_OR_SUSPENDED | User account is not deleted or suspended | API response message. |
+| USER_ACCOUNT_RESTORE_PERIOD_EXPIRED | The account restore period has expired | API response message. |
 | USER_IS_ALREADY_SUSPENDED | User is already suspended | API response message. |
 | USER_IS_NOT_SUSPENDED | User is not suspended | API response message. |
 | USER_NOT_FOUND | User not found | Returned when the requested resource does not exist. |

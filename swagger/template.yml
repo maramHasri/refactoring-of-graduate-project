@@ -365,6 +365,31 @@ paths:
               message: { type: string, example: "Profile updated successfully" }
               user:
                 $ref: "#/definitions/UserProfile"
+    delete:
+      tags: [Users]
+      summary: Soft-delete current user account
+      description: |
+        Soft-deletes the authenticated user's account by setting `deleted_at`.
+        Related data (tests, attempts, results, memberships, topics, audit/proctoring)
+        is retained. Active sessions are revoked.
+        Distinct from suspension (`SUSPENDED`) and disable (`DISABLED`).
+        A SUPER_ADMIN may restore the account within one calendar month
+        (application timezone) via `POST /api/super-admin/users/{user_id}/restore`.
+      security: [{ Bearer: [] }]
+      responses:
+        200:
+          description: Account soft-deleted
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Account deleted successfully" }
+              deleted_at: { type: string, format: date-time }
+        401:
+          description: Missing or invalid access token
+        403:
+          description: Account already deleted (or blocked for other reasons)
+        409:
+          description: Account is already deleted
   /users/{user_id}/memberships:
     get:
       tags: [Users]
@@ -1789,11 +1814,24 @@ paths:
               name: { type: string, example: "Midterm Exam" }
               description: { type: string }
               subject_id: { type: integer, example: 1 }
+              availability_time_mode:
+                type: string
+                enum: [SCHEDULED, FLEXIBLE, SURVEY]
+                description: |
+                  SCHEDULED = strict global time; FLEXIBLE = per-attempt elapsed time;
+                  SURVEY = no personal duration, deadline = closed_at (required).
               duration_minutes:
                 type: integer
-                default: 30
                 example: 30
-                description: Exam duration in minutes (default 30)
+                x-nullable: true
+                description: |
+                  Required for exams when starting an attempt. Default 30 for non-Survey
+                  creates when omitted. Must be null for SURVEY.
+              closed_at:
+                type: string
+                format: date-time
+                x-nullable: true
+                description: Required for SURVEY — hard availability deadline (local app timezone).
               total_score:
                 type: number
                 default: 100
@@ -1913,10 +1951,11 @@ paths:
                       allow_review_after_grading:
                         type: boolean
                         description: "When enabled, students may open graded attempt content for study (questions, their answers, correct answers, explanations, and teacher feedback). Does not control score or results visibility."
-              availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+              availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE, SURVEY] }
               starts_at: { type: string, format: date-time }
-              duration_minutes: { type: integer }
+              duration_minutes: { type: integer, x-nullable: true }
               entry_window_minutes: { type: integer }
+              closed_at: { type: string, format: date-time, x-nullable: true }
       responses:
         200:
           description: Test updated (excludes published_at, closed_at, archived_at)
@@ -3071,6 +3110,34 @@ paths:
           description: Missing or invalid access token
         403:
           description: Not an active student in the workspace
+  /student/performance-summary:
+    get:
+      tags: [Grading, Student Exams]
+      summary: Compact student performance summary
+      description: |
+        Authenticated student only (JWT + `X-Workspace-Id`). No `student_id` parameter.
+
+        Built from **GRADED** attempts with a percentage only (same inclusion rules as
+        `/student/dashboard`). Excludes `IN_PROGRESS`, `SUBMITTED`, and ungraded work.
+
+        - `average_score` / `highest_score`: means of attempt `percentage` values
+        - `best_subject`: highest subject average of those percentages
+        - `weak_topics`: topics classified as `NEEDS_IMPROVEMENT` or `WEAKNESS` using the
+          same difficulty-weighted mastery and thresholds as
+          `GET /student/tests/{test_id}/analytics`, limited to the
+          **most recent 5 graded attempts**, merged with `occurrences`
+
+        Empty state returns zeros/`null`/`[]` with HTTP 200.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Compact performance summary
+          schema:
+            $ref: "#/definitions/StudentPerformanceSummary"
+        401:
+          description: Missing or invalid access token
+        403:
+          description: Not an active student in the workspace
   /student/subjects/{subject_id}/analytics:
     get:
       tags: [Student Exams]
@@ -4121,10 +4188,17 @@ paths:
   /api/super-admin/users/{user_id}/restore:
     post:
       tags: [Super Admin Management]
-      summary: Restore a suspended user
+      summary: Restore a suspended or soft-deleted user
       description: |
-        Restores a previously suspended user account.
-        Sets status to ACTIVE and clears suspension metadata.
+        Restores a user account in one of two modes:
+
+        1. Soft-deleted (`deleted_at` set): clears `deleted_at` if still within
+           one calendar month from `deleted_at` (APP_TIMEZONE). After the window,
+           restore is rejected with a clear error. No automatic hard-delete.
+        2. Suspended (`user_status=SUSPENDED` and not soft-deleted): sets status
+           to ACTIVE and clears suspension metadata.
+
+        Soft-delete restore takes precedence when `deleted_at` is set.
         Super Admin only.
       security: [{ Bearer: [] }]
       parameters:
@@ -4146,6 +4220,7 @@ paths:
                   name: { type: string, example: "Ahmed Ali" }
                   email: { type: string, example: "user@example.com" }
                   status: { type: string, example: ACTIVE }
+                  deleted_at: { type: string, format: date-time, x-nullable: true }
                   roles:
                     type: array
                     items: { type: string }
@@ -4159,12 +4234,12 @@ paths:
                         name: { type: string, example: "ABC Academy" }
                         organization_type: { type: string, example: INSTITUTION }
                         status: { type: string, example: ACTIVE }
+        403:
+          description: Super admin access required, or restore period expired
         404:
           description: User not found
         422:
-          description: User is not suspended
-        403:
-          description: Super admin access required
+          description: User is neither soft-deleted nor suspended
   /api/super-admin/users/{user_id}:
     get:
       tags: [Super Admin Management]
@@ -4451,7 +4526,7 @@ definitions:
       subject: { type: string }
       teacher_name: { type: string }
       status: { type: string, example: PUBLISHED }
-      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE, SURVEY] }
       start_time: { type: string, format: date-time }
       end_time: { type: string, format: date-time }
       time_until_start_seconds: { type: integer }
@@ -4564,6 +4639,27 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/StudentDashboardWeakTopic"
+  StudentPerformanceSummary:
+    type: object
+    properties:
+      average_score: { type: number, example: 78.5 }
+      highest_score: { type: number, example: 96, x-nullable: true }
+      best_subject:
+        type: object
+        x-nullable: true
+        properties:
+          subject_id: { type: integer, example: 5 }
+          subject_name: { type: string, example: "Mathematics" }
+          average_score: { type: number, example: 89.4 }
+      weak_topics:
+        type: array
+        items:
+          type: object
+          properties:
+            topic_id: { type: integer, example: 12, x-nullable: true }
+            topic_name: { type: string, example: "Algebra" }
+            average_score: { type: number, example: 42.5 }
+            occurrences: { type: integer, example: 3 }
   StudentRecentExamScore:
     type: object
     properties:
@@ -4655,7 +4751,7 @@ definitions:
       requires_manual_grading:
         type: boolean
         description: True when essay questions still need teacher grading
-      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE] }
+      availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE, SURVEY] }
       global_end_at:
         type: string
         format: date-time

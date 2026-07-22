@@ -15,6 +15,9 @@ from utils.enums import MembershipRole, SubjectRole, TestAttemptStatus
 
 _WEAK_TOPIC_CLASSIFICATIONS = frozenset({"NEEDS_IMPROVEMENT", "WEAKNESS"})
 
+# Recent graded attempts used when summarizing "topics to strengthen lately".
+RECENT_WEAK_TOPICS_ATTEMPT_LIMIT = 5
+
 
 class StudentAnalyticsService:
     def __init__(self):
@@ -57,6 +60,62 @@ class StudentAnalyticsService:
             "overview": overview,
             "best_subject": best_subject,
             "weakest_subject": weakest_subject,
+            "weak_topics": weak_topics,
+        }
+
+    def get_performance_summary(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+    ) -> dict:
+        """
+        Compact performance summary for the authenticated student.
+
+        Reuses graded-attempt filtering, percentage averages, subject ranking,
+        and the same topic mastery classification as get_test_analytics /
+        get_dashboard_analytics. Weak topics are derived from the most recent
+        graded attempts only (RECENT_WEAK_TOPICS_ATTEMPT_LIMIT).
+        """
+        self._ensure_student_scope(actor_membership)
+        graded_attempts = [
+            attempt
+            for attempt in self.attempts.list_graded_for_student(
+                workspace_id=workspace_id,
+                student_membership_id=actor_membership.id,
+                student_user_id=actor_user_id,
+            )
+            if attempt.test is not None and attempt.percentage is not None
+        ]
+
+        if not graded_attempts:
+            return {
+                "average_score": 0,
+                "highest_score": None,
+                "best_subject": None,
+                "weak_topics": [],
+            }
+
+        percentages = [float(attempt.percentage) for attempt in graded_attempts]
+        best_subject, _ = self._build_subject_extremes(graded_attempts)
+        recent_for_topics = graded_attempts[:RECENT_WEAK_TOPICS_ATTEMPT_LIMIT]
+        weak_topics = self._build_recent_weak_topics_summary(
+            [attempt.id for attempt in recent_for_topics]
+        )
+
+        best_subject_payload = None
+        if best_subject is not None:
+            best_subject_payload = {
+                "subject_id": best_subject["id"],
+                "subject_name": best_subject["name"],
+                "average_score": best_subject["average_percentage"],
+            }
+
+        return {
+            "average_score": round(sum(percentages) / len(percentages), 2),
+            "highest_score": round(max(percentages), 2),
+            "best_subject": best_subject_payload,
             "weak_topics": weak_topics,
         }
 
@@ -299,6 +358,62 @@ class StudentAnalyticsService:
             )
 
         weak_topics.sort(key=lambda item: item["mastery"])
+        return weak_topics
+
+    def _build_recent_weak_topics_summary(
+        self, recent_graded_attempt_ids: list[int]
+    ) -> list[dict]:
+        """
+        Merge weak topics across recent graded attempts.
+
+        Uses the same difficulty-weighted mastery and _classify thresholds as
+        get_test_analytics. A topic counts once per attempt where it classified
+        as NEEDS_IMPROVEMENT or WEAKNESS.
+        """
+        rows = self.attempts.list_topic_weighted_rows_grouped_by_attempt(
+            attempt_ids=recent_graded_attempt_ids
+        )
+        # topic_id -> {name, scores: [mastery per weak occurrence]}
+        merged: dict[int | None, dict] = {}
+        for (
+            _attempt_id,
+            topic_id,
+            topic_name,
+            weighted_earned,
+            weighted_possible,
+        ) in rows:
+            if weighted_possible <= 0:
+                mastery = 0.0
+            else:
+                mastery = round((weighted_earned / weighted_possible) * 100, 2)
+            if self._classify(mastery) not in _WEAK_TOPIC_CLASSIFICATIONS:
+                continue
+            entry = merged.get(topic_id)
+            if entry is None:
+                entry = {
+                    "topic_id": topic_id,
+                    "topic_name": topic_name or "General",
+                    "scores": [],
+                }
+                merged[topic_id] = entry
+            entry["scores"].append(mastery)
+
+        weak_topics: list[dict] = []
+        for entry in merged.values():
+            scores = entry["scores"]
+            weak_topics.append(
+                {
+                    "topic_id": entry["topic_id"],
+                    "topic_name": entry["topic_name"],
+                    "average_score": round(sum(scores) / len(scores), 2),
+                    "occurrences": len(scores),
+                }
+            )
+
+        # Weakest first; for ties, more frequent weakness first.
+        weak_topics.sort(
+            key=lambda item: (item["average_score"], -item["occurrences"])
+        )
         return weak_topics
 
     @staticmethod

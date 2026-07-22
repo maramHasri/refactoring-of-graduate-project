@@ -1,4 +1,4 @@
-from marshmallow import Schema, fields, pre_load, validate
+from marshmallow import Schema, fields, pre_load, validates_schema, validate, ValidationError
 
 from schemas.app_timezone_fields import LocalDateTime
 from schemas.question_schema import QuestionChoiceInputSchema
@@ -9,6 +9,7 @@ from utils.enums import (
     TestQuestionSourceType,
     TestStatus,
 )
+from utils.messages import Messages
 
 
 class TestSchema(Schema):
@@ -36,15 +37,18 @@ class TestSchema(Schema):
 
 
 class CreateTestSchema(Schema):
-    """Step 1 exam creation payload from the UI."""
+    """Step 1 exam / survey creation payload from the UI."""
 
     name = fields.Str(required=True, validate=validate.Length(min=1, max=255))
     description = fields.Str(allow_none=True)
     subject_id = fields.Int(required=True)
-    duration_minutes = fields.Int(
-        load_default=30,
-        validate=validate.Range(min=1),
+    availability_time_mode = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf([m.value for m in AvailabilityTimeMode]),
     )
+    # No load_default=30 — Survey must stay null; exams default in TestService.
+    duration_minutes = fields.Int(allow_none=True, validate=validate.Range(min=1))
+    closed_at = LocalDateTime(allow_none=True)
     total_score = fields.Float(
         load_default=100,
         validate=validate.Range(min=0),
@@ -54,6 +58,20 @@ class CreateTestSchema(Schema):
         validate=validate.Range(min=0),
     )
     auto_distribute_scores = fields.Bool(load_default=False)
+
+    @validates_schema
+    def validate_survey_or_exam_fields(self, data, **kwargs):
+        mode = (data.get("availability_time_mode") or "").upper()
+        if mode == AvailabilityTimeMode.SURVEY.value:
+            if data.get("closed_at") is None:
+                raise ValidationError(
+                    Messages.SURVEY_CLOSED_AT_IS_REQUIRED, field_name="closed_at"
+                )
+            if data.get("duration_minutes") is not None:
+                raise ValidationError(
+                    Messages.SURVEY_DURATION_IS_NOT_ALLOWED,
+                    field_name="duration_minutes",
+                )
 
 
 class UpdateTestSchema(Schema):
@@ -71,6 +89,7 @@ class UpdateTestSchema(Schema):
     starts_at = LocalDateTime(allow_none=True)
     duration_minutes = fields.Int(allow_none=True, validate=validate.Range(min=1))
     entry_window_minutes = fields.Int(allow_none=True, validate=validate.Range(min=0))
+    closed_at = LocalDateTime(allow_none=True)
 
 
 class AddBankQuestionsToTestSchema(Schema):

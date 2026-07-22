@@ -492,6 +492,67 @@ class TestAttemptRepository(BaseRepository):
             ) in rows
         ]
 
+    def list_topic_weighted_rows_grouped_by_attempt(
+        self,
+        *,
+        attempt_ids: list[int],
+    ) -> list[tuple[int, int | None, str | None, float, float]]:
+        """
+        Per-attempt topic mastery rows (same weighting as get_test_analytics).
+
+        Returns:
+          (attempt_id, topic_id, topic_name, weighted_earned, weighted_possible)
+        """
+        if not attempt_ids:
+            return []
+
+        difficulty_weight = case(
+            (TestQuestion.snapshot_difficulty == "HARD", 2.0),
+            (TestQuestion.snapshot_difficulty == "MEDIUM", 1.5),
+            else_=1.0,
+        )
+        rows = db.session.execute(
+            db.select(
+                AttemptAnswer.attempt_id.label("attempt_id"),
+                TestQuestion.snapshot_topic_id.label("topic_id"),
+                func.coalesce(
+                    TestQuestion.snapshot_topic_name,
+                    Topic.name,
+                    "General",
+                ).label("topic_name"),
+                func.sum(
+                    func.coalesce(AttemptAnswer.earned_score, 0.0) * difficulty_weight
+                ).label("weighted_earned"),
+                func.sum(
+                    func.coalesce(TestQuestion.points, TestQuestion.snapshot_points, 0.0)
+                    * difficulty_weight
+                ).label("weighted_possible"),
+            )
+            .select_from(AttemptAnswer)
+            .join(TestQuestion, TestQuestion.id == AttemptAnswer.test_question_id)
+            .outerjoin(Topic, Topic.id == TestQuestion.snapshot_topic_id)
+            .where(
+                AttemptAnswer.attempt_id.in_(attempt_ids),
+                TestQuestion.status == QuestionStatus.ACTIVE.value,
+            )
+            .group_by(
+                AttemptAnswer.attempt_id,
+                TestQuestion.snapshot_topic_id,
+                TestQuestion.snapshot_topic_name,
+                Topic.name,
+            )
+        ).all()
+        return [
+            (
+                int(attempt_id),
+                topic_id,
+                topic_name,
+                float(weighted_earned or 0.0),
+                float(weighted_possible or 0.0),
+            )
+            for attempt_id, topic_id, topic_name, weighted_earned, weighted_possible in rows
+        ]
+
     def list_in_progress_on_published_tests(self) -> list[TestAttempt]:
         return list(
             db.session.execute(
@@ -500,6 +561,35 @@ class TestAttemptRepository(BaseRepository):
                 .where(
                     TestAttempt.status == TestAttemptStatus.IN_PROGRESS.value,
                     Test.status == TestStatus.PUBLISHED.value,
+                )
+            ).scalars().all()
+        )
+
+    def list_in_progress_for_timeout(self) -> list[TestAttempt]:
+        """IN_PROGRESS attempts that may be due (published or already closed)."""
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(joinedload(TestAttempt.test))
+                .where(
+                    TestAttempt.status == TestAttemptStatus.IN_PROGRESS.value,
+                    Test.status.in_(
+                        [
+                            TestStatus.PUBLISHED.value,
+                            TestStatus.CLOSED.value,
+                        ]
+                    ),
+                )
+            ).scalars().unique().all()
+        )
+
+    def list_in_progress_for_test(self, test_id: int) -> list[TestAttempt]:
+        return list(
+            db.session.execute(
+                db.select(TestAttempt).where(
+                    TestAttempt.test_id == test_id,
+                    TestAttempt.status == TestAttemptStatus.IN_PROGRESS.value,
                 )
             ).scalars().all()
         )

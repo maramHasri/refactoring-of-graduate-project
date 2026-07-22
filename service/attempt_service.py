@@ -227,9 +227,10 @@ class AttemptService:
         test, _ = self._resolve_student_test_access(test_id, workspace_id, actor_membership)
         existing = self.attempts.find_active_for_student(test.id, actor_membership.id)
         if existing:
-            self._ensure_resume_allowed(existing, test)
+            # Finalize expired/closed attempts before deciding resume vs new attempt.
             self._check_and_apply_timeout(existing, test)
             if existing.status == TestAttemptStatus.IN_PROGRESS.value:
+                self._ensure_resume_allowed(existing, test)
                 existing.last_activity_at = local_timezone_now()
                 db.session.commit()
                 deadline = self._attempt_end_deadline(existing, test)
@@ -237,7 +238,15 @@ class AttemptService:
                     remaining_minutes = max(
                         0.0, (deadline - local_timezone_now()).total_seconds() / 60
                     )
-                    if self._is_flexible(test):
+                    if self._is_survey(test):
+                        logger.info(
+                            "[SURVEY] Attempt resumed attempt_id=%s closed_at=%s "
+                            "remaining_minutes=%.1f",
+                            existing.id,
+                            deadline.isoformat(),
+                            remaining_minutes,
+                        )
+                    elif self._is_flexible(test):
                         logger.info(
                             "[FLEXIBLE] Attempt resumed attempt_id=%s ends_at=%s "
                             "remaining_minutes=%.1f",
@@ -293,14 +302,21 @@ class AttemptService:
         )
         self.attempts.add(attempt)
         db.session.commit()
-        if self._is_flexible(test):
+        if self._is_survey(test):
+            logger.info(
+                "[SURVEY] Attempt started attempt_id=%s test_id=%s closed_at=%s",
+                attempt.id,
+                test.id,
+                expires_at.isoformat() if expires_at else None,
+            )
+        elif self._is_flexible(test):
             logger.info(
                 "[FLEXIBLE] Attempt started attempt_id=%s test_id=%s student_membership_id=%s "
                 "ends_at=%s duration_minutes=%s",
                 attempt.id,
                 test.id,
                 actor_membership.id,
-                expires_at.isoformat(),
+                expires_at.isoformat() if expires_at else None,
                 test.duration_minutes,
             )
         else:
@@ -308,7 +324,7 @@ class AttemptService:
                 "[SCHEDULED] Attempt started attempt_id=%s test_id=%s global_end=%s",
                 attempt.id,
                 test.id,
-                expires_at.isoformat(),
+                expires_at.isoformat() if expires_at else None,
             )
         self._maybe_start_proctoring(
             attempt=attempt,
@@ -631,21 +647,27 @@ class AttemptService:
     def auto_submit_due_attempts(self) -> list[int]:
         now = local_timezone_now()
         due_attempt_ids: list[int] = []
-        rows = self.attempts.list_in_progress_on_published_tests()
+        rows = self.attempts.list_in_progress_for_timeout()
         for attempt in rows:
             test = attempt.test or self.tests.get_by_id(attempt.test_id)
             if not test:
                 continue
-            deadline = self._attempt_end_deadline(attempt, test)
-            if not deadline or now < deadline:
+            if not self._should_finalize_attempt(attempt, test, now):
                 continue
-            mode_label = "FLEXIBLE" if self._is_flexible(test) else "SCHEDULED"
+            # Auto-close surveys whose closed_at has passed.
+            if (
+                self._is_survey(test)
+                and test.status == TestStatus.PUBLISHED.value
+                and test.closed_at
+                and now >= ensure_local_aware(test.closed_at)
+            ):
+                test.status = TestStatus.CLOSED.value
+            mode_label = self._availability_mode(test)
             logger.info(
-                "[%s] Auto-submit attempt_id=%s test_id=%s deadline=%s",
+                "[%s] Auto-submit attempt_id=%s test_id=%s",
                 mode_label,
                 attempt.id,
                 test.id,
-                deadline.isoformat(),
             )
             self._finalize_attempt(
                 attempt,
@@ -660,6 +682,21 @@ class AttemptService:
                 due_attempt_ids,
             )
         return due_attempt_ids
+
+    def finalize_in_progress_for_test(self, test: Test) -> list[int]:
+        """Finalize all IN_PROGRESS attempts for a test (e.g. on close)."""
+        finalized: list[int] = []
+        rows = self.attempts.list_in_progress_for_test(test.id)
+        for attempt in rows:
+            if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+                continue
+            self._finalize_attempt(
+                attempt,
+                test,
+                submission_source=AttemptSubmissionSource.TIMEOUT.value,
+            )
+            finalized.append(attempt.id)
+        return finalized
 
     def _finalize_attempt(
         self,
@@ -768,35 +805,54 @@ class AttemptService:
     def _check_and_apply_timeout(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             return
-        deadline = self._attempt_end_deadline(attempt, test)
-        if not deadline:
-            return
         now = local_timezone_now()
-        if now >= deadline:
-            mode_label = "FLEXIBLE" if self._is_flexible(test) else "SCHEDULED"
-            logger.info(
-                "[%s] Timeout reached attempt_id=%s test_id=%s deadline=%s",
-                mode_label,
-                attempt.id,
-                attempt.test_id,
-                deadline.isoformat(),
-            )
-            self._finalize_attempt(
-                attempt,
-                test,
-                submission_source=AttemptSubmissionSource.TIMEOUT.value,
-            )
+        if not self._should_finalize_attempt(attempt, test, now):
+            return
+        mode_label = self._availability_mode(test)
+        logger.info(
+            "[%s] Timeout/close reached attempt_id=%s test_id=%s",
+            mode_label,
+            attempt.id,
+            attempt.test_id,
+        )
+        self._finalize_attempt(
+            attempt,
+            test,
+            submission_source=AttemptSubmissionSource.TIMEOUT.value,
+        )
+
+    def _should_finalize_attempt(
+        self, attempt: TestAttempt, test: Test, now: datetime
+    ) -> bool:
+        if self._is_test_hard_closed(test, now):
+            return True
+        deadline = self._attempt_end_deadline(attempt, test)
+        return bool(deadline and now >= deadline)
+
+    def _is_test_hard_closed(self, test: Test, now: datetime | None = None) -> bool:
+        """CLOSED/ARCHIVED status or closed_at reached — no further attempt activity."""
+        if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
+            return True
+        if test.archived_at is not None:
+            return True
+        now = now or local_timezone_now()
+        if test.closed_at and now >= ensure_local_aware(test.closed_at):
+            return True
+        return False
 
     def _availability_mode(self, test: Test) -> str:
         return (
             test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value
         ).upper()
 
+    def _is_survey(self, test: Test) -> bool:
+        return self._availability_mode(test) == AvailabilityTimeMode.SURVEY.value
+
     def _is_flexible(self, test: Test) -> bool:
         return self._availability_mode(test) == AvailabilityTimeMode.FLEXIBLE.value
 
     def _is_scheduled(self, test: Test) -> bool:
-        return not self._is_flexible(test)
+        return self._availability_mode(test) == AvailabilityTimeMode.SCHEDULED.value
 
     def _scheduled_global_end_time(self, test: Test) -> datetime | None:
         if not test.starts_at or not test.duration_minutes:
@@ -808,15 +864,27 @@ class AttemptService:
     def _attempt_end_deadline(
         self, attempt: TestAttempt, test: Test
     ) -> datetime | None:
+        if self._is_survey(test):
+            if not test.closed_at:
+                return None
+            return ensure_local_aware(test.closed_at)
         if self._is_flexible(test):
             if not attempt.expires_at:
                 return None
-            return ensure_local_aware(attempt.expires_at)
+            # closed_at is also a hard stop for Flexible when set.
+            ends = [ensure_local_aware(attempt.expires_at)]
+            if test.closed_at:
+                ends.append(ensure_local_aware(test.closed_at))
+            return min(ends)
         return self._scheduled_global_end_time(test)
 
     def _compute_attempt_expires_at(
         self, test: Test, started_at: datetime
-    ) -> datetime:
+    ) -> datetime | None:
+        if self._is_survey(test):
+            if not test.closed_at:
+                raise ValidationError(Messages.SURVEY_CLOSED_AT_IS_REQUIRED)
+            return ensure_local_aware(test.closed_at)
         if not test.duration_minutes:
             raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
         if self._is_flexible(test):
@@ -838,6 +906,16 @@ class AttemptService:
     def _ensure_test_takeable_for_first_attempt(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value:
             raise ValidationError(Messages.TEST_IS_NOT_PUBLISHED)
+        now = local_timezone_now()
+        if self._is_test_hard_closed(test, now):
+            raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
+
+        if self._is_survey(test):
+            if not test.closed_at:
+                raise ValidationError(Messages.SURVEY_CLOSED_AT_IS_REQUIRED)
+            logger.info("[SURVEY] Exam available for first attempt test_id=%s", test.id)
+            return
+
         if not test.duration_minutes:
             raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
 
@@ -848,7 +926,6 @@ class AttemptService:
             )
             return
 
-        now = local_timezone_now()
         if not test.starts_at:
             raise ValidationError(Messages.TEST_START_TIME_IS_NOT_CONFIGURED)
         starts_at = ensure_local_aware(test.starts_at)
@@ -875,7 +952,7 @@ class AttemptService:
     def _ensure_resume_allowed(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             raise ConflictError(Messages.ATTEMPT_IS_NOT_IN_PROGRESS)
-        if test.status != TestStatus.PUBLISHED.value:
+        if test.status != TestStatus.PUBLISHED.value or self._is_test_hard_closed(test):
             raise ForbiddenError(Messages.EXAM_IS_NO_LONGER_AVAILABLE_FOR_RESUME)
         deadline = self._attempt_end_deadline(attempt, test)
         if deadline and local_timezone_now() >= deadline:
@@ -1076,10 +1153,15 @@ class AttemptService:
             "availability_time_mode": mode,
         }
 
-        if self._is_flexible(test):
+        if self._is_survey(test) or self._is_flexible(test):
             payload["start_time"] = None
             payload["starts_on_entry"] = True
-            payload["availability_note"] = "Starts on entry"
+            payload["duration_minutes"] = (
+                None if self._is_survey(test) else test.duration_minutes
+            )
+            payload["availability_note"] = (
+                "Open until closed_at" if self._is_survey(test) else "Starts on entry"
+            )
             payload["end_time"] = format_local_datetime(test.closed_at)
             window: dict = {}
             if test.published_at:
@@ -1094,6 +1176,7 @@ class AttemptService:
         global_end = self._scheduled_global_end_time(test)
         payload["start_time"] = format_local_datetime(test.starts_at)
         payload["end_time"] = format_local_datetime(global_end)
+        payload["duration_minutes"] = test.duration_minutes
 
         if start:
             seconds_until = int((start - now).total_seconds())
@@ -1184,9 +1267,9 @@ class AttemptService:
         }
 
     def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:
-        if self._is_flexible(test):
-            if test.closed_at and now >= ensure_local_aware(test.closed_at):
-                return True
+        if self._is_test_hard_closed(test, now):
+            return True
+        if self._is_survey(test) or self._is_flexible(test):
             return False
 
         global_end = self._scheduled_global_end_time(test)
@@ -1195,7 +1278,7 @@ class AttemptService:
         return False
 
     def _upcoming_sort_key(self, test: Test, now: datetime) -> tuple:
-        if self._is_flexible(test):
+        if self._is_survey(test) or self._is_flexible(test):
             published = ensure_local_aware(test.published_at) if test.published_at else now
             return (2, published, test.id)
 
@@ -1239,6 +1322,10 @@ class AttemptService:
     def _ensure_exam_available_for_entry(self, test: Test) -> None:
         if test.status != TestStatus.PUBLISHED.value or test.archived_at is not None:
             raise ValidationError(Messages.TEST_IS_NOT_PUBLISHED)
+        if self._is_test_hard_closed(test):
+            raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
+        if self._is_survey(test):
+            return
         if not test.duration_minutes:
             raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
 
@@ -1248,6 +1335,17 @@ class AttemptService:
         answer_rules = settings.get("answer_rules") or {}
         display = settings.get("display_settings") or {}
         proctoring = settings.get("proctoring") or {}
+        offline = settings.get("offline_policy") or {}
+        proctoring_enabled = bool(proctoring.get("enabled", False))
+        grace = offline.get("grace_period_minutes")
+        if "grace_period_minutes" not in offline:
+            from service.test_service import TestService
+
+            grace = TestService._resolve_offline_grace_minutes(
+                mode=self._availability_mode(test),
+                proctoring_enabled=proctoring_enabled,
+                offline_raw={},
+            )
         rules = {
             "allow_back_navigation": bool(navigation.get("allow_back_navigation", True)),
             "allow_skip_questions": bool(answer_rules.get("allow_skip_questions", True)),
@@ -1255,7 +1353,10 @@ class AttemptService:
             "shuffle_questions": bool(display.get("shuffle_questions", False)),
             "shuffle_choices": bool(display.get("shuffle_choices", False)),
             "max_attempts": self._max_attempts(test),
-            "proctoring_enabled": bool(proctoring.get("enabled", False)),
+            "proctoring_enabled": proctoring_enabled
+            if not self._is_survey(test)
+            else False,
+            "offline_grace_period_minutes": grace,
         }
         if rules["require_answer_all"] and rules["allow_skip_questions"]:
             rules["allow_skip_questions"] = False
@@ -1283,11 +1384,15 @@ class AttemptService:
         mode = self._availability_mode(test)
         payload = {
             "availability_mode": mode,
-            "duration_minutes": test.duration_minutes,
+            "duration_minutes": None if self._is_survey(test) else test.duration_minutes,
             "starts_at": None,
             "ends_at": None,
             "entry_window_minutes": None,
+            "closed_at": format_local_datetime(test.closed_at),
         }
+        if self._is_survey(test):
+            payload["ends_at"] = format_local_datetime(test.closed_at)
+            return payload
         if self._is_scheduled(test):
             global_end = self._scheduled_global_end_time(test)
             payload["starts_at"] = (
@@ -1295,6 +1400,8 @@ class AttemptService:
             )
             payload["ends_at"] = global_end.isoformat() if global_end else None
             payload["entry_window_minutes"] = test.entry_window_minutes
+        elif self._is_flexible(test):
+            payload["ends_at"] = format_local_datetime(test.closed_at)
         return payload
 
     def _build_exam_entry_instructions(self, rules: dict) -> list[str]:
@@ -1309,6 +1416,12 @@ class AttemptService:
             instructions.append("You cannot go back to previous questions.")
         if rules.get("require_answer_all"):
             instructions.append("You must answer all questions before submitting.")
+        grace = rules.get("offline_grace_period_minutes")
+        if grace is not None:
+            instructions.append(
+                f"If you lose connectivity, you have up to {grace} minutes of offline grace "
+                "before the attempt may be finalized. Offline grace never extends the exam deadline."
+            )
         return instructions
 
     def _build_exam_entry_student_state(
@@ -1343,7 +1456,7 @@ class AttemptService:
     def _can_resume_attempt(self, attempt: TestAttempt, test: Test) -> bool:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             return False
-        if test.status != TestStatus.PUBLISHED.value:
+        if test.status != TestStatus.PUBLISHED.value or self._is_test_hard_closed(test):
             return False
         deadline = self._attempt_end_deadline(attempt, test)
         if deadline and local_timezone_now() >= deadline:
@@ -1354,6 +1467,10 @@ class AttemptService:
         """Mirror _ensure_test_takeable_for_first_attempt without raising."""
         if test.status != TestStatus.PUBLISHED.value:
             return False
+        if self._is_test_hard_closed(test):
+            return False
+        if self._is_survey(test):
+            return test.closed_at is not None
         if not test.duration_minutes:
             return False
         if self._is_flexible(test):

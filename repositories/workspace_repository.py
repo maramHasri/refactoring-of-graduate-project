@@ -75,6 +75,7 @@ class MembershipRepository(BaseRepository):
         filters = [
             Membership.workspace_id == workspace_id,
             Membership.status == "ACTIVE",
+            User.deleted_at.is_(None),
             effective_activity.is_not(None),
             effective_activity >= since,
         ]
@@ -157,6 +158,7 @@ class MembershipRepository(BaseRepository):
                     Membership.workspace_id == workspace_id,
                     Membership.role == role,
                     Membership.status == "ACTIVE",
+                    User.deleted_at.is_(None),
                 )
                 .order_by(User.full_name, User.id)
             ).all()
@@ -184,6 +186,7 @@ class MembershipRepository(BaseRepository):
             Membership.workspace_id == workspace_id,
             Membership.role == role,
             Membership.status == "ACTIVE",
+            User.deleted_at.is_(None),
         ]
         if search:
             term = f"%{search.strip()}%"

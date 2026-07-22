@@ -129,7 +129,10 @@ class TestScheduleConflictService:
     @staticmethod
     def _is_flexible(test: Test) -> bool:
         mode = (test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value).upper()
-        return mode == AvailabilityTimeMode.FLEXIBLE.value
+        return mode in (
+            AvailabilityTimeMode.FLEXIBLE.value,
+            AvailabilityTimeMode.SURVEY.value,
+        )
 
     @staticmethod
     def tests_overlap(

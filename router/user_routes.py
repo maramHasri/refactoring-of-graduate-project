@@ -32,6 +32,14 @@ def update_my_profile():
     }, 200
 
 
+@user_bp.route("/me", methods=["DELETE"])
+@require_auth
+@handle_service_errors
+def delete_my_account():
+    """DELETE /users/me — soft-delete the authenticated user's account."""
+    return _svc().soft_delete_own_account(g.current_user), 200
+
+
 @user_bp.route("/<int:user_id>/memberships", methods=["GET"])
 @require_auth
 @handle_service_errors

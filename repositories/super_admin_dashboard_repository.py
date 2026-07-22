@@ -62,23 +62,39 @@ class SuperAdminDashboardRepository(BaseRepository):
                 Membership.status == "ACTIVE",
                 Workspace.kind == WorkspaceKind.INSTITUTION.value,
                 User.is_superadmin.is_(False),
+                User.deleted_at.is_(None),
             )
         ).scalar_one() or 0
         super_admins = db.session.execute(
-            db.select(func.count(User.id)).where(User.is_superadmin.is_(True))
+            db.select(func.count(User.id)).where(
+                User.is_superadmin.is_(True),
+                User.deleted_at.is_(None),
+            )
         ).scalar_one() or 0
 
         active_today = db.session.execute(
-            db.select(func.count(User.id)).where(User.last_login_at >= day_start)
+            db.select(func.count(User.id)).where(
+                User.last_login_at >= day_start,
+                User.deleted_at.is_(None),
+            )
         ).scalar_one() or 0
         active_week = db.session.execute(
-            db.select(func.count(User.id)).where(User.last_login_at >= week_start)
+            db.select(func.count(User.id)).where(
+                User.last_login_at >= week_start,
+                User.deleted_at.is_(None),
+            )
         ).scalar_one() or 0
         active_month = db.session.execute(
-            db.select(func.count(User.id)).where(User.last_login_at >= month_30_start)
+            db.select(func.count(User.id)).where(
+                User.last_login_at >= month_30_start,
+                User.deleted_at.is_(None),
+            )
         ).scalar_one() or 0
         new_this_month = db.session.execute(
-            db.select(func.count(User.id)).where(User.created_at >= month_start)
+            db.select(func.count(User.id)).where(
+                User.created_at >= month_start,
+                User.deleted_at.is_(None),
+            )
         ).scalar_one() or 0
 
         return {
@@ -123,7 +139,11 @@ class SuperAdminDashboardRepository(BaseRepository):
                 Membership.workspace_id.label("workspace_id"),
                 func.count(distinct(Membership.user_id)).label("active_users"),
             )
-            .where(Membership.status == "ACTIVE")
+            .join(User, User.id == Membership.user_id)
+            .where(
+                Membership.status == "ACTIVE",
+                User.deleted_at.is_(None),
+            )
             .group_by(Membership.workspace_id)
             .subquery()
         )
@@ -272,9 +292,13 @@ class SuperAdminDashboardRepository(BaseRepository):
     def _count_distinct_users_by_role(self, role: str) -> int:
         return (
             db.session.execute(
-                db.select(func.count(distinct(Membership.user_id))).where(
+                db.select(func.count(distinct(Membership.user_id)))
+                .select_from(Membership)
+                .join(User, User.id == Membership.user_id)
+                .where(
                     Membership.role == role,
                     Membership.status == "ACTIVE",
+                    User.deleted_at.is_(None),
                 )
             ).scalar_one()
             or 0

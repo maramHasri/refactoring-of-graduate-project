@@ -100,7 +100,12 @@ class TestRepository(BaseRepository):
                 Test.starts_at < window_end,
                 or_(
                     Test.availability_time_mode.is_(None),
-                    Test.availability_time_mode != AvailabilityTimeMode.FLEXIBLE.value,
+                    Test.availability_time_mode.notin_(
+                        [
+                            AvailabilityTimeMode.FLEXIBLE.value,
+                            AvailabilityTimeMode.SURVEY.value,
+                        ]
+                    ),
                 ),
             )
         )

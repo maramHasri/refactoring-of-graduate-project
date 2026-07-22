@@ -26,6 +26,8 @@ class User(db.Model, TimestampMixin):
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
     suspended_at = db.Column(db.DateTime(timezone=True), nullable=True)
     suspension_reason = db.Column(db.Text, nullable=True)
+    # Soft delete: null = active account; timestamp = soft-deleted (data retained)
+    deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     password_reset_codes = relationship(
         "PasswordResetCode",
@@ -79,7 +81,14 @@ class User(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="dynamic",
     )
-    __table_args__ = (Index("ix_users_user_status", "user_status"),)
+    __table_args__ = (
+        Index("ix_users_user_status", "user_status"),
+        Index("ix_users_deleted_at", "deleted_at"),
+    )
+
+    @property
+    def is_soft_deleted(self) -> bool:
+        return self.deleted_at is not None
 
     @validates("email")
     def _normalize_email(self, _key, value: str) -> str:

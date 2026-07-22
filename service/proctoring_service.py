@@ -68,6 +68,9 @@ class ProctoringService:
         self.storage = ProctoringStorageService()
 
     def is_proctoring_enabled(self, test: Test) -> bool:
+        mode = (test.availability_time_mode or "").upper()
+        if mode == "SURVEY":
+            return False
         settings = self._load_json(test.settings_config) or {}
         proctoring = settings.get("proctoring") or {}
         return bool(proctoring.get("enabled", False))

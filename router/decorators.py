@@ -58,6 +58,8 @@ def require_auth(f):
         user = UserRepository().get_by_id(user_id)
         if not user:
             return jsonify({"error": Messages.USER_NOT_FOUND}), 401
+        if user.deleted_at is not None:
+            return jsonify({"error": Messages.ACCOUNT_IS_DELETED}), 403
 
         g.current_user = user
         g.access_jti = jti

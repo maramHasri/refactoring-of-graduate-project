@@ -12,6 +12,9 @@ class Messages:
     # Authentication
 
     ACCOUNT_ALREADY_EXISTS_PLEASE_LOGIN_FIRST = "Account already exists. Please login first."
+    ACCOUNT_ALREADY_DELETED = "Account is already deleted"
+    ACCOUNT_DELETED_SUCCESSFULLY = "Account deleted successfully"
+    ACCOUNT_IS_DELETED = "Account is deleted"
     ACCOUNT_IS_DISABLED = "Account is disabled"
     ACCOUNT_IS_SUSPENDED = "Account is suspended"
     ALL_SESSIONS_REVOKED = "All sessions revoked"
@@ -74,6 +77,12 @@ class Messages:
     PROFILE_UPDATED_SUCCESSFULLY = "Profile updated successfully"
     SUPER_ADMIN_ACCESS_REQUIRED = "Super admin access required"
     SUSPENSION_REASON_IS_REQUIRED = "Suspension reason is required"
+    USER_ACCOUNT_IS_NOT_DELETED_OR_SUSPENDED = (
+        "User account is not deleted or suspended"
+    )
+    USER_ACCOUNT_RESTORE_PERIOD_EXPIRED = (
+        "The account restore period has expired"
+    )
     USER_IS_ALREADY_SUSPENDED = "User is already suspended"
     USER_IS_NOT_SUSPENDED = "User is not suspended"
     USER_NOT_FOUND = "User not found"
@@ -298,6 +307,10 @@ class Messages:
     TEST_STARTS_AT_AND_DURATION_MINUTES_ARE_REQUIRED_FOR_SCHEDULED_EXAMS = "Test starts_at and duration_minutes are required for scheduled exams"
     TEST_START_TIME_IS_NOT_CONFIGURED = "Test start time is not configured"
     TEST_UPDATED = "Test updated"
+    SURVEY_CLOSED_AT_IS_REQUIRED = "Survey requires closed_at"
+    SURVEY_DURATION_IS_NOT_ALLOWED = "Survey must not have duration_minutes"
+    SURVEY_PROCTORING_IS_NOT_ALLOWED = "Survey must not enable proctoring"
+    SURVEY_CLOSED_AT_MUST_BE_IN_THE_FUTURE = "Survey closed_at must be in the future"
     THE_TEACHER_ALREADY_HAS_ANOTHER_SCHEDULED_EXAM_DURING_THIS_TIME = "The teacher already has another scheduled exam during this time."
     THIS_EXAM_OVERLAPS_WITH_ANOTHER_SCHEDULED_EXAM_FOR_ONE_OR_MORE_STUDENTS = "This exam overlaps with another scheduled exam for one or more students."
     UPLOADED_CSV_FILE_IS_EMPTY = "Uploaded CSV file is empty"
@@ -462,6 +475,8 @@ class Messages:
     SEE_SERVER_LOGS_FOR_TRACEBACK = "See server logs for traceback"
     SETTINGS_CONFIGDISPLAY_SETTINGS_MUST_BE_AN_OBJECT = "settings_config.display_settings must be an object"
     SETTINGS_CONFIGNAVIGATION_SETTINGS_MUST_BE_AN_OBJECT = "settings_config.navigation_settings must be an object"
+    SETTINGS_CONFIGOFFLINE_POLICY_MUST_BE_AN_OBJECT = "settings_config.offline_policy must be an object"
+    SETTINGS_CONFIGOFFLINE_POLICYGRACE_PERIOD_MINUTES_MUST_BE_A_NON_NEGATIVE_INTEGER = "settings_config.offline_policy.grace_period_minutes must be a non-negative integer"
     SETTINGS_CONFIGREVIEW_SETTINGS_MUST_BE_AN_OBJECT = "settings_config.review_settings must be an object"
     SETTINGS_CONFIG_MUST_BE_AN_OBJECT = "settings_config must be an object"
     STATUS_MUST_BE_ONE_OF = "status must be one of: {allowed}"

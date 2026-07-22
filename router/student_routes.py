@@ -62,6 +62,18 @@ def get_student_dashboard():
     ), 200
 
 
+@student_bp.route("/performance-summary", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def get_student_performance_summary():
+    """GET /student/performance-summary — compact graded-performance summary."""
+    return StudentAnalyticsService().get_performance_summary(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+    ), 200
+
+
 @student_bp.route("/tests/results", methods=["GET"])
 @require_active_student
 @handle_service_errors

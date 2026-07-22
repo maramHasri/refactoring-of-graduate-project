@@ -14,9 +14,11 @@ class SuperAdminManagementRepository(BaseRepository):
     def get_institution_member_counts(self, workspace_id: int) -> dict[str, int]:
         rows = db.session.execute(
             select(Membership.role, func.count(Membership.id))
+            .join(User, User.id == Membership.user_id)
             .where(
                 Membership.workspace_id == workspace_id,
                 Membership.status == "ACTIVE",
+                User.deleted_at.is_(None),
                 Membership.role.in_(
                     [
                         MembershipRole.ADMIN.value,
@@ -37,9 +39,12 @@ class SuperAdminManagementRepository(BaseRepository):
     def count_institution_active_users(self, workspace_id: int) -> int:
         return (
             db.session.execute(
-                select(func.count(Membership.id)).where(
+                select(func.count(Membership.id))
+                .join(User, User.id == Membership.user_id)
+                .where(
                     Membership.workspace_id == workspace_id,
                     Membership.status == "ACTIVE",
+                    User.deleted_at.is_(None),
                 )
             ).scalar_one()
             or 0

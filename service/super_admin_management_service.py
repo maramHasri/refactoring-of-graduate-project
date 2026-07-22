@@ -8,6 +8,10 @@ from repositories.session_repository import SessionRepository
 from repositories.super_admin_management_repository import SuperAdminManagementRepository
 from repositories.user_repository import UserRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from utils.account_lifecycle import (
+    account_restore_deadline,
+    is_within_account_restore_window,
+)
 from utils.db import db
 from utils.enums import UserStatus, WorkspaceStatus
 from utils.pagination import build_pagination_meta, normalize_pagination
@@ -96,6 +100,9 @@ class SuperAdminManagementService:
         if user.id == actor_user.id:
             raise ForbiddenError(Messages.SUPER_ADMINS_CANNOT_SUSPEND_THEIR_OWN_ACCOUNT)
 
+        if user.deleted_at is not None:
+            raise ConflictError(Messages.ACCOUNT_IS_DELETED)
+
         if user.user_status == UserStatus.SUSPENDED.value:
             raise ConflictError(Messages.USER_IS_ALREADY_SUSPENDED)
 
@@ -124,13 +131,50 @@ class SuperAdminManagementService:
         }
 
     def restore_user(self, user_id: int, *, actor_user: User) -> dict:
+        """
+        Restore a soft-deleted account (within one calendar month) or a
+        suspended account. Soft-delete takes precedence when deleted_at is set.
+        """
         user = self.users.get_by_id(user_id)
         if not user:
             raise NotFoundError(Messages.USER_NOT_FOUND)
 
-        if user.user_status != UserStatus.SUSPENDED.value:
-            raise ValidationError(Messages.USER_IS_NOT_SUSPENDED)
+        if user.deleted_at is not None:
+            return self._restore_soft_deleted_user(user, actor_user=actor_user)
 
+        if user.user_status == UserStatus.SUSPENDED.value:
+            return self._restore_suspended_user(user, actor_user=actor_user)
+
+        raise ValidationError(Messages.USER_ACCOUNT_IS_NOT_DELETED_OR_SUSPENDED)
+
+    def _restore_soft_deleted_user(self, user: User, *, actor_user: User) -> dict:
+        if not is_within_account_restore_window(user.deleted_at):
+            current_app.logger.info(
+                "event=user_account_restore_rejected_expired "
+                "actor_user_id=%s target_user_id=%s deleted_at=%s deadline=%s",
+                actor_user.id,
+                user.id,
+                user.deleted_at.isoformat() if user.deleted_at else None,
+                account_restore_deadline(user.deleted_at).isoformat(),
+            )
+            raise ForbiddenError(Messages.USER_ACCOUNT_RESTORE_PERIOD_EXPIRED)
+
+        user.deleted_at = None
+        db.session.commit()
+
+        current_app.logger.info(
+            "event=user_account_restored actor_user_id=%s target_user_id=%s",
+            actor_user.id,
+            user.id,
+        )
+
+        memberships = self.repo.load_memberships_for_users([user.id]).get(user.id, [])
+        return {
+            "message": Messages.USER_RESTORED_SUCCESSFULLY,
+            "user": self._serialize_managed_user(user, memberships),
+        }
+
+    def _restore_suspended_user(self, user: User, *, actor_user: User) -> dict:
         user.user_status = UserStatus.ACTIVE.value
         user.suspended_at = None
         user.suspension_reason = None
@@ -340,6 +384,7 @@ class SuperAdminManagementService:
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "suspended_at": user.suspended_at.isoformat() if user.suspended_at else None,
             "suspension_reason": user.suspension_reason,
+            "deleted_at": user.deleted_at.isoformat() if user.deleted_at else None,
             "roles": roles,
             "organizations": organizations,
         }

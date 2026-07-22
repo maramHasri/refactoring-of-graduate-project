@@ -34,6 +34,8 @@ from utils.db import db
 from utils.enums import (
     AIGeneratedQuestionStatus,
     AIGenerationRequestStatus,
+    AvailabilityTimeMode,
+    DEFAULT_OFFLINE_GRACE_MINUTES,
     Difficulty,
     MembershipRole,
     MembershipStatus,
@@ -199,6 +201,24 @@ class TestService:
         if total_score is not None and passing_score is not None and passing_score > total_score:
             raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
 
+        mode = (data.get("availability_time_mode") or "").upper() or None
+        if mode == AvailabilityTimeMode.SURVEY.value:
+            closed_at = data.get("closed_at")
+            if closed_at is None:
+                raise ValidationError(Messages.SURVEY_CLOSED_AT_IS_REQUIRED)
+            closed_at = ensure_local_aware(closed_at)
+            if closed_at <= local_timezone_now():
+                raise ValidationError(Messages.SURVEY_CLOSED_AT_MUST_BE_IN_THE_FUTURE)
+            if data.get("duration_minutes") is not None:
+                raise ValidationError(Messages.SURVEY_DURATION_IS_NOT_ALLOWED)
+            duration_minutes = None
+        else:
+            closed_at = None
+            # Exam default duration when omitted (Survey never reaches here).
+            duration_minutes = data.get("duration_minutes")
+            if duration_minutes is None:
+                duration_minutes = 30
+
         test = Test(
             name=data["name"].strip(),
             slug=slug,
@@ -209,7 +229,9 @@ class TestService:
             auto_distribute_scores=bool(data.get("auto_distribute_scores", False)),
             created_by_membership_id=actor_membership.id,
             status=TestStatus.DRAFT.value,
-            duration_minutes=data.get("duration_minutes"),
+            availability_time_mode=mode,
+            duration_minutes=duration_minutes,
+            closed_at=closed_at,
         )
         self.tests.add(test)
         db.session.commit()
@@ -269,8 +291,6 @@ class TestService:
             test.passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
         if test.total_score is not None and test.passing_score is not None and test.passing_score > test.total_score:
             raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
-        if "settings_config" in data:
-            test.settings_config = self._normalize_settings_config(data.get("settings_config"))
         if "availability_time_mode" in data:
             test.availability_time_mode = data.get("availability_time_mode")
         if "starts_at" in data:
@@ -280,6 +300,17 @@ class TestService:
             test.duration_minutes = data.get("duration_minutes")
         if "entry_window_minutes" in data:
             test.entry_window_minutes = data.get("entry_window_minutes")
+        if "closed_at" in data:
+            value = data.get("closed_at")
+            test.closed_at = ensure_local_aware(value) if value is not None else None
+
+        self._validate_test_timing_rules(test)
+
+        if "settings_config" in data:
+            test.settings_config = self._normalize_settings_config(
+                data.get("settings_config"),
+                test=test,
+            )
 
         self.schedule_conflicts.ensure_no_schedule_conflicts(
             test=test,
@@ -906,6 +937,9 @@ class TestService:
             raise ValidationError(Messages.ARCHIVED_TESTS_CANNOT_BE_CLOSED)
         test.status = TestStatus.CLOSED.value
         test.closed_at = local_timezone_now()
+        from service.attempt_service import AttemptService
+
+        AttemptService().finalize_in_progress_for_test(test)
         db.session.commit()
         return test
 
@@ -1452,7 +1486,19 @@ class TestService:
             raise ValidationError(Messages.FIELD_NAME_MUST_BE_NON_NEGATIVE.format(field_name=field_name))
         return parsed
 
-    def _normalize_settings_config(self, value) -> str | None:
+    def _validate_test_timing_rules(self, test: Test) -> None:
+        mode = (test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value).upper()
+        if mode == AvailabilityTimeMode.SURVEY.value:
+            if test.closed_at is None:
+                raise ValidationError(Messages.SURVEY_CLOSED_AT_IS_REQUIRED)
+            if test.duration_minutes is not None:
+                raise ValidationError(Messages.SURVEY_DURATION_IS_NOT_ALLOWED)
+            return
+        if mode == AvailabilityTimeMode.SCHEDULED.value:
+            # Duration required when publishing/taking; allow null while drafting.
+            return
+
+    def _normalize_settings_config(self, value, *, test: Test | None = None) -> str | None:
         if value is None:
             return None
         if not isinstance(value, dict):
@@ -1488,13 +1534,34 @@ class TestService:
         if not isinstance(review_raw, dict):
             raise ValidationError(Messages.SETTINGS_CONFIGREVIEW_SETTINGS_MUST_BE_AN_OBJECT)
 
+        offline_raw = value.get("offline_policy") or {}
+        if offline_raw and not isinstance(offline_raw, dict):
+            raise ValidationError(Messages.SETTINGS_CONFIGOFFLINE_POLICY_MUST_BE_AN_OBJECT)
+
         require_answer_all = bool(answer_rules_raw.get("require_answer_all", False))
         allow_skip_questions = bool(answer_rules_raw.get("allow_skip_questions", True))
         if require_answer_all and allow_skip_questions:
             allow_skip_questions = False
 
+        proctoring_enabled = bool(proctoring_raw.get("enabled", False))
+        mode = (
+            (test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value).upper()
+            if test is not None
+            else AvailabilityTimeMode.SCHEDULED.value
+        )
+        if mode == AvailabilityTimeMode.SURVEY.value and proctoring_enabled:
+            raise ValidationError(Messages.SURVEY_PROCTORING_IS_NOT_ALLOWED)
+        if mode == AvailabilityTimeMode.SURVEY.value:
+            proctoring_enabled = False
+
+        grace = self._resolve_offline_grace_minutes(
+            mode=mode,
+            proctoring_enabled=proctoring_enabled,
+            offline_raw=offline_raw if isinstance(offline_raw, dict) else {},
+        )
+
         normalized = {
-            "proctoring": {"enabled": bool(proctoring_raw.get("enabled", False))},
+            "proctoring": {"enabled": proctoring_enabled},
             "attempt_settings": {
                 "max_attempts": max_attempts,
             },
@@ -1519,8 +1586,49 @@ class TestService:
                     review_raw.get("allow_review_after_grading", False)
                 )
             },
+            "offline_policy": {
+                # Frontend owns the grace timer; backend stores policy only.
+                "grace_period_minutes": grace,
+            },
         }
         return self._dump_json(normalized)
+
+    @staticmethod
+    def _resolve_offline_grace_minutes(
+        *,
+        mode: str,
+        proctoring_enabled: bool,
+        offline_raw: dict,
+    ) -> int | None:
+        """
+        Policy:
+        - SCHEDULED (any proctoring): default 5
+        - FLEXIBLE + PROCTORED: default 5
+        - FLEXIBLE + NON-PROCTORED: null
+        - SURVEY: null
+        Grace never extends the authoritative deadline.
+        """
+        if mode == AvailabilityTimeMode.SURVEY.value:
+            return None
+        if mode == AvailabilityTimeMode.FLEXIBLE.value and not proctoring_enabled:
+            return None
+
+        if "grace_period_minutes" in offline_raw:
+            raw = offline_raw.get("grace_period_minutes")
+            if raw is None:
+                return None
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    Messages.SETTINGS_CONFIGOFFLINE_POLICYGRACE_PERIOD_MINUTES_MUST_BE_A_NON_NEGATIVE_INTEGER
+                )
+            if value < 0:
+                raise ValidationError(
+                    Messages.SETTINGS_CONFIGOFFLINE_POLICYGRACE_PERIOD_MINUTES_MUST_BE_A_NON_NEGATIVE_INTEGER
+                )
+            return value
+        return DEFAULT_OFFLINE_GRACE_MINUTES
 
     def _ensure_test_editable_for_settings_update(self, test: Test) -> None:
         if test.status == TestStatus.DRAFT.value:

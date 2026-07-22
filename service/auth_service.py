@@ -217,6 +217,9 @@ class AuthService:
             email, purpose=EmailOtpPurpose.RESET_PASSWORD.value
         )
         if reset_row:
+            reset_user = self.users.find_by_email(email)
+            if reset_user and reset_user.deleted_at is not None:
+                raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
             verified_row = self.otps.verify_otp(
                 email=email,
                 otp=otp,
@@ -273,6 +276,8 @@ class AuthService:
             raise ValidationError(
                 Messages.NO_ACCOUNT_OR_PENDING_REGISTRATION_FOUND_USE_POST_AUTH_REGISTER
             )
+        if user.deleted_at is not None:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
         if user.email_verified:
             raise ValidationError(Messages.EMAIL_IS_ALREADY_VERIFIED)
 
@@ -407,6 +412,8 @@ class AuthService:
         if not user or not verify_password(password, user.password_hash):
             raise UnauthorizedError(Messages.INVALID_EMAIL_OR_PASSWORD)
 
+        if user.deleted_at is not None:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
         if user.user_status == UserStatus.DISABLED.value:
             raise ForbiddenError(Messages.ACCOUNT_IS_DISABLED)
         if user.user_status == UserStatus.SUSPENDED.value:
@@ -430,6 +437,8 @@ class AuthService:
         user = self.users.find_superadmin_by_email(email)
         if not user or not verify_password(password, user.password_hash):
             raise UnauthorizedError(Messages.INVALID_SUPER_ADMIN_CREDENTIALS)
+        if user.deleted_at is not None:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
 
         return self._issue_auth_response(user, ip_address=ip_address, user_agent=user_agent)
 
@@ -447,6 +456,16 @@ class AuthService:
     def refresh_tokens(self, refresh_token: str) -> dict:
         access, refresh, session = self.sessions.refresh_session(refresh_token)
         user = self.users.get_by_id(session.user_id)
+        if not user:
+            raise UnauthorizedError(Messages.USER_NOT_FOUND)
+        if user.deleted_at is not None:
+            self.sessions.repo.deactivate_all_for_user(user.id)
+            db.session.commit()
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
+        if user.user_status == UserStatus.DISABLED.value:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DISABLED)
+        if user.user_status == UserStatus.SUSPENDED.value:
+            raise ForbiddenError(Messages.ACCOUNT_IS_SUSPENDED)
         if not user.is_superadmin:
             if not user.email_verified:
                 raise ForbiddenError(Messages.EMAIL_NOT_VERIFIED)
@@ -463,7 +482,7 @@ class AuthService:
 
     def forgot_password(self, email: str) -> dict | None:
         user = self.users.find_by_email(email.lower().strip())
-        if not user:
+        if not user or user.deleted_at is not None:
             return None
         plain_otp = self.otps.issue_otp(
             email=user.email,
@@ -491,6 +510,8 @@ class AuthService:
         user = self.users.find_by_email(email)
         if not user:
             raise NotFoundError(Messages.USER_NOT_FOUND)
+        if user.deleted_at is not None:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
 
         user.password_hash = hash_password(new_password)
         row.is_used = True
@@ -502,6 +523,8 @@ class AuthService:
         user = self.users.get_by_id(user_id)
         if not user or not verify_password(current_password, user.password_hash):
             raise UnauthorizedError(Messages.CURRENT_PASSWORD_IS_INCORRECT)
+        if user.deleted_at is not None:
+            raise ForbiddenError(Messages.ACCOUNT_IS_DELETED)
         user.password_hash = hash_password(new_password)
         db.session.commit()
 

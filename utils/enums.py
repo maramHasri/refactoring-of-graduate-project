@@ -116,6 +116,12 @@ class AttemptGradingAuditAction(str, enum.Enum):
 class AvailabilityTimeMode(str, enum.Enum):
     SCHEDULED = "SCHEDULED"
     FLEXIBLE = "FLEXIBLE"
+    SURVEY = "SURVEY"
+
+
+# Default offline grace (minutes) for SCHEDULED and FLEXIBLE+PROCTORED.
+# Frontend owns the grace timer; backend stores policy and validates deadlines.
+DEFAULT_OFFLINE_GRACE_MINUTES = 5
 
 
 class QuestionStatus(str, enum.Enum):
