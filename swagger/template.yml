@@ -2564,6 +2564,47 @@ paths:
         200:
           description: Test archived
   # ── Student Exams — runtime (take exam, attempts, submit) ───────────────
+  /student/tests:
+    get:
+      tags: [Student Exams]
+      summary: List all student exams across lifecycle states
+      description: |
+        Unified exam hub for the authenticated student in the current workspace.
+
+        Returns every exam the student interacts with, mapped to a single
+        `lifecycle_status` per row:
+
+        - `UPCOMING` — assigned and not yet started (no attempt yet)
+        - `IN_PROGRESS` — active attempt the student may resume (`can_resume`, `resume_attempt_id`)
+        - `PENDING_GRADING` — submitted (`attempt_status=SUBMITTED`); use `submission_source`
+          (`STUDENT`, `TIMEOUT`, `FORCE`) to distinguish manual submit vs timeout
+        - `GRADED` — graded attempt with score and optional `review_allowed`
+
+        Sorted by lifecycle priority (in progress first), then most recent activity.
+        Default page size is 20. Optional `lifecycle_status` filter.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+          description: Max 100
+        - name: lifecycle_status
+          in: query
+          type: string
+          enum: [UPCOMING, IN_PROGRESS, PENDING_GRADING, GRADED]
+          required: false
+      responses:
+        200:
+          description: Paginated student exams
+          schema:
+            $ref: "#/definitions/StudentExamsListResponse"
+        403:
+          description: Not an active student
   /student/recent-exams:
     get:
       tags: [Student Exams]
@@ -4692,7 +4733,6 @@ definitions:
         x-nullable: true
         allOf:
           - $ref: "#/definitions/StudentRecentExamScore"
-      grading_completed: { type: boolean, example: true }
       review_allowed:
         type: boolean
         example: true
@@ -4708,6 +4748,62 @@ definitions:
       page: { type: integer, example: 1 }
       per_page: { type: integer, example: 10 }
       pages: { type: integer, example: 3 }
+  StudentExamListItem:
+    type: object
+    properties:
+      test_id: { type: integer, example: 17 }
+      attempt_id: { type: integer, x-nullable: true, example: 91 }
+      title: { type: string, example: "Calculus 1" }
+      subject:
+        type: object
+        x-nullable: true
+        properties:
+          id: { type: integer, example: 4 }
+          name: { type: string, example: "Mathematics" }
+      teacher_name: { type: string, x-nullable: true, example: "Dr. Smith" }
+      lifecycle_status:
+        type: string
+        enum: [UPCOMING, IN_PROGRESS, PENDING_GRADING, GRADED]
+        example: IN_PROGRESS
+      attempt_status:
+        type: string
+        x-nullable: true
+        enum: [IN_PROGRESS, SUBMITTED, GRADED]
+      submission_source:
+        type: string
+        x-nullable: true
+        enum: [STUDENT, TIMEOUT, FORCE]
+        description: Set when submitted; TIMEOUT indicates the attempt ended by deadline
+      started_at: { type: string, format: date-time, x-nullable: true }
+      submitted_at: { type: string, format: date-time, x-nullable: true }
+      graded_at: { type: string, format: date-time, x-nullable: true }
+      last_activity_at: { type: string, format: date-time, x-nullable: true }
+      score:
+        x-nullable: true
+        allOf:
+          - $ref: "#/definitions/StudentRecentExamScore"
+      review_allowed: { type: boolean, example: false }
+      can_resume: { type: boolean, example: true }
+      resume_attempt_id: { type: integer, x-nullable: true, example: 91 }
+      availability_time_mode: { type: string, x-nullable: true }
+      start_time: { type: string, x-nullable: true }
+      end_time: { type: string, x-nullable: true }
+      duration_minutes: { type: integer, x-nullable: true }
+      starts_on_entry: { type: boolean, x-nullable: true }
+      availability_note: { type: string, x-nullable: true }
+      time_until_start_seconds: { type: integer, x-nullable: true }
+      time_until_start_human: { type: string, x-nullable: true }
+  StudentExamsListResponse:
+    type: object
+    properties:
+      items:
+        type: array
+        items:
+          $ref: "#/definitions/StudentExamListItem"
+      total: { type: integer, example: 12 }
+      page: { type: integer, example: 1 }
+      per_page: { type: integer, example: 20 }
+      pages: { type: integer, example: 1 }
   ScheduleConflictError:
     type: object
     properties:

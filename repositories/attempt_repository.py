@@ -272,6 +272,40 @@ class TestAttemptRepository(BaseRepository):
         )
         return rows, int(total)
 
+    def list_all_for_student_workspace(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+    ) -> list[TestAttempt]:
+        """All attempts for a student in a workspace (any attempt status)."""
+        return list(
+            db.session.execute(
+                db.select(TestAttempt)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(
+                    joinedload(TestAttempt.test).joinedload(Test.subject),
+                    joinedload(TestAttempt.test)
+                    .joinedload(Test.created_by)
+                    .joinedload(Membership.user),
+                )
+                .where(
+                    TestAttempt.student_membership_id == student_membership_id,
+                    TestAttempt.user_id == student_user_id,
+                    Test.archived_at.is_(None),
+                    Test.created_by.has(workspace_id=workspace_id),
+                )
+                .order_by(
+                    TestAttempt.started_at.desc(),
+                    TestAttempt.id.desc(),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+
     def find_graded_for_student_test(
         self,
         *,

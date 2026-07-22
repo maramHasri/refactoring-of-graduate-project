@@ -4,11 +4,27 @@ Student-facing APIs — upcoming tests, dashboards, etc.
 from flask import Blueprint, g, jsonify, request
 
 from router.decorators import handle_service_errors, require_active_student
-from schemas.attempt_schema import StudentRecentExamsQuerySchema
+from schemas.attempt_schema import StudentExamsListQuerySchema, StudentRecentExamsQuerySchema
 from service.attempt_service import AttemptService
 from service.student_analytics_service import StudentAnalyticsService
 
 student_bp = Blueprint("student", __name__)
+
+
+@student_bp.route("/tests", methods=["GET"])
+@require_active_student
+@handle_service_errors
+def list_student_exams():
+    """GET /student/tests — all assigned exams across lifecycle states."""
+    query = StudentExamsListQuerySchema().load(request.args.to_dict())
+    return AttemptService().list_student_exams(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        actor_user_id=g.current_user.id,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        lifecycle_status=query.get("lifecycle_status"),
+    ), 200
 
 
 @student_bp.route("/tests/upcoming", methods=["GET"])

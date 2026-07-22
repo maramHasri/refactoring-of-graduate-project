@@ -25,6 +25,20 @@ class StudentRecentExamsQuerySchema(Schema):
     per_page = fields.Int(load_default=10, validate=validate.Range(min=1, max=100))
 
 
+class StudentExamsListQuerySchema(Schema):
+    """GET /student/tests — unified student exam hub query params."""
+
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))
+    lifecycle_status = fields.Str(
+        load_default=None,
+        allow_none=True,
+        validate=validate.OneOf(
+            ["UPCOMING", "IN_PROGRESS", "PENDING_GRADING", "GRADED"]
+        ),
+    )
+
+
 class SaveAttemptAnswerItemSchema(Schema):
     test_question_id = fields.Int(required=True, validate=validate.Range(min=1))
     answer_text = fields.Str(allow_none=True)

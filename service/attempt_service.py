@@ -49,6 +49,19 @@ _OBJECTIVE_TYPES = frozenset({"MCQ", "TRUE_FALSE", "MULTI_SELECT"})
 _RECENT_STATUS_GRADED = "GRADED"
 _RECENT_STATUS_PENDING_GRADING = "PENDING_GRADING"
 
+# Student exam hub lifecycle statuses (GET /student/tests).
+_LIFECYCLE_UPCOMING = "UPCOMING"
+_LIFECYCLE_IN_PROGRESS = "IN_PROGRESS"
+_LIFECYCLE_PENDING_GRADING = "PENDING_GRADING"
+_LIFECYCLE_GRADED = "GRADED"
+
+_LIFECYCLE_SORT_ORDER = {
+    _LIFECYCLE_IN_PROGRESS: 0,
+    _LIFECYCLE_PENDING_GRADING: 1,
+    _LIFECYCLE_GRADED: 2,
+    _LIFECYCLE_UPCOMING: 3,
+}
+
 
 class AttemptService:
     def __init__(self):
@@ -174,6 +187,68 @@ class AttemptService:
         ]
         return {
             "items": items,
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
+        }
+
+    def list_student_exams(
+        self,
+        *,
+        workspace_id: int,
+        actor_membership,
+        actor_user_id: int,
+        page: int | None = None,
+        per_page: int | None = None,
+        lifecycle_status: str | None = None,
+    ) -> dict:
+        """
+        Unified student exam hub — all assigned tests and attempts across lifecycle
+        states: UPCOMING, IN_PROGRESS, PENDING_GRADING, GRADED.
+        """
+        page, per_page, offset = normalize_pagination(page, per_page)
+
+        attempts = self.attempts.list_all_for_student_workspace(
+            workspace_id=workspace_id,
+            student_membership_id=actor_membership.id,
+            student_user_id=actor_user_id,
+        )
+        for attempt in attempts:
+            if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+                continue
+            test = attempt.test
+            if test is None:
+                continue
+            self._check_and_apply_timeout(attempt, test)
+        db.session.commit()
+
+        items: list[dict] = []
+        for attempt in attempts:
+            if attempt.test is None:
+                continue
+            item = self._serialize_student_exam_attempt(attempt)
+            if lifecycle_status and item["lifecycle_status"] != lifecycle_status:
+                continue
+            items.append(item)
+
+        upcoming = self.list_upcoming_tests(
+            workspace_id=workspace_id,
+            actor_membership=actor_membership,
+        )
+        now = local_timezone_now()
+        for upcoming_item in upcoming:
+            if lifecycle_status and lifecycle_status != _LIFECYCLE_UPCOMING:
+                continue
+            test = self.tests.get_by_id(upcoming_item["test_id"])
+            if test is None:
+                continue
+            items.append(
+                self._serialize_student_exam_upcoming(test, upcoming_item, now)
+            )
+
+        items.sort(key=self._student_exam_sort_key)
+        total = len(items)
+        page_items = items[offset : offset + per_page]
+        return {
+            "items": page_items,
             **build_pagination_meta(total=total, page=page, per_page=per_page),
         }
 
@@ -1260,11 +1335,122 @@ class AttemptService:
                 else None,
             },
             "score": score,
-            "grading_completed": grading_completed,
             "review_allowed": self._allow_student_review_after_grading(test, attempt)
             if grading_completed
             else False,
         }
+
+    def _attempt_lifecycle_status(self, attempt: TestAttempt) -> str:
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            return _LIFECYCLE_IN_PROGRESS
+        if attempt.status == TestAttemptStatus.SUBMITTED.value:
+            return _LIFECYCLE_PENDING_GRADING
+        if attempt.status == TestAttemptStatus.GRADED.value:
+            return _LIFECYCLE_GRADED
+        return attempt.status
+
+    def _serialize_student_exam_attempt(self, attempt: TestAttempt) -> dict:
+        test = attempt.test
+        subject = test.subject if test else None
+        lifecycle_status = self._attempt_lifecycle_status(attempt)
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+
+        score = None
+        if lifecycle_status == _LIFECYCLE_GRADED and attempt.final_score is not None:
+            percentage = (
+                float(attempt.percentage) if attempt.percentage is not None else None
+            )
+            score = {
+                "earned": float(attempt.final_score),
+                "maximum": self.grading.maximum_score(test),
+                "percentage": percentage,
+            }
+
+        can_resume = False
+        if lifecycle_status == _LIFECYCLE_IN_PROGRESS:
+            can_resume = self._can_resume_attempt(attempt, test)
+
+        return {
+            "test_id": test.id,
+            "attempt_id": attempt.id,
+            "title": test.name,
+            "subject": {
+                "id": subject.id,
+                "name": subject.name,
+            }
+            if subject
+            else None,
+            "teacher_name": teacher_name,
+            "lifecycle_status": lifecycle_status,
+            "attempt_status": attempt.status,
+            "submission_source": attempt.submission_source,
+            "started_at": format_local_datetime(attempt.started_at),
+            "submitted_at": format_local_datetime(attempt.submitted_at),
+            "graded_at": format_local_datetime(attempt.graded_at),
+            "last_activity_at": format_local_datetime(attempt.last_activity_at),
+            "score": score,
+            "review_allowed": self._allow_student_review_after_grading(test, attempt)
+            if lifecycle_status == _LIFECYCLE_GRADED
+            else False,
+            "can_resume": can_resume,
+            "resume_attempt_id": attempt.id if can_resume else None,
+        }
+
+    def _serialize_student_exam_upcoming(
+        self, test: Test, upcoming_item: dict, now: datetime
+    ) -> dict:
+        return {
+            "test_id": test.id,
+            "attempt_id": None,
+            "title": upcoming_item.get("title") or test.name,
+            "subject": {
+                "name": upcoming_item.get("subject"),
+            }
+            if upcoming_item.get("subject")
+            else None,
+            "teacher_name": upcoming_item.get("teacher_name"),
+            "lifecycle_status": _LIFECYCLE_UPCOMING,
+            "attempt_status": None,
+            "submission_source": None,
+            "started_at": None,
+            "submitted_at": None,
+            "graded_at": None,
+            "last_activity_at": None,
+            "score": None,
+            "review_allowed": False,
+            "can_resume": False,
+            "resume_attempt_id": None,
+            "availability_time_mode": upcoming_item.get("availability_time_mode"),
+            "start_time": upcoming_item.get("start_time"),
+            "end_time": upcoming_item.get("end_time"),
+            "duration_minutes": upcoming_item.get("duration_minutes"),
+            "starts_on_entry": upcoming_item.get("starts_on_entry"),
+            "availability_note": upcoming_item.get("availability_note"),
+            "time_until_start_seconds": upcoming_item.get("time_until_start_seconds"),
+            "time_until_start_human": upcoming_item.get("time_until_start_human"),
+        }
+
+    def _student_exam_sort_key(self, item: dict) -> tuple:
+        lifecycle = item.get("lifecycle_status") or ""
+        order = _LIFECYCLE_SORT_ORDER.get(lifecycle, 99)
+        activity_field = {
+            _LIFECYCLE_IN_PROGRESS: "last_activity_at",
+            _LIFECYCLE_PENDING_GRADING: "submitted_at",
+            _LIFECYCLE_GRADED: "graded_at",
+            _LIFECYCLE_UPCOMING: "start_time",
+        }.get(lifecycle, "started_at")
+        activity = item.get(activity_field) or item.get("started_at") or ""
+        ts = 0.0
+        if activity:
+            try:
+                ts = ensure_local_aware(
+                    datetime.fromisoformat(str(activity).replace("Z", ""))
+                ).timestamp()
+            except ValueError:
+                ts = 0.0
+        return (order, -ts, -(item.get("test_id") or 0))
 
     def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:
         if self._is_test_hard_closed(test, now):
