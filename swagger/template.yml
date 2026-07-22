@@ -4722,6 +4722,11 @@ definitions:
         properties:
           id: { type: integer, example: 4 }
           name: { type: string, example: "Mathematics" }
+      teacher_name:
+        type: string
+        x-nullable: true
+        example: "Dr. Smith"
+        description: Full name of the teacher who created the exam
       test:
         type: object
         properties:

@@ -1304,6 +1304,10 @@ class AttemptService:
             else _RECENT_STATUS_PENDING_GRADING
         )
 
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
+
         score = None
         if grading_completed and attempt.final_score is not None:
             percentage = (
@@ -1327,6 +1331,7 @@ class AttemptService:
             }
             if subject
             else None,
+            "teacher_name": teacher_name,
             "test": {
                 "id": test.id,
                 "title": test.name,

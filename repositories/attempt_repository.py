@@ -257,6 +257,9 @@ class TestAttemptRepository(BaseRepository):
                 .join(Test, Test.id == TestAttempt.test_id)
                 .options(
                     joinedload(TestAttempt.test).joinedload(Test.subject),
+                    joinedload(TestAttempt.test)
+                    .joinedload(Test.created_by)
+                    .joinedload(Membership.user),
                 )
                 .where(*filters)
                 .order_by(
