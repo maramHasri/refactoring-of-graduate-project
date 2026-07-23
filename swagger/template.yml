@@ -1132,8 +1132,13 @@ paths:
           description: Student enrollments
     post:
       tags: [Subjects]
-      summary: Enroll student in subject
-      description: Admin/owner or teacher assigned to this subject
+      summary: Enroll students in subject (bulk)
+      description: |
+        Admin/owner or teacher assigned to this subject.
+        Accepts multiple workspace student membership IDs via `membership_ids`.
+        Legacy single `membership_id` is still accepted.
+        Students already enrolled are skipped (`skipped_count` / `skipped_membership_ids`).
+        Soft-removed enrollments are reactivated.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -1145,12 +1150,40 @@ paths:
           required: true
           schema:
             type: object
-            required: [membership_id]
             properties:
-              membership_id: { type: integer }
+              membership_ids:
+                type: array
+                items: { type: integer }
+                example: [43, 44, 45]
+                description: Preferred — one or more student membership IDs
+              membership_id:
+                type: integer
+                example: 43
+                description: Legacy single-student enroll (still supported)
       responses:
         201:
-          description: Enrolled
+          description: Students enrolled (partial skip possible)
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Students enrolled in subject" }
+              enrolled_count: { type: integer, example: 2 }
+              skipped_count: { type: integer, example: 1 }
+              skipped_membership_ids:
+                type: array
+                items: { type: integer }
+                example: [44]
+              assignments:
+                type: array
+                items: { type: object }
+        403:
+          description: Forbidden
+        404:
+          description: Subject or membership not found
+        409:
+          description: Membership has a conflicting subject role
+        422:
+          description: Validation error
   /subjects/{subject_id}/students/{membership_id}:
     delete:
       tags: [Subjects]

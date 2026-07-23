@@ -166,6 +166,7 @@ class Messages:
     ONLY_STUDENTS_ENROLLED_IN_THE_SUBJECT_CAN_TAKE_TESTS = "Only students enrolled in the subject can take tests"
     SELECTED_BANK_DOES_NOT_BELONG_TO_EXAM_SUBJECT = "Selected bank does not belong to exam subject"
     STUDENT_ENROLLED_IN_SUBJECT = "Student enrolled in subject"
+    STUDENTS_ENROLLED_IN_SUBJECT = "Students enrolled in subject"
     STUDENT_ENROLLMENT_NOT_FOUND = "Student enrollment not found"
     STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT = "Student is already enrolled in this subject"
     STUDENT_REMOVED_FROM_SUBJECT = "Student removed from subject"

@@ -216,35 +216,112 @@ class SubjectService:
         student_membership_id: int,
         actor_membership,
     ) -> SubjectMembership:
+        result = self.enroll_students_in_subject(
+            workspace_id=workspace_id,
+            subject_id=subject_id,
+            student_membership_ids=[student_membership_id],
+            actor_membership=actor_membership,
+            skip_already_enrolled=False,
+        )
+        if result["assignments"]:
+            # Fresh enroll or reactivation — recover link by membership id.
+            membership_id = student_membership_id
+            link = self.subject_memberships.find_active_by_role(
+                membership_id, subject_id, SubjectRole.STUDENT.value
+            )
+            if link:
+                return link
+        raise ConflictError(Messages.STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT)
+
+    def enroll_students_in_subject(
+        self,
+        *,
+        workspace_id: int,
+        subject_id: int,
+        student_membership_ids: list[int],
+        actor_membership,
+        skip_already_enrolled: bool = True,
+    ) -> dict:
+        """
+        Enroll one or more workspace STUDENT memberships into a subject.
+
+        When ``skip_already_enrolled`` is True (bulk default), active enrollments
+        are skipped. When False (single legacy path), already-enrolled raises 409.
+        Soft-removed STUDENT links are reactivated.
+        """
         workspace = self.workspaces.get_by_id(workspace_id)
-        subject = self._get_subject_or_404(subject_id, workspace_id)
+        self._get_subject_or_404(subject_id, workspace_id)
         actor_link = self.subject_memberships.find_active_by_role(
             actor_membership.id, subject_id, SubjectRole.TEACHER.value
         )
         if not can_enroll_students_in_subject(workspace, actor_membership, actor_link):
-            raise ForbiddenError(Messages.ONLY_ADMIN_OWNER_OR_ASSIGNED_SUBJECT_TEACHERS_CAN_ENROLL_STUDENTS)
+            raise ForbiddenError(
+                Messages.ONLY_ADMIN_OWNER_OR_ASSIGNED_SUBJECT_TEACHERS_CAN_ENROLL_STUDENTS
+            )
 
-        student = self.memberships.get_by_id(student_membership_id)
-        if not student or student.workspace_id != workspace_id:
-            raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
-        if student.role != MembershipRole.STUDENT.value:
-            raise ValidationError(Messages.ONLY_STUDENTS_CAN_BE_ENROLLED_IN_A_SUBJECT)
-        if student.status != "ACTIVE":
-            raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
+        if not student_membership_ids:
+            raise ValidationError(Messages.STUDENT_MEMBERSHIP_IDS_MUST_CONTAIN_AT_LEAST_ONE_ID)
 
-        if self.subject_memberships.find_active(student_membership_id, subject_id):
-            raise ConflictError(Messages.STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT)
+        enrolled_links: list[SubjectMembership] = []
+        skipped_membership_ids: list[int] = []
 
-        link = SubjectMembership(
-            subject_id=subject_id,
-            membership_id=student_membership_id,
-            subject_role=SubjectRole.STUDENT.value,
-            assigned_by_membership_id=actor_membership.id,
-            status=SubjectMembershipStatus.ACTIVE.value,
-        )
-        self.subject_memberships.add(link)
+        for student_membership_id in student_membership_ids:
+            student = self.memberships.get_by_id(student_membership_id)
+            if not student or student.workspace_id != workspace_id:
+                raise NotFoundError(Messages.MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE)
+            if student.role != MembershipRole.STUDENT.value:
+                raise ValidationError(Messages.ONLY_STUDENTS_CAN_BE_ENROLLED_IN_A_SUBJECT)
+            if student.status != "ACTIVE":
+                raise ValidationError(Messages.MEMBERSHIP_IS_NOT_ACTIVE)
+
+            active_any = self.subject_memberships.find_active(
+                student_membership_id, subject_id
+            )
+            if active_any:
+                if active_any.subject_role != SubjectRole.STUDENT.value:
+                    raise ConflictError(
+                        Messages.MEMBERSHIP_ALREADY_HAS_A_DIFFERENT_SUBJECT_ROLE_ON_THIS_SUBJECT
+                    )
+                if skip_already_enrolled:
+                    skipped_membership_ids.append(student_membership_id)
+                    continue
+                raise ConflictError(Messages.STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT)
+
+            existing = self.subject_memberships.find_by_membership_and_subject(
+                student_membership_id, subject_id
+            )
+            if existing:
+                if existing.subject_role != SubjectRole.STUDENT.value:
+                    raise ConflictError(
+                        Messages.MEMBERSHIP_ALREADY_HAS_A_DIFFERENT_SUBJECT_ROLE_ON_THIS_SUBJECT
+                    )
+                self.subject_memberships.reactivate(
+                    existing,
+                    assigned_by_membership_id=actor_membership.id,
+                    subject_role=SubjectRole.STUDENT.value,
+                )
+                enrolled_links.append(existing)
+                continue
+
+            link = SubjectMembership(
+                subject_id=subject_id,
+                membership_id=student_membership_id,
+                subject_role=SubjectRole.STUDENT.value,
+                assigned_by_membership_id=actor_membership.id,
+                status=SubjectMembershipStatus.ACTIVE.value,
+            )
+            self.subject_memberships.add(link)
+            enrolled_links.append(link)
+
         db.session.commit()
-        return link
+        return {
+            "enrolled_count": len(enrolled_links),
+            "skipped_count": len(skipped_membership_ids),
+            "skipped_membership_ids": skipped_membership_ids,
+            "assignments": [
+                self._serialize_assignment(link) for link in enrolled_links
+            ],
+        }
 
     def remove_student_from_subject(
         self,

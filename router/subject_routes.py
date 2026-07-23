@@ -10,8 +10,8 @@ from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
 from schemas.subject_schema import (
-    AssignMembershipToSubjectSchema,
     CreateSubjectSchema,
+    EnrollStudentsInSubjectSchema,
     UpdateSubjectSchema,
 )
 from schemas.topic_schema import CreateTopicSchema, UpdateTopicSchema
@@ -125,17 +125,18 @@ def list_teachers(subject_id):
 @require_workspace_membership
 @handle_service_errors
 def enroll_student(subject_id):
-    """POST /subjects/{id}/students — admin/owner or assigned subject teacher."""
-    data = AssignMembershipToSubjectSchema().load(request.get_json() or {})
-    link = _svc().enroll_student_in_subject(
+    """POST /subjects/{id}/students — enroll one or many students (bulk)."""
+    data = EnrollStudentsInSubjectSchema().load(request.get_json() or {})
+    result = _svc().enroll_students_in_subject(
         workspace_id=g.workspace_id,
         subject_id=subject_id,
-        student_membership_id=data["membership_id"],
+        student_membership_ids=data["membership_ids"],
         actor_membership=g.membership,
+        skip_already_enrolled=True,
     )
     return {
-        "message": Messages.STUDENT_ENROLLED_IN_SUBJECT,
-        "assignment": _svc()._serialize_assignment(link),
+        "message": Messages.STUDENTS_ENROLLED_IN_SUBJECT,
+        **result,
     }, 201
 
 

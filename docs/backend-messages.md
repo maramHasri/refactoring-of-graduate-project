@@ -186,6 +186,7 @@ Do not change these strings casually — they are part of the API contract.
 | ROW_ROW_NUMBER_TOPIC_ID_TOPIC_ID_DOES_NOT_BELONG_TO_THE | Row {row_number}: Topic ID {topic_id} does not belong to the exam subject | API response message. |
 | SELECTED_BANK_DOES_NOT_BELONG_TO_EXAM_SUBJECT | Selected bank does not belong to exam subject | API response message. |
 | STUDENT_ENROLLED_IN_SUBJECT | Student enrolled in subject | API response message. |
+| STUDENTS_ENROLLED_IN_SUBJECT | Students enrolled in subject | Returned after a successful operation. |
 | STUDENT_ENROLLMENT_NOT_FOUND | Student enrollment not found | Returned when the requested resource does not exist. |
 | STUDENT_IS_ALREADY_ENROLLED_IN_THIS_SUBJECT | Student is already enrolled in this subject | API response message. |
 | STUDENT_REMOVED_FROM_SUBJECT | Student removed from subject | API response message. |
