@@ -1,4 +1,4 @@
-from marshmallow import Schema, ValidationError, fields, validates_schema, validate
+from marshmallow import Schema, fields, validates_schema, validate
 
 from utils.enums import QuestionBankVisibility
 
@@ -28,45 +28,27 @@ class ReplaceStudentSubjectsSchema(Schema):
 
 
 class AssignMembershipToSubjectSchema(Schema):
-    """Legacy single-student enroll body."""
-
-    membership_id = fields.Int(required=True)
-
-
-class EnrollStudentsInSubjectSchema(Schema):
-    """
-    POST /subjects/{id}/students — bulk enroll.
-
-    Accepts ``membership_ids`` (preferred) and/or legacy ``membership_id``.
-    """
+    """Deprecated alias — use EnrollStudentsInSubjectSchema."""
 
     membership_ids = fields.List(
         fields.Int(validate=validate.Range(min=1)),
-        load_default=None,
-        allow_none=True,
+        required=True,
         validate=validate.Length(min=1, max=500),
     )
-    membership_id = fields.Int(
-        load_default=None,
-        allow_none=True,
-        validate=validate.Range(min=1),
+
+
+class EnrollStudentsInSubjectSchema(Schema):
+    """POST /subjects/{id}/students — bulk enroll via membership_ids only."""
+
+    membership_ids = fields.List(
+        fields.Int(validate=validate.Range(min=1)),
+        required=True,
+        validate=validate.Length(min=1, max=500),
     )
 
     @validates_schema
-    def _require_at_least_one_membership(self, data, **kwargs):
-        ids: list[int] = []
-        for value in data.get("membership_ids") or []:
-            ids.append(int(value))
-        if data.get("membership_id") is not None:
-            ids.append(int(data["membership_id"]))
-        if not ids:
-            raise ValidationError(
-                {
-                    "membership_ids": [
-                        "Provide membership_ids (array) or membership_id (single)."
-                    ]
-                }
-            )
+    def _dedupe_membership_ids(self, data, **kwargs):
+        ids = [int(value) for value in data.get("membership_ids") or []]
         unique: list[int] = []
         seen: set[int] = set()
         for membership_id in ids:

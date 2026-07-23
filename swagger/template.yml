@@ -1135,8 +1135,7 @@ paths:
       summary: Enroll students in subject (bulk)
       description: |
         Admin/owner or teacher assigned to this subject.
-        Accepts multiple workspace student membership IDs via `membership_ids`.
-        Legacy single `membership_id` is still accepted.
+        Pass one or more workspace student membership IDs in `membership_ids`.
         Students already enrolled are skipped (`skipped_count` / `skipped_membership_ids`).
         Soft-removed enrollments are reactivated.
       security: [{ Bearer: [], WorkspaceId: [] }]
@@ -1150,16 +1149,14 @@ paths:
           required: true
           schema:
             type: object
+            required: [membership_ids]
             properties:
               membership_ids:
                 type: array
                 items: { type: integer }
+                minItems: 1
                 example: [43, 44, 45]
-                description: Preferred — one or more student membership IDs
-              membership_id:
-                type: integer
-                example: 43
-                description: Legacy single-student enroll (still supported)
+                description: One or more student membership IDs
       responses:
         201:
           description: Students enrolled (partial skip possible)
