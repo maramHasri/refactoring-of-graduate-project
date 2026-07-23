@@ -126,6 +126,7 @@ Do not change these strings casually — they are part of the API contract.
 | ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_UPDATE_THIS_BANK | Only the creator or workspace admin can update this bank | Authorization / permission failure message. |
 | ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS | Only the institution owner or workspace admin can list workspace members | Authorization / permission failure message. |
 | ONLY_THE_WORKSPACE_OWNER_CAN_DELETE_THIS_WORKSPACE | Only the workspace owner can delete this workspace | Authorization / permission failure message. |
+| ONLY_THE_WORKSPACE_OWNER_CAN_LIST_INSTITUTION_TESTS | Only the workspace owner can list institution tests | Authorization / permission failure message. |
 | ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_LIST_STUDENTS | Only the workspace owner or admin can list students | Authorization / permission failure message. |
 | ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_MANAGE_WORKSPACE_MEMBERS | Only the workspace owner or admin can manage workspace members | Authorization / permission failure message. |
 | ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_ARCHIVE_SUBJECTS | Only workspace owner or admin can archive subjects | Authorization / permission failure message. |

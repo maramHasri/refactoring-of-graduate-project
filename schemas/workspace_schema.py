@@ -4,6 +4,7 @@ from utils.enums import (
     InviteStatus,
     MembershipRole,
     MembershipStatus,
+    TestStatus,
     WorkspaceKind,
     WorkspaceStatus,
 )
@@ -53,6 +54,17 @@ class WorkspaceMembersListQuerySchema(Schema):
     page = fields.Int(load_default=1, validate=validate.Range(min=1))
     per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))
     search = fields.Str(allow_none=True, validate=validate.Length(max=255))
+
+
+class WorkspaceTestsListQuerySchema(Schema):
+    """GET /workspaces/tests — pagination and optional status filter."""
+
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))
+    status = fields.Str(
+        allow_none=True,
+        validate=validate.OneOf([s.value for s in TestStatus]),
+    )
 
 
 class WorkspaceMemberRemoveQuerySchema(Schema):

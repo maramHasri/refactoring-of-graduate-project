@@ -735,6 +735,10 @@
     "message": "Only the workspace owner can delete this workspace",
     "description": "Authorization / permission failure message."
   },
+  "ONLY_THE_WORKSPACE_OWNER_CAN_LIST_INSTITUTION_TESTS": {
+    "message": "Only the workspace owner can list institution tests",
+    "description": "Authorization / permission failure message."
+  },
   "ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_LIST_STUDENTS": {
     "message": "Only the workspace owner or admin can list students",
     "description": "Authorization / permission failure message."

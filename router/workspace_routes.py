@@ -9,6 +9,7 @@ from schemas.workspace_schema import (
     WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
     WorkspaceRecentlyActiveQuerySchema,
+    WorkspaceTestsListQuerySchema,
 )
 from service.workspace_service import WorkspaceService
 
@@ -99,6 +100,24 @@ def list_institution_workspace_students():
         page=query.get("page"),
         per_page=query.get("per_page"),
         search=query.get("search"),
+    ), 200
+
+
+@workspace_bp.route("/tests", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_institution_workspace_tests():
+    """
+    GET /workspaces/tests — all exams created in the active institution workspace.
+    Requires X-Workspace-Id. Institution workspace owner only.
+    """
+    query = WorkspaceTestsListQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().list_institution_workspace_tests(
+        g.workspace_id,
+        g.membership,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        status=query.get("status"),
     ), 200
 
 

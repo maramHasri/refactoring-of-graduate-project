@@ -47,6 +47,43 @@ class TestRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def list_for_workspace(
+        self,
+        workspace_id: int,
+        *,
+        status: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[Test], int]:
+        """All tests created by members of this workspace (any creator)."""
+        filters = [Test.created_by.has(workspace_id=workspace_id)]
+        if status:
+            filters.append(Test.status == status)
+
+        total = (
+            db.session.execute(
+                db.select(db.func.count(Test.id)).where(*filters)
+            ).scalar_one()
+            or 0
+        )
+        rows = list(
+            db.session.execute(
+                db.select(Test)
+                .options(
+                    joinedload(Test.subject),
+                    joinedload(Test.created_by).joinedload(Membership.user),
+                )
+                .where(*filters)
+                .order_by(Test.updated_at.desc(), Test.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        return rows, int(total)
+
     def find_by_slug(self, slug: str) -> Test | None:
         return db.session.execute(
             db.select(Test).where(Test.slug == slug)

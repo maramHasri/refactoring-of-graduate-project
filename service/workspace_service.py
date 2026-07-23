@@ -25,11 +25,18 @@ from service.exceptions import ConflictError, ForbiddenError, NotFoundError, Val
 from service.user_service import UserService
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.db import db
-from utils.enums import AvailabilityTimeMode, MembershipRole, SubjectRole, WorkspaceKind, WorkspaceStatus
 from utils.rbac import (
     can_list_institution_workspace_teachers,
     can_list_workspace_students,
     can_manage_workspace_members,
+    is_workspace_owner,
+)
+from utils.enums import (
+    AvailabilityTimeMode,
+    MembershipRole,
+    SubjectRole,
+    WorkspaceKind,
+    WorkspaceStatus,
 )
 from utils.join_code import generate_workspace_join_code
 from utils.pagination import build_pagination_meta, normalize_pagination
@@ -316,6 +323,46 @@ class WorkspaceService:
             "students": items,
             "count": result["count"],
             **result["pagination"],
+        }
+
+    def list_institution_workspace_tests(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        status: str | None = None,
+    ) -> dict:
+        """
+        GET /workspaces/tests — all exams created in an institution workspace.
+
+        Institution workspace owner only. Includes tests created by any teacher
+        (or other creator membership) inside this workspace.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        if workspace.kind != WorkspaceKind.INSTITUTION.value:
+            raise ForbiddenError(
+                Messages.THIS_ENDPOINT_IS_ONLY_AVAILABLE_FOR_INSTITUTION_WORKSPACES
+            )
+        if not is_workspace_owner(workspace, actor_membership):
+            raise ForbiddenError(
+                Messages.ONLY_THE_WORKSPACE_OWNER_CAN_LIST_INSTITUTION_TESTS
+            )
+
+        page, per_page, offset = normalize_pagination(page, per_page)
+        rows, total = self.tests.list_for_workspace(
+            workspace_id,
+            status=status,
+            offset=offset,
+            limit=per_page,
+        )
+        items = [self._serialize_institution_workspace_test(test) for test in rows]
+        return {
+            "success": True,
+            "tests": items,
+            "count": len(items),
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
         }
 
     def remove_teacher_from_workspace(
@@ -703,6 +750,39 @@ class WorkspaceService:
             subject_count=0,
             subject_count_field="assigned_subjects_count",
         )
+
+    def _serialize_institution_workspace_test(self, test: Test) -> dict:
+        creator = test.created_by
+        creator_user = creator.user if creator else None
+        return {
+            "test_id": test.id,
+            "name": test.name,
+            "slug": test.slug,
+            "description": test.description,
+            "subject_id": test.subject_id,
+            "subject_name": test.subject.name if test.subject else None,
+            "status": test.status,
+            "total_score": float(test.total_score) if test.total_score is not None else None,
+            "passing_score": float(test.passing_score)
+            if test.passing_score is not None
+            else None,
+            "availability_time_mode": test.availability_time_mode,
+            "starts_at": format_local_datetime(test.starts_at),
+            "duration_minutes": test.duration_minutes,
+            "created_by_membership_id": test.created_by_membership_id,
+            "created_by": {
+                "membership_id": creator.id if creator else None,
+                "user_id": creator_user.id if creator_user else None,
+                "full_name": creator_user.full_name if creator_user else None,
+                "email": creator_user.email if creator_user else None,
+                "role": creator.role if creator else None,
+            },
+            "published_at": format_local_datetime(test.published_at),
+            "closed_at": format_local_datetime(test.closed_at),
+            "archived_at": format_local_datetime(test.archived_at),
+            "created_at": format_local_datetime(test.created_at),
+            "updated_at": format_local_datetime(test.updated_at),
+        }
 
     def _serialize_workspace(
         self, workspace: Workspace, *, role: str | None, membership_id: int | None
