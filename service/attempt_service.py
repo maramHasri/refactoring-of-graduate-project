@@ -351,15 +351,19 @@ class AttemptService:
                     student_name=student_name,
                 )
 
-        if self.attempts.find_completed_for_student(test.id, actor_membership.id):
-            completed_count = self.attempts.count_completed_for_student(
-                test.id, actor_membership.id
-            )
-            max_attempts = self._max_attempts(test)
-            if completed_count >= max_attempts:
-                raise ConflictError(
-                    Messages.YOU_HAVE_REACHED_THE_MAXIMUM_ALLOWED_ATTEMPTS_MAX_ATTEMPTS.format(max_attempts=max_attempts)
+        # Allow/deny a new attempt by counting completed attempts only.
+        # Do not use find_completed_for_student() here: multiple SUBMITTED/GRADED
+        # rows are valid when max_attempts > 1 and would crash scalar_one_or_none().
+        completed_count = self.attempts.count_completed_for_student(
+            test.id, actor_membership.id
+        )
+        max_attempts = self._max_attempts(test)
+        if completed_count >= max_attempts:
+            raise ConflictError(
+                Messages.YOU_HAVE_REACHED_THE_MAXIMUM_ALLOWED_ATTEMPTS_MAX_ATTEMPTS.format(
+                    max_attempts=max_attempts
                 )
+            )
 
         self._ensure_test_takeable_for_first_attempt(test)
 
