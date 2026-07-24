@@ -685,6 +685,122 @@ paths:
           description: Forbidden (not workspace owner/admin, or unsupported workspace kind)
         404:
           description: Workspace not found
+  /workspaces/teacher-dashboard:
+    get:
+      tags: [Workspaces]
+      summary: Teacher-scoped workspace dashboard
+      description: |
+        Returns a teacher dashboard scoped to subjects the caller teaches
+        (or all workspace subjects for owner/ADMIN via `can_manage_subjects`).
+
+        **Authorization:** INSTITUTION or SOLO. Assigned TEACHER, or workspace
+        owner/ADMIN. Students without teacher/admin authority receive 403.
+
+        **Scope:** Teacher → active TEACHER subject assignments → active student
+        enrollments and GRADED analytics for those subjects only.
+
+        **Metrics:**
+        - `summary.total_students`: COUNT(DISTINCT) active STUDENT enrollments
+          across the teacher's subjects.
+        - `summary.average_performance`: mean of GRADED attempt `percentage`
+          values (attempt-weighted), e.g. (80+90+60)/3.
+        - `subjects[].students_enrolled`: active STUDENT SubjectMemberships for
+          that subject (`status=ACTIVE`, `deleted_at IS NULL`).
+        - `subjects[].graded_tests_count`: DISTINCT PUBLISHED, non-archived tests
+          with ≥1 GRADED attempt (not attempt count).
+        - `subjects[].average_performance`: mean GRADED attempt percentage for
+          the subject.
+        - `subjects[].success_rate`: passed graded attempts / total graded × 100
+          using `final_score >= passing_score`.
+        - `weak_topics`: cohort difficulty-weighted mastery below system thresholds
+          (same `_classify` rules as student analytics), with
+          `mastery_percentage`, `attempts_count`, and `students_affected`.
+
+        **Upcoming tests:** SCHEDULED/PUBLISHED tests in teacher subjects only
+        (not student-personal upcoming, not full-workspace admin upcoming).
+
+        **Recent tests:** most recently created by the caller's membership
+        (`created_by_membership_id`), not all subject tests.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: recent_limit
+          in: query
+          type: integer
+          default: 5
+          description: Max recently created tests (1-20)
+        - name: upcoming_limit
+          in: query
+          type: integer
+          default: 10
+          description: Max upcoming tests (1-50)
+      responses:
+        200:
+          description: Teacher dashboard payload
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              summary:
+                type: object
+                properties:
+                  average_performance: { type: number, example: 76.67 }
+                  total_students: { type: integer, example: 42 }
+                  weak_topics:
+                    type: array
+                    items:
+                      $ref: "#/definitions/TeacherDashboardWeakTopic"
+              subjects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    students_enrolled: { type: integer }
+                    students_count: { type: integer, description: Alias of students_enrolled }
+                    graded_tests_count:
+                      type: integer
+                      description: Distinct tests with ≥1 GRADED attempt
+                    average_performance: { type: number, example: 82.4 }
+                    success_rate: { type: number, example: 70.0 }
+                    weak_topics:
+                      type: array
+                      items:
+                        $ref: "#/definitions/TeacherDashboardWeakTopic"
+              upcoming_tests:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    test_id: { type: integer }
+                    title: { type: string }
+                    name: { type: string }
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    starts_at: { type: string }
+                    starts_at_date: { type: string, example: "2026-07-30" }
+                    starts_at_time: { type: string, example: "09:30" }
+                    ends_at: { type: string }
+                    closed_at: { type: string }
+                    status: { type: string }
+                    availability_time_mode: { type: string }
+              recent_tests:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    test_id: { type: integer }
+                    title: { type: string }
+                    name: { type: string }
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    status: { type: string }
+                    created_at: { type: string }
+                    published_at: { type: string }
+        403:
+          description: Forbidden (not teacher/admin, or unsupported workspace kind)
+        404:
+          description: Workspace not found
   /workspaces/tests:
     get:
       tags: [Workspaces]
@@ -4928,6 +5044,17 @@ definitions:
       topic_id: { type: integer, example: 41 }
       topic_name: { type: string, example: "Encryption" }
       mastery: { type: number, example: 58 }
+  TeacherDashboardWeakTopic:
+    type: object
+    properties:
+      topic_id: { type: integer, example: 41, x-nullable: true }
+      topic_name: { type: string, example: "Recursion" }
+      mastery_percentage: { type: number, example: 42 }
+      average_score: { type: number, example: 42, description: Alias of mastery_percentage }
+      attempts_count: { type: integer, example: 55 }
+      students_affected: { type: integer, example: 38 }
+      subject_id: { type: integer, example: 1 }
+      subject_name: { type: string, example: "Programming" }
   StudentDashboardAnalytics:
     type: object
     properties:

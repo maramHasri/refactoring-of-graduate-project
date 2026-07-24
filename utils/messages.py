@@ -137,6 +137,9 @@ class Messages:
     STUDENT_MEMBERSHIP_S_ARE_NOT_ENROLLED_IN_THE_EXAM_SUBJECT = "Student membership(s) are not enrolled in the exam subject:"
     STUDENT_REMOVED_FROM_WORKSPACE_SUCCESSFULLY = "Student removed from workspace successfully."
     SUBJECT_NOT_FOUND_IN_THIS_WORKSPACE = "Subject not found in this workspace"
+    TEACHER_OR_WORKSPACE_ADMIN_ACCESS_REQUIRED = (
+        "Teacher or workspace admin access required"
+    )
     TEACHER_REMOVED_FROM_WORKSPACE_SUCCESSFULLY = "Teacher removed from workspace successfully."
     TEST_NOT_FOUND_IN_THIS_WORKSPACE = "Test not found in this workspace"
     THIS_ENDPOINT_IS_ONLY_AVAILABLE_FOR_INSTITUTION_WORKSPACES = "This endpoint is only available for institution workspaces"

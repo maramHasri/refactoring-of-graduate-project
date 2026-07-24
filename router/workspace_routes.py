@@ -12,6 +12,7 @@ from schemas.workspace_schema import (
     WorkspaceRecentlyActiveQuerySchema,
     WorkspaceTestsListQuerySchema,
 )
+from service.teacher_dashboard_service import TeacherDashboardService
 from service.workspace_dashboard_service import WorkspaceDashboardService
 from service.workspace_service import WorkspaceService
 
@@ -133,6 +134,23 @@ def get_institution_workspace_dashboard():
     """
     query = WorkspaceDashboardQuerySchema().load(request.args.to_dict())
     return WorkspaceDashboardService().get_dashboard(
+        g.workspace_id,
+        g.membership,
+        recent_limit=query["recent_limit"],
+        upcoming_limit=query["upcoming_limit"],
+    ), 200
+
+
+@workspace_bp.route("/teacher-dashboard", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_teacher_workspace_dashboard():
+    """
+    GET /workspaces/teacher-dashboard — teacher-scoped subject dashboard.
+    Requires X-Workspace-Id. Assigned TEACHER, or workspace owner/ADMIN.
+    """
+    query = WorkspaceDashboardQuerySchema().load(request.args.to_dict())
+    return TeacherDashboardService().get_dashboard(
         g.workspace_id,
         g.membership,
         recent_limit=query["recent_limit"],
