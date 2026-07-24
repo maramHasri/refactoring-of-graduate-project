@@ -649,12 +649,20 @@ paths:
                     exam_date:
                       type: string
                       example: "2026-07-30"
-                      description: Local calendar date from starts_at (fallback scheduled_publish_at)
+                      description: Alias of starts_at_date (from starts_at only)
                     exam_time:
                       type: string
                       example: "09:30"
-                      description: Local wall-clock time HH:MM
-                    starts_at: { type: string }
+                      description: Alias of starts_at_time (from starts_at only)
+                    starts_at: { type: string, description: "Full local start datetime" }
+                    starts_at_date:
+                      type: string
+                      example: "2026-07-30"
+                      description: Calendar date part of starts_at (YYYY-MM-DD)
+                    starts_at_time:
+                      type: string
+                      example: "09:30"
+                      description: Clock time part of starts_at (HH:MM)
                     closed_at: { type: string }
                     scheduled_publish_at: { type: string }
                     status: { type: string }

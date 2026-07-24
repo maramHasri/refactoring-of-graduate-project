@@ -147,22 +147,23 @@ class WorkspaceDashboardService:
     @staticmethod
     def _serialize_upcoming_test(test) -> dict:
         subject = test.subject
-        exam_at = test.starts_at or test.scheduled_publish_at
-        exam_date = None
-        exam_time = None
-        if exam_at is not None:
-            local_at = ensure_local_aware(exam_at)
-            exam_date = local_at.date().isoformat()
-            exam_time = local_at.strftime("%H:%M")
+        starts_at_date = None
+        starts_at_time = None
+        if test.starts_at is not None:
+            local_at = ensure_local_aware(test.starts_at)
+            starts_at_date = local_at.date().isoformat()
+            starts_at_time = local_at.strftime("%H:%M")
 
         return {
             "test_id": test.id,
             "name": test.name,
             "subject_id": test.subject_id,
             "subject_name": subject.name if subject else None,
-            "exam_date": exam_date,
-            "exam_time": exam_time,
             "starts_at": format_local_datetime(test.starts_at),
+            "starts_at_date": starts_at_date,
+            "starts_at_time": starts_at_time,
+            "exam_date": starts_at_date,
+            "exam_time": starts_at_time,
             "closed_at": format_local_datetime(test.closed_at),
             "scheduled_publish_at": format_local_datetime(test.scheduled_publish_at),
             "status": test.status,

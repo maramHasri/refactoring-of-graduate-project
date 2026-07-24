@@ -58,6 +58,9 @@ def test_dashboard_service_import_and_serialize():
     assert payload["status"] == "PUBLISHED"
     assert payload["exam_date"] == "2026-07-30"
     assert payload["exam_time"] == "09:30"
+    assert payload["starts_at_date"] == "2026-07-30"
+    assert payload["starts_at_time"] == "09:30"
+    assert payload["starts_at"] == "2026-07-30T09:30:00"
 
 
 def test_member_count_shape():
