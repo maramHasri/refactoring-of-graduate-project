@@ -6,11 +6,13 @@ from schemas.workspace_schema import (
     CreateWorkspaceSchema,
     UpdateWorkspaceMemberSchema,
     UpdateWorkspaceSchema,
+    WorkspaceDashboardQuerySchema,
     WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
     WorkspaceRecentlyActiveQuerySchema,
     WorkspaceTestsListQuerySchema,
 )
+from service.workspace_dashboard_service import WorkspaceDashboardService
 from service.workspace_service import WorkspaceService
 
 workspace_bp = Blueprint("workspaces", __name__)
@@ -118,6 +120,23 @@ def list_institution_workspace_tests():
         page=query.get("page"),
         per_page=query.get("per_page"),
         status=query.get("status"),
+    ), 200
+
+
+@workspace_bp.route("/dashboard", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_institution_workspace_dashboard():
+    """
+    GET /workspaces/dashboard — institution admin dashboard overview.
+    Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
+    """
+    query = WorkspaceDashboardQuerySchema().load(request.args.to_dict())
+    return WorkspaceDashboardService().get_dashboard(
+        g.workspace_id,
+        g.membership,
+        recent_limit=query["recent_limit"],
+        upcoming_limit=query["upcoming_limit"],
     ), 200
 
 

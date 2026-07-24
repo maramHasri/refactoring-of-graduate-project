@@ -540,6 +540,127 @@ paths:
           description: Membership not found in this workspace
         422:
           description: Membership is not a teacher or not active
+  /workspaces/dashboard:
+    get:
+      tags: [Workspaces]
+      summary: Institution admin dashboard
+      description: |
+        Returns an overview for the Educational Institution Admin Dashboard for the
+        workspace selected via X-Workspace-Id.
+
+        **Authorization:** INSTITUTION workspaces only. Caller must be the workspace
+        owner or a workspace ADMIN.
+
+        **Overview metrics:**
+        - Member counts include only `Membership.status=ACTIVE` users with
+          `User.deleted_at IS NULL` (ADMIN + TEACHER + STUDENT).
+        - `average_student_score` is the mean of graded attempt `percentage` values
+          for tests created in this workspace (same metric as student analytics).
+        - `most_enrolled_subject` counts active student subject enrollments.
+
+        **Recent question banks:** ordered by `updated_at` (create/modify activity;
+        there is no separate last-used timestamp).
+
+        **Upcoming tests:** SCHEDULED/PUBLISHED, not archived, not past `closed_at`,
+        and still relevant by start/availability rules (institution-wide, not
+        student-personal upcoming).
+
+        **Performance trend:** daily mean of graded attempt percentages over the
+        last 30 days (`COALESCE(graded_at, submitted_at)`). Empty days are omitted.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: recent_limit
+          in: query
+          type: integer
+          default: 5
+          description: Max items for recent subjects, members, and question banks (1-20)
+        - name: upcoming_limit
+          in: query
+          type: integer
+          default: 10
+          description: Max upcoming tests (1-50)
+      responses:
+        200:
+          description: Institution dashboard payload
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              overview:
+                type: object
+                properties:
+                  total_members: { type: integer }
+                  total_teachers: { type: integer }
+                  total_students: { type: integer }
+                  total_admins: { type: integer }
+                  average_student_score: { type: number, example: 78.5 }
+                  most_enrolled_subject:
+                    type: object
+                    x-nullable: true
+                    properties:
+                      subject_id: { type: integer }
+                      name: { type: string }
+                      student_count: { type: integer }
+              recent_subjects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    subject_id: { type: integer }
+                    name: { type: string }
+                    created_at: { type: string }
+                    student_count: { type: integer }
+              recent_members:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    user_id: { type: integer }
+                    membership_id: { type: integer }
+                    full_name: { type: string }
+                    role: { type: string, enum: [ADMIN, TEACHER, STUDENT] }
+                    joined_at: { type: string }
+              recent_question_banks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    bank_id: { type: integer }
+                    title: { type: string }
+                    updated_at: { type: string }
+                    activity_source: { type: string, example: UPDATED }
+              upcoming_tests:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    test_id: { type: integer }
+                    name: { type: string }
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    starts_at: { type: string }
+                    closed_at: { type: string }
+                    scheduled_publish_at: { type: string }
+                    status: { type: string }
+                    availability_time_mode: { type: string }
+              performance_trend:
+                type: object
+                properties:
+                  period: { type: string, example: LAST_30_DAYS }
+                  metric: { type: string, example: percentage }
+                  aggregation: { type: string, example: daily_mean_of_graded_attempts }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date: { type: string, example: "2026-07-01" }
+                        average_score: { type: number }
+                        graded_attempts: { type: integer }
+        403:
+          description: Forbidden (not institution owner/admin, or not an institution workspace)
+        404:
+          description: Workspace not found
   /workspaces/tests:
     get:
       tags: [Workspaces]

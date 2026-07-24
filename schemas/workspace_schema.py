@@ -67,6 +67,13 @@ class WorkspaceTestsListQuerySchema(Schema):
     )
 
 
+class WorkspaceDashboardQuerySchema(Schema):
+    """GET /workspaces/dashboard — optional list size overrides."""
+
+    recent_limit = fields.Int(load_default=5, validate=validate.Range(min=1, max=20))
+    upcoming_limit = fields.Int(load_default=10, validate=validate.Range(min=1, max=50))
+
+
 class WorkspaceMemberRemoveQuerySchema(Schema):
     """DELETE /workspaces/teachers | /workspaces/students — membership_id query param."""
 
