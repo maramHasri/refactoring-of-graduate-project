@@ -12,7 +12,9 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 
-from models import AttemptAnswer, Test, TestAttempt, TestQuestion
+from sqlalchemy.orm import joinedload
+
+from models import AttemptAnswer, Membership, Test, TestAttempt, TestQuestion
 from repositories.attempt_repository import (
     AttemptAnswerRepository,
     TestAttemptRepository,
@@ -90,12 +92,18 @@ class AttemptService:
             rows = list(
                 db.session.execute(
                     db.select(Test)
+                    .options(
+                        joinedload(Test.created_by).joinedload(Membership.user),
+                    )
                     .where(
                         Test.status == TS.PUBLISHED.value,
                         Test.created_by.has(workspace_id=workspace_id),
                     )
                     .order_by(Test.published_at.desc().nullslast(), Test.id.desc())
-                ).scalars().all()
+                )
+                .scalars()
+                .unique()
+                .all()
             )
         else:
             rows = self.attempts.list_published_for_subjects(
@@ -1201,6 +1209,9 @@ class AttemptService:
         }
 
     def _serialize_test_summary(self, test: Test) -> dict:
+        teacher_name = None
+        if test.created_by and test.created_by.user:
+            teacher_name = test.created_by.user.full_name
         return {
             "test_id": test.id,
             "name": test.name,
@@ -1215,6 +1226,7 @@ class AttemptService:
             else None,
             "starts_at": format_local_datetime(test.starts_at),
             "published_at": format_local_datetime(test.published_at),
+            "teacher_name": teacher_name,
         }
 
     def _serialize_upcoming_test(self, test: Test, now: datetime) -> dict:

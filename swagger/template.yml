@@ -3144,6 +3144,8 @@ paths:
         - enrolled in the subject
         - assigned in the exam whitelist
         Workspace owner/admin see all published tests in the workspace.
+
+        Each item includes `teacher_name` (creator's full name).
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
         200:
@@ -5230,6 +5232,11 @@ definitions:
       total_score: { type: number }
       target_total_score: { type: number, x-nullable: true }
       passing_score: { type: number }
+      teacher_name:
+        type: string
+        x-nullable: true
+        description: Full name of the teacher who created the exam
+        example: "Sara Ahmad"
   TestAttempt:
     type: object
     properties:
