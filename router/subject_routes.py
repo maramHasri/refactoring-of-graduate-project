@@ -10,6 +10,7 @@ from flask import Blueprint, g, request
 
 from router.decorators import handle_service_errors, require_workspace_membership
 from schemas.subject_schema import (
+    AssignTeacherToSubjectSchema,
     CreateSubjectSchema,
     EnrollStudentsInSubjectSchema,
     UpdateSubjectSchema,
@@ -83,7 +84,7 @@ def delete_subject(subject_id):
 @handle_service_errors
 def assign_teacher(subject_id):
     """POST /subjects/{id}/teachers — assign teacher (subject_role=TEACHER)."""
-    data = AssignMembershipToSubjectSchema().load(request.get_json() or {})
+    data = AssignTeacherToSubjectSchema().load(request.get_json() or {})
     link = _svc().assign_teacher_to_subject(
         workspace_id=g.workspace_id,
         subject_id=subject_id,

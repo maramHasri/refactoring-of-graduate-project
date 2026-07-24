@@ -1219,6 +1219,7 @@ class AttemptService:
             "description": test.description,
             "subject_id": test.subject_id,
             "status": test.status,
+            "availability_time_mode": test.availability_time_mode,
             "duration_minutes": test.duration_minutes,
             "starts_at": format_local_datetime(test.starts_at),
             "closed_at": format_local_datetime(test.closed_at),

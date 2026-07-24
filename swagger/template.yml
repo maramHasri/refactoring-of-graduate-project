@@ -5228,6 +5228,11 @@ definitions:
       slug: { type: string }
       subject_id: { type: integer }
       status: { type: string, example: PUBLISHED }
+      availability_time_mode:
+        type: string
+        x-nullable: true
+        enum: [SCHEDULED, FLEXIBLE, SURVEY]
+        description: Exam availability / timing mode
       duration_minutes:
         type: integer
         x-nullable: true

@@ -27,8 +27,14 @@ class ReplaceStudentSubjectsSchema(Schema):
     subject_ids = fields.List(fields.Int(), required=True)
 
 
+class AssignTeacherToSubjectSchema(Schema):
+    """POST /subjects/{id}/teachers — assign one teacher by membership_id."""
+
+    membership_id = fields.Int(required=True, validate=validate.Range(min=1))
+
+
 class AssignMembershipToSubjectSchema(Schema):
-    """Deprecated alias — use EnrollStudentsInSubjectSchema."""
+    """Deprecated alias for student bulk enroll — prefer EnrollStudentsInSubjectSchema."""
 
     membership_ids = fields.List(
         fields.Int(validate=validate.Range(min=1)),
