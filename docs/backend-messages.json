@@ -179,6 +179,26 @@
     "message": "Cannot modify exam questions after student attempts have been recorded",
     "description": "API response message."
   },
+  "CANNOT_CHANGE_TEST_SCORING_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED": {
+    "message": "Cannot change test scoring after student attempts have been recorded",
+    "description": "Conflict when changing score structure after attempts exist."
+  },
+  "MANUAL_QUESTION_POINTS_NOT_ALLOWED_WHILE_AUTO_DISTRIBUTE_IS_ENABLED": {
+    "message": "Manual question points are not allowed while auto_distribute_scores is enabled; disable auto distribution first",
+    "description": "Validation failure."
+  },
+  "TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED": {
+    "message": "target total_score is required when auto_distribute_scores is enabled",
+    "description": "Validation failure."
+  },
+  "TARGET_TOTAL_SCORE_MUST_BE_GREATER_THAN_ZERO_WHEN_DISTRIBUTING": {
+    "message": "target total_score must be greater than zero when distributing points",
+    "description": "Validation failure."
+  },
+  "TOTAL_SCORE_IS_CALCULATED_FROM_QUESTION_POINTS_WHEN_AUTO_DISTRIBUTE_IS_DISABLED": {
+    "message": "total_score is calculated from question points when auto_distribute_scores is disabled",
+    "description": "Validation failure."
+  },
   "CANNOT_REMOVE_THE_WORKSPACE_OWNER": {
     "message": "Cannot remove the workspace owner",
     "description": "API response message."

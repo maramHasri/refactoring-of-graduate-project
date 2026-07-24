@@ -425,6 +425,7 @@ class ExamGradingService:
         )
 
     def maximum_score(self, test: Test) -> float:
+        """Maximum score is always sum(active TestQuestion.points) when questions exist."""
         rows = self.test_questions.list_active_for_test(test.id)
         if rows:
             total = sum(Decimal(str(row.points or 0)) for row in rows)

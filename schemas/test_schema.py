@@ -19,6 +19,7 @@ class TestSchema(Schema):
     description = fields.Str(allow_none=True)
     subject_id = fields.Int(required=True)
     total_score = fields.Float(allow_none=True)
+    target_total_score = fields.Float(allow_none=True)
     passing_score = fields.Float(allow_none=True)
     auto_distribute_scores = fields.Bool()
     settings_config = fields.Dict(allow_none=True)
@@ -80,6 +81,7 @@ class UpdateTestSchema(Schema):
     description = fields.Str(allow_none=True)
     total_score = fields.Float(allow_none=True, validate=validate.Range(min=0))
     passing_score = fields.Float(allow_none=True, validate=validate.Range(min=0))
+    auto_distribute_scores = fields.Bool()
     settings_config = fields.Dict(allow_none=True)
     status = fields.Str(validate=validate.OneOf([s.value for s in TestStatus]))
     availability_time_mode = fields.Str(

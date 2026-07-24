@@ -44,6 +44,7 @@ from utils.enums import (
     TestStatus,
 )
 from utils.question_type_validation import validate_question_create_payload
+from utils.test_scoring import distribute_points, sum_points
 
 
 logger = logging.getLogger(__name__)
@@ -196,10 +197,32 @@ class TestService:
         base_slug = self._resolve_slug(None, data["name"])
         slug = self._resolve_unique_slug(base_slug)
 
-        total_score = self._to_decimal(data.get("total_score"), "total_score")
+        total_score_input = self._to_decimal(data.get("total_score"), "total_score")
         passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
-        if total_score is not None and passing_score is not None and passing_score > total_score:
-            raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
+        auto_distribute = bool(data.get("auto_distribute_scores", False))
+
+        target_total_score = None
+        calculated_total = Decimal("0")
+        if auto_distribute:
+            if total_score_input is None:
+                raise ValidationError(
+                    Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+                )
+            target_total_score = total_score_input
+            if (
+                passing_score is not None
+                and target_total_score is not None
+                and passing_score > target_total_score
+            ):
+                raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
+        else:
+            # Soft check against the UI-intended scale before questions exist.
+            if (
+                total_score_input is not None
+                and passing_score is not None
+                and passing_score > total_score_input
+            ):
+                raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
 
         mode = (data.get("availability_time_mode") or "").upper() or None
         if mode == AvailabilityTimeMode.SURVEY.value:
@@ -224,9 +247,10 @@ class TestService:
             slug=slug,
             description=(data.get("description") or "").strip() or None,
             subject_id=subject.id,
-            total_score=total_score,
+            total_score=calculated_total,
+            target_total_score=target_total_score,
             passing_score=passing_score,
-            auto_distribute_scores=bool(data.get("auto_distribute_scores", False)),
+            auto_distribute_scores=auto_distribute,
             created_by_membership_id=actor_membership.id,
             status=TestStatus.DRAFT.value,
             availability_time_mode=mode,
@@ -285,12 +309,14 @@ class TestService:
                 test.slug = slug
         if "description" in data:
             test.description = (data.get("description") or "").strip() or None
-        if "total_score" in data:
-            test.total_score = self._to_decimal(data.get("total_score"), "total_score")
-        if "passing_score" in data:
-            test.passing_score = self._to_decimal(data.get("passing_score"), "passing_score")
-        if test.total_score is not None and test.passing_score is not None and test.passing_score > test.total_score:
-            raise ValidationError(Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE)
+
+        scoring_touched = any(
+            key in data
+            for key in ("total_score", "passing_score", "auto_distribute_scores")
+        )
+        if scoring_touched:
+            self._apply_test_scoring_update(test, data)
+
         if "availability_time_mode" in data:
             test.availability_time_mode = data.get("availability_time_mode")
         if "starts_at" in data:
@@ -319,6 +345,135 @@ class TestService:
 
         db.session.commit()
         return test
+
+    def redistribute_test_points(
+        self,
+        test: Test,
+        target_total_score: Decimal,
+        *,
+        lock_attempts: bool = True,
+    ) -> list[TestQuestion]:
+        """Distribute ``target_total_score`` across active test questions."""
+        if lock_attempts:
+            self._ensure_no_attempts_for_scoring(test.id)
+        rows = self.test_questions.list_active_for_test(test.id)
+        if not rows:
+            test.total_score = Decimal("0")
+            return []
+        if target_total_score is None:
+            raise ValidationError(
+                Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+            )
+        if target_total_score <= 0:
+            raise ValidationError(
+                Messages.TARGET_TOTAL_SCORE_MUST_BE_GREATER_THAN_ZERO_WHEN_DISTRIBUTING
+            )
+
+        points_list = distribute_points(target_total_score, len(rows))
+        for row, points in zip(rows, points_list):
+            row.points = points
+            row.snapshot_points = points
+        test.total_score = sum_points(points_list)
+        return rows
+
+    def _apply_test_scoring_update(self, test: Test, data: dict) -> None:
+        will_auto = (
+            bool(data["auto_distribute_scores"])
+            if "auto_distribute_scores" in data
+            else bool(test.auto_distribute_scores)
+        )
+        total_input = (
+            self._to_decimal(data.get("total_score"), "total_score")
+            if "total_score" in data
+            else None
+        )
+
+        if not will_auto and "total_score" in data:
+            raise ValidationError(
+                Messages.TOTAL_SCORE_IS_CALCULATED_FROM_QUESTION_POINTS_WHEN_AUTO_DISTRIBUTE_IS_DISABLED
+            )
+
+        structure_change = (
+            "auto_distribute_scores" in data
+            or (will_auto and "total_score" in data)
+        )
+        if structure_change:
+            self._ensure_no_attempts_for_scoring(test.id)
+
+            if "auto_distribute_scores" in data:
+                test.auto_distribute_scores = will_auto
+
+            if will_auto:
+                if "total_score" in data:
+                    if total_input is None:
+                        raise ValidationError(
+                            Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+                        )
+                    test.target_total_score = total_input
+                elif test.target_total_score is None:
+                    raise ValidationError(
+                        Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+                    )
+                self._refresh_test_scoring(test, lock_attempts=False)
+            else:
+                test.target_total_score = None
+                self._sync_total_score_from_questions(test)
+
+        if "passing_score" in data:
+            test.passing_score = self._to_decimal(
+                data.get("passing_score"), "passing_score"
+            )
+        self._validate_passing_score(test)
+
+    def _refresh_test_scoring(
+        self, test: Test, *, lock_attempts: bool = True
+    ) -> None:
+        """Recompute points/total after question or target changes."""
+        if test.auto_distribute_scores:
+            target = test.target_total_score
+            if target is None:
+                raise ValidationError(
+                    Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+                )
+            self.redistribute_test_points(
+                test,
+                Decimal(str(target)),
+                lock_attempts=lock_attempts,
+            )
+        else:
+            if lock_attempts:
+                self._ensure_no_attempts_for_scoring(test.id)
+            self._sync_total_score_from_questions(test)
+
+        self._validate_passing_score(test)
+
+    def _sync_total_score_from_questions(self, test: Test) -> None:
+        rows = self.test_questions.list_active_for_test(test.id)
+        test.total_score = sum_points(row.points for row in rows)
+
+    def _validate_passing_score(self, test: Test) -> None:
+        if test.passing_score is None:
+            return
+        rows = self.test_questions.list_active_for_test(test.id)
+        if rows:
+            maximum = sum_points(row.points for row in rows)
+            if test.passing_score > maximum:
+                raise ValidationError(
+                    Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE
+                )
+            return
+        # No questions yet: when auto-distribute is on, compare against target.
+        if test.auto_distribute_scores and test.target_total_score is not None:
+            if test.passing_score > test.target_total_score:
+                raise ValidationError(
+                    Messages.PASSING_SCORE_CANNOT_BE_GREATER_THAN_TOTAL_SCORE
+                )
+
+    def _ensure_no_attempts_for_scoring(self, test_id: int) -> None:
+        if self.attempts.list_for_test(test_id):
+            raise ConflictError(
+                Messages.CANNOT_CHANGE_TEST_SCORING_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED
+            )
 
     def add_questions_from_bank(
         self,
@@ -366,6 +521,7 @@ class TestService:
             self.test_questions.add(row)
             created.append(row)
 
+        self._refresh_test_scoring(test)
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
 
@@ -387,6 +543,7 @@ class TestService:
             )
             for payload in questions
         ]
+        self._refresh_test_scoring(test)
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
 
@@ -438,6 +595,7 @@ class TestService:
                 row.snapshot_type_code,
             )
 
+        self._refresh_test_scoring(test)
         db.session.commit()
 
         imported_count = len(created)
@@ -507,6 +665,7 @@ class TestService:
             self.test_questions.add(row)
             created.append(row)
 
+        self._refresh_test_scoring(test)
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
 
@@ -550,6 +709,7 @@ class TestService:
             self.test_questions.add(row)
             created.append(row)
 
+        self._refresh_test_scoring(test)
         db.session.commit()
         serialized = [self.serialize_test_question(row) for row in created]
         return {
@@ -804,6 +964,7 @@ class TestService:
                 row.status = AIGeneratedQuestionStatus.IMPORTED.value
                 created.append(created_row)
 
+            self._refresh_test_scoring(test)
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -825,6 +986,10 @@ class TestService:
     ) -> dict:
         test = self._resolve_draft_test(test_id, workspace_id, actor_membership)
         self._ensure_no_attempts_on_test(test.id)
+        if "points" in data and test.auto_distribute_scores:
+            raise ValidationError(
+                Messages.MANUAL_QUESTION_POINTS_NOT_ALLOWED_WHILE_AUTO_DISTRIBUTE_IS_ENABLED
+            )
         row = self._get_test_question_or_404(test.id, test_question_id)
         merged = self._merge_test_question_payload(row, data)
         validated = self._validate_and_normalize_payload(merged)
@@ -847,9 +1012,12 @@ class TestService:
         row.snapshot_difficulty = validated["difficulty"]
         row.snapshot_topic_id = topic_id
         row.snapshot_topic_name = topic_name
-        row.points = validated["points"]
-        row.snapshot_points = validated["points"]
+        if "points" in data:
+            row.points = validated["points"]
+            row.snapshot_points = validated["points"]
         row.snapshot_choices_json = json.dumps(validated["choices"])
+        if "points" in data and not test.auto_distribute_scores:
+            self._refresh_test_scoring(test, lock_attempts=False)
         db.session.commit()
         return self.serialize_test_question(row)
 
@@ -865,12 +1033,24 @@ class TestService:
         self._ensure_no_attempts_on_test(test.id)
         row = self._get_test_question_or_404(test.id, test_question_id)
         self.test_questions.delete(row)
+        self._refresh_test_scoring(test, lock_attempts=False)
         db.session.commit()
 
     def publish_now(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
             raise ValidationError(Messages.CLOSED_OR_ARCHIVED_TESTS_CANNOT_BE_PUBLISHED)
+        if test.auto_distribute_scores:
+            if test.target_total_score is None:
+                raise ValidationError(
+                    Messages.TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED
+                )
+            self.redistribute_test_points(
+                test, Decimal(str(test.target_total_score))
+            )
+        else:
+            self._sync_total_score_from_questions(test)
+        self._validate_passing_score(test)
         self.schedule_conflicts.ensure_no_schedule_conflicts(
             test=test,
             workspace_id=workspace_id,
@@ -1076,7 +1256,9 @@ class TestService:
 
     def _ensure_no_attempts_on_test(self, test_id: int) -> None:
         if self.attempts.list_for_test(test_id):
-            raise ValidationError(Messages.CANNOT_MODIFY_EXAM_QUESTIONS_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED)
+            raise ConflictError(
+                Messages.CANNOT_MODIFY_EXAM_QUESTIONS_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED
+            )
 
     def _merge_test_question_payload(self, row: TestQuestion, patch: dict) -> dict:
         current = {
@@ -1246,6 +1428,9 @@ class TestService:
             "subject_name": test.subject.name if test.subject else None,
             "duration_minutes": test.duration_minutes,
             "total_score": float(test.total_score) if test.total_score is not None else None,
+            "target_total_score": float(test.target_total_score)
+            if test.target_total_score is not None
+            else None,
             "passing_score": float(test.passing_score) if test.passing_score is not None else None,
             "auto_distribute_scores": bool(test.auto_distribute_scores),
             "status": test.status,
@@ -1271,6 +1456,9 @@ class TestService:
             "subject_name": test.subject.name if test.subject else None,
             "status": test.status,
             "total_score": float(test.total_score) if test.total_score is not None else None,
+            "target_total_score": float(test.target_total_score)
+            if test.target_total_score is not None
+            else None,
             "passing_score": float(test.passing_score) if test.passing_score is not None else None,
             "auto_distribute_scores": bool(test.auto_distribute_scores),
             "settings_config": self._load_json(test.settings_config),

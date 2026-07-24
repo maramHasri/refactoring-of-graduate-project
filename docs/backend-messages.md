@@ -273,6 +273,11 @@ Do not change these strings casually — they are part of the API contract.
 | ALL_QUESTIONS_MUST_BE_ANSWERED_BEFORE_SUBMISSION | All questions must be answered before submission. | Validation or authorization failure message. |
 | ALL_QUESTIONS_MUST_BE_ANSWERED_BEFORE_SUBMISSION_MISSING_ANSWERS_FOR_QUESTION_ID | All questions must be answered before submission. Missing answers for question IDs: {missing_question_ids} | Validation or authorization failure message. |
 | CANNOT_MODIFY_EXAM_QUESTIONS_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED | Cannot modify exam questions after student attempts have been recorded | API response message. |
+| CANNOT_CHANGE_TEST_SCORING_AFTER_STUDENT_ATTEMPTS_HAVE_BEEN_RECORDED | Cannot change test scoring after student attempts have been recorded | Conflict when changing score structure after attempts exist. |
+| MANUAL_QUESTION_POINTS_NOT_ALLOWED_WHILE_AUTO_DISTRIBUTE_IS_ENABLED | Manual question points are not allowed while auto_distribute_scores is enabled; disable auto distribution first | Validation failure. |
+| TARGET_TOTAL_SCORE_IS_REQUIRED_WHEN_AUTO_DISTRIBUTE_IS_ENABLED | target total_score is required when auto_distribute_scores is enabled | Validation failure. |
+| TARGET_TOTAL_SCORE_MUST_BE_GREATER_THAN_ZERO_WHEN_DISTRIBUTING | target total_score must be greater than zero when distributing points | Validation failure. |
+| TOTAL_SCORE_IS_CALCULATED_FROM_QUESTION_POINTS_WHEN_AUTO_DISTRIBUTE_IS_DISABLED | total_score is calculated from question points when auto_distribute_scores is disabled | Validation failure. |
 | CHOICE_AT_INDEX_IDX_MUST_HAVE_A_NON_EMPTY_BODY | Choice at index {idx} must have a non-empty body | Validation or authorization failure message. |
 | CHOICE_AT_INDEX_IDX_MUST_INCLUDE_IS_CORRECT | Choice at index {idx} must include is_correct | Validation or authorization failure message. |
 | CSV_FILE_MUST_CONTAIN_AT_LEAST_ONE_NON_EMPTY_QUESTION_ROW | CSV file must contain at least one non-empty question row | Validation or authorization failure message. |

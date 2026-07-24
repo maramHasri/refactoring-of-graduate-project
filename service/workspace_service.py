@@ -763,6 +763,9 @@ class WorkspaceService:
             "subject_name": test.subject.name if test.subject else None,
             "status": test.status,
             "total_score": float(test.total_score) if test.total_score is not None else None,
+            "target_total_score": float(test.target_total_score)
+            if test.target_total_score is not None
+            else None,
             "passing_score": float(test.passing_score)
             if test.passing_score is not None
             else None,

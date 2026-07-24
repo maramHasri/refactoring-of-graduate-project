@@ -1939,12 +1939,17 @@ paths:
                 type: number
                 default: 100
                 example: 100
-                description: Maximum score (default 100)
+                description: |
+                  When `auto_distribute_scores=true`, stored as `target_total_score` and
+                  distributed across questions when they are added.
+                  When `auto_distribute_scores=false`, the API still accepts this for
+                  create-time passing_score validation only; persisted `total_score`
+                  becomes `sum(question.points)` after questions exist.
               passing_score:
                 type: number
                 default: 50
                 example: 50
-                description: Passing score (default 50)
+                description: Passing score (must be ≤ calculated total / target)
               auto_distribute_scores: { type: boolean, example: false }
       responses:
         201:
@@ -1962,7 +1967,11 @@ paths:
                   subject_id: { type: integer }
                   subject_name: { type: string }
                   duration_minutes: { type: integer }
-                  total_score: { type: number }
+                  total_score: { type: number, description: "Calculated sum of question points" }
+                  target_total_score:
+                    type: number
+                    x-nullable: true
+                    description: Teacher target used when auto_distribute_scores is true
                   passing_score: { type: number }
                   auto_distribute_scores: { type: boolean }
                   status: { type: string, example: DRAFT }
@@ -2002,6 +2011,14 @@ paths:
         Editing is allowed for:
         - DRAFT tests
         - SCHEDULED tests only when scheduled_publish_at is at least 30 minutes away.
+
+        Scoring rules:
+        - With `auto_distribute_scores=true`, `total_score` updates `target_total_score`
+          and redistributes points across active questions.
+        - With `auto_distribute_scores=false`, `total_score` is read-only (sum of question points);
+          sending it returns 422.
+        - Manual `points` edits require `auto_distribute_scores=false`.
+        - Changing score structure after student attempts returns 409.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -2016,8 +2033,11 @@ paths:
               name: { type: string }
               slug: { type: string }
               description: { type: string }
-              total_score: { type: number }
+              total_score:
+                type: number
+                description: Target total when auto_distribute_scores is true
               passing_score: { type: number }
+              auto_distribute_scores: { type: boolean }
               settings_config:
                 type: object
                 description: |
@@ -4936,6 +4956,7 @@ definitions:
       status: { type: string, example: PUBLISHED }
       duration_minutes: { type: integer }
       total_score: { type: number }
+      target_total_score: { type: number, x-nullable: true }
       passing_score: { type: number }
   TestAttempt:
     type: object

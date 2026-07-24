@@ -232,6 +232,20 @@ class TestQuestionRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def list_active_for_test(self, test_id: int) -> list[TestQuestion]:
+        from utils.enums import QuestionStatus
+
+        return list(
+            db.session.execute(
+                db.select(TestQuestion)
+                .where(
+                    TestQuestion.test_id == test_id,
+                    TestQuestion.status == QuestionStatus.ACTIVE.value,
+                )
+                .order_by(TestQuestion.id)
+            ).scalars().all()
+        )
+
     def find_by_test_and_question(self, test_id: int, question_id: int) -> TestQuestion | None:
         return db.session.execute(
             db.select(TestQuestion).where(

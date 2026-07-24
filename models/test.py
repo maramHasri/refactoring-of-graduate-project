@@ -20,6 +20,7 @@ class Test(db.Model, TimestampMixin):
         index=True,
     )
     total_score = db.Column(Numeric(8, 2), nullable=True)
+    target_total_score = db.Column(Numeric(8, 2), nullable=True)
     passing_score = db.Column(Numeric(8, 2), nullable=True)
     auto_distribute_scores = db.Column(
         db.Boolean,
