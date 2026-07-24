@@ -543,26 +543,30 @@ paths:
   /workspaces/dashboard:
     get:
       tags: [Workspaces]
-      summary: Institution admin dashboard
+      summary: Workspace admin dashboard
       description: |
-        Returns an overview for the Educational Institution Admin Dashboard for the
-        workspace selected via X-Workspace-Id.
+        Returns an overview for the Workspace Admin Dashboard for the workspace
+        selected via X-Workspace-Id.
 
-        **Authorization:** INSTITUTION workspaces only. Caller must be the workspace
-        owner or a workspace ADMIN.
+        **Authorization:** INSTITUTION or SOLO workspaces. Caller must be the
+        workspace owner or a workspace ADMIN (same authority model as member
+        management). Students and ordinary teachers without admin authority
+        receive 403.
 
         **Overview metrics:**
         - Member counts include only `Membership.status=ACTIVE` users with
           `User.deleted_at IS NULL` (ADMIN + TEACHER + STUDENT).
+          In SOLO workspaces the owner is typically counted under `total_admins`.
+        - `total_subjects` counts non-deleted subjects in the workspace.
         - `average_student_score` is the mean of graded attempt `percentage` values
           for tests created in this workspace (same metric as student analytics).
         - `most_enrolled_subject` counts active student subject enrollments.
 
         **Recent question banks:** ordered by `updated_at` (create/modify activity;
-        there is no separate last-used timestamp).
+        there is no separate last-used timestamp), with ACTIVE `question_count`.
 
         **Upcoming tests:** SCHEDULED/PUBLISHED, not archived, not past `closed_at`,
-        and still relevant by start/availability rules (institution-wide, not
+        and still relevant by start/availability rules (workspace-wide, not
         student-personal upcoming).
 
         **Performance trend:** daily mean of graded attempt percentages over the
@@ -670,7 +674,7 @@ paths:
                         average_score: { type: number }
                         graded_attempts: { type: integer }
         403:
-          description: Forbidden (not institution owner/admin, or not an institution workspace)
+          description: Forbidden (not workspace owner/admin, or unsupported workspace kind)
         404:
           description: Workspace not found
   /workspaces/tests:

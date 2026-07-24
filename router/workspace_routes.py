@@ -128,8 +128,8 @@ def list_institution_workspace_tests():
 @handle_service_errors
 def get_institution_workspace_dashboard():
     """
-    GET /workspaces/dashboard — institution admin dashboard overview.
-    Requires X-Workspace-Id. Institution owner or workspace ADMIN only.
+    GET /workspaces/dashboard — workspace admin dashboard overview.
+    Requires X-Workspace-Id. INSTITUTION or SOLO; workspace owner or ADMIN only.
     """
     query = WorkspaceDashboardQuerySchema().load(request.args.to_dict())
     return WorkspaceDashboardService().get_dashboard(

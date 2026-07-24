@@ -11,7 +11,8 @@ from service.exceptions import ForbiddenError, NotFoundError
 from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.enums import WorkspaceKind
 from utils.messages import Messages
-from utils.rbac import can_manage_workspace_settings
+from utils.rbac import can_manage_workspace_members
+
 
 DEFAULT_RECENT_LIMIT = 5
 DEFAULT_UPCOMING_LIMIT = 10
@@ -31,7 +32,7 @@ class WorkspaceDashboardService:
         recent_limit: int = DEFAULT_RECENT_LIMIT,
         upcoming_limit: int = DEFAULT_UPCOMING_LIMIT,
     ) -> dict:
-        workspace = self._ensure_institution_admin_access(workspace_id, actor_membership)
+        workspace = self._ensure_dashboard_access(workspace_id, actor_membership)
         now = local_timezone_now()
         since = now - timedelta(days=PERFORMANCE_TREND_DAYS)
 
@@ -119,19 +120,27 @@ class WorkspaceDashboardService:
             },
         }
 
-    def _ensure_institution_admin_access(
+    def _ensure_dashboard_access(
         self, workspace_id: int, actor_membership: Membership
     ) -> Workspace:
+        """
+        Dashboard is available to workspace owner or ADMIN for INSTITUTION and SOLO.
+
+        Reuses the same authority model as member-management endpoints
+        (``can_manage_workspace_members``). Workspace kind alone does not grant
+        or deny access beyond supporting these two kinds.
+        """
         workspace = self.workspaces.get_by_id(workspace_id)
         if not workspace:
             raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
-        if workspace.kind != WorkspaceKind.INSTITUTION.value:
+        if workspace.kind not in (
+            WorkspaceKind.INSTITUTION.value,
+            WorkspaceKind.SOLO.value,
+        ):
+            raise ForbiddenError(Messages.UNSUPPORTED_WORKSPACE_TYPE_FOR_MEMBER_MANAGEMENT)
+        if not can_manage_workspace_members(workspace, actor_membership):
             raise ForbiddenError(
-                Messages.THIS_ENDPOINT_IS_ONLY_AVAILABLE_FOR_INSTITUTION_WORKSPACES
-            )
-        if not can_manage_workspace_settings(workspace, actor_membership):
-            raise ForbiddenError(
-                Messages.ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS
+                Messages.ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_MANAGE_WORKSPACE_MEMBERS
             )
         return workspace
 
