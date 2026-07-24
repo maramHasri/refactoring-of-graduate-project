@@ -8,7 +8,7 @@ from models import Membership, Workspace
 from repositories.workspace_dashboard_repository import WorkspaceDashboardRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.exceptions import ForbiddenError, NotFoundError
-from utils.app_timezone import format_local_datetime, local_timezone_now
+from utils.app_timezone import ensure_local_aware, format_local_datetime, local_timezone_now
 from utils.enums import WorkspaceKind
 from utils.messages import Messages
 from utils.rbac import can_manage_workspace_settings
@@ -65,17 +65,20 @@ class WorkspaceDashboardService:
                     "full_name": user.full_name,
                     "role": membership.role,
                     "joined_at": format_local_datetime(joined),
+                    "avatar_url": user.profile_image_url,
+                    "profile_image_url": user.profile_image_url,
                 }
             )
 
         recent_banks = [
             {
-                "bank_id": bank.id,
-                "title": bank.title,
-                "updated_at": format_local_datetime(bank.updated_at),
+                "bank_id": item["bank"].id,
+                "title": item["bank"].title,
+                "updated_at": format_local_datetime(item["bank"].updated_at),
                 "activity_source": "UPDATED",
+                "question_count": item["question_count"],
             }
-            for bank in self.dashboard.list_recent_question_banks(
+            for item in self.dashboard.list_recent_question_banks(
                 workspace.id, limit=recent_limit
             )
         ]
@@ -94,6 +97,7 @@ class WorkspaceDashboardService:
                 "total_teachers": total_teachers,
                 "total_students": total_students,
                 "total_admins": total_admins,
+                "total_subjects": self.dashboard.count_subjects(workspace.id),
                 "average_student_score": self.dashboard.average_graded_percentage(
                     workspace.id
                 ),
@@ -134,11 +138,21 @@ class WorkspaceDashboardService:
     @staticmethod
     def _serialize_upcoming_test(test) -> dict:
         subject = test.subject
+        exam_at = test.starts_at or test.scheduled_publish_at
+        exam_date = None
+        exam_time = None
+        if exam_at is not None:
+            local_at = ensure_local_aware(exam_at)
+            exam_date = local_at.date().isoformat()
+            exam_time = local_at.strftime("%H:%M")
+
         return {
             "test_id": test.id,
             "name": test.name,
             "subject_id": test.subject_id,
             "subject_name": subject.name if subject else None,
+            "exam_date": exam_date,
+            "exam_time": exam_time,
             "starts_at": format_local_datetime(test.starts_at),
             "closed_at": format_local_datetime(test.closed_at),
             "scheduled_publish_at": format_local_datetime(test.scheduled_publish_at),

@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 
 from models import (
     Membership,
+    Question,
     QuestionBank,
     Subject,
     SubjectMembership,
@@ -54,6 +55,18 @@ class WorkspaceDashboardRepository(BaseRepository):
             "teachers": counts.get(MembershipRole.TEACHER.value, 0),
             "students": counts.get(MembershipRole.STUDENT.value, 0),
         }
+
+    def count_subjects(self, workspace_id: int) -> int:
+        """Non-deleted subjects in the workspace (same scope as list_active_by_workspace)."""
+        return int(
+            db.session.execute(
+                select(func.count(Subject.id)).where(
+                    Subject.workspace_id == workspace_id,
+                    Subject.deleted_at.is_(None),
+                )
+            ).scalar_one()
+            or 0
+        )
 
     def average_graded_percentage(self, workspace_id: int) -> float:
         value = db.session.execute(
@@ -163,20 +176,40 @@ class WorkspaceDashboardRepository(BaseRepository):
 
     def list_recent_question_banks(
         self, workspace_id: int, *, limit: int = 5
-    ) -> list[QuestionBank]:
-        return list(
-            db.session.execute(
-                select(QuestionBank)
-                .where(
-                    QuestionBank.workspace_id == workspace_id,
-                    QuestionBank.deleted_at.is_(None),
-                )
-                .order_by(QuestionBank.updated_at.desc(), QuestionBank.id.desc())
-                .limit(limit)
+    ) -> list[dict]:
+        from utils.enums import QuestionStatus
+
+        question_counts = (
+            select(
+                Question.bank_id.label("bank_id"),
+                func.count(Question.id).label("question_count"),
             )
-            .scalars()
-            .all()
+            .where(Question.status == QuestionStatus.ACTIVE.value)
+            .group_by(Question.bank_id)
+            .subquery()
         )
+        rows = db.session.execute(
+            select(
+                QuestionBank,
+                func.coalesce(question_counts.c.question_count, 0).label(
+                    "question_count"
+                ),
+            )
+            .outerjoin(
+                question_counts,
+                question_counts.c.bank_id == QuestionBank.id,
+            )
+            .where(
+                QuestionBank.workspace_id == workspace_id,
+                QuestionBank.deleted_at.is_(None),
+            )
+            .order_by(QuestionBank.updated_at.desc(), QuestionBank.id.desc())
+            .limit(limit)
+        ).all()
+        return [
+            {"bank": bank, "question_count": int(count)}
+            for bank, count in rows
+        ]
 
     def list_upcoming_tests(
         self,

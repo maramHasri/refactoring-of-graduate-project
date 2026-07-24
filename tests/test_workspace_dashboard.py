@@ -33,25 +33,30 @@ def test_dashboard_query_schema_bounds():
 
 
 def test_dashboard_service_import_and_serialize():
+    from datetime import datetime
     from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
 
     from service.workspace_dashboard_service import WorkspaceDashboardService
 
+    starts = datetime(2026, 7, 30, 9, 30, tzinfo=ZoneInfo("Asia/Damascus"))
     test = SimpleNamespace(
         id=9,
         name="Midterm",
         subject_id=3,
         subject=SimpleNamespace(name="Math"),
-        starts_at=None,
+        starts_at=starts,
         closed_at=None,
         scheduled_publish_at=None,
         status="PUBLISHED",
-        availability_time_mode="FLEXIBLE",
+        availability_time_mode="SCHEDULED",
     )
     payload = WorkspaceDashboardService._serialize_upcoming_test(test)
     assert payload["test_id"] == 9
     assert payload["subject_name"] == "Math"
     assert payload["status"] == "PUBLISHED"
+    assert payload["exam_date"] == "2026-07-30"
+    assert payload["exam_time"] == "09:30"
 
 
 def test_member_count_shape():

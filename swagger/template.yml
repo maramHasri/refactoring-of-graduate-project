@@ -593,6 +593,7 @@ paths:
                   total_teachers: { type: integer }
                   total_students: { type: integer }
                   total_admins: { type: integer }
+                  total_subjects: { type: integer, description: "Non-deleted subjects in the institution" }
                   average_student_score: { type: number, example: 78.5 }
                   most_enrolled_subject:
                     type: object
@@ -620,6 +621,8 @@ paths:
                     full_name: { type: string }
                     role: { type: string, enum: [ADMIN, TEACHER, STUDENT] }
                     joined_at: { type: string }
+                    avatar_url: { type: string, x-nullable: true }
+                    profile_image_url: { type: string, x-nullable: true }
               recent_question_banks:
                 type: array
                 items:
@@ -629,6 +632,7 @@ paths:
                     title: { type: string }
                     updated_at: { type: string }
                     activity_source: { type: string, example: UPDATED }
+                    question_count: { type: integer, example: 42 }
               upcoming_tests:
                 type: array
                 items:
@@ -638,6 +642,14 @@ paths:
                     name: { type: string }
                     subject_id: { type: integer }
                     subject_name: { type: string }
+                    exam_date:
+                      type: string
+                      example: "2026-07-30"
+                      description: Local calendar date from starts_at (fallback scheduled_publish_at)
+                    exam_time:
+                      type: string
+                      example: "09:30"
+                      description: Local wall-clock time HH:MM
                     starts_at: { type: string }
                     closed_at: { type: string }
                     scheduled_publish_at: { type: string }
