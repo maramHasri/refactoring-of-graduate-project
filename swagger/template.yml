@@ -5228,7 +5228,18 @@ definitions:
       slug: { type: string }
       subject_id: { type: integer }
       status: { type: string, example: PUBLISHED }
-      duration_minutes: { type: integer }
+      duration_minutes:
+        type: integer
+        x-nullable: true
+        description: Exam duration in minutes (null for Survey mode)
+        example: 60
+      starts_at: { type: string, format: date-time, x-nullable: true }
+      closed_at:
+        type: string
+        format: date-time
+        x-nullable: true
+        description: Exam closing datetime (local Asia/Damascus)
+      published_at: { type: string, format: date-time, x-nullable: true }
       total_score: { type: number }
       target_total_score: { type: number, x-nullable: true }
       passing_score: { type: number }

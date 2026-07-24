@@ -1220,12 +1220,13 @@ class AttemptService:
             "subject_id": test.subject_id,
             "status": test.status,
             "duration_minutes": test.duration_minutes,
+            "starts_at": format_local_datetime(test.starts_at),
+            "closed_at": format_local_datetime(test.closed_at),
+            "published_at": format_local_datetime(test.published_at),
             "total_score": float(test.total_score) if test.total_score is not None else None,
             "passing_score": float(test.passing_score)
             if test.passing_score is not None
             else None,
-            "starts_at": format_local_datetime(test.starts_at),
-            "published_at": format_local_datetime(test.published_at),
             "teacher_name": teacher_name,
         }
 
