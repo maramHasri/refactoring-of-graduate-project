@@ -96,6 +96,40 @@ class StudentGroupService:
             for group in rows
         ]
 
+    def list_workspace_groups(
+        self, *, workspace_id: int, actor_membership
+    ) -> list[dict]:
+        """
+        Workspace-wide student groups overview.
+
+        Owner/ADMIN: all groups in the workspace.
+        TEACHER: only groups they own (across subjects).
+        """
+        workspace = self.workspaces.get_by_id(workspace_id)
+        if not workspace:
+            raise NotFoundError(Messages.WORKSPACE_NOT_FOUND)
+
+        if can_manage_subjects(workspace, actor_membership):
+            rows = self.groups.list_by_workspace(workspace_id)
+        elif actor_membership.role == MembershipRole.TEACHER.value:
+            rows = self.groups.list_by_workspace_for_owner(
+                workspace_id, actor_membership.id
+            )
+        else:
+            raise ForbiddenError(
+                Messages.ONLY_SUBJECT_TEACHERS_OR_WORKSPACE_ADMINS_CAN_MANAGE_STUDENT_GROUPS
+            )
+
+        members_map = self.groups.map_members_with_users_for_groups(
+            [group.id for group in rows]
+        )
+        return [
+            self._serialize_workspace_group_item(
+                group, members_map.get(group.id, [])
+            )
+            for group in rows
+        ]
+
     def list_available_students(
         self, *, workspace_id: int, subject_id: int, actor_membership
     ) -> list[dict]:
@@ -397,6 +431,42 @@ class StudentGroupService:
             "created_at": group.created_at.isoformat() if group.created_at else None,
         }
 
+    def _serialize_group_students(
+        self,
+        member_rows: list[tuple[StudentGroupMember, object, object]],
+    ) -> list[dict]:
+        return [
+            {
+                "id": membership.id,
+                "membership_id": membership.id,
+                "user_id": membership.user_id,
+                "full_name": user.full_name if user else None,
+                "email": user.email if user else None,
+            }
+            for _member, membership, user in member_rows
+        ]
+
+    def _serialize_workspace_group_item(
+        self,
+        group: StudentGroup,
+        member_rows: list[tuple[StudentGroupMember, object, object]],
+    ) -> dict:
+        subject = group.subject
+        owner = group.created_by
+        owner_user = owner.user if owner else None
+        students = self._serialize_group_students(member_rows)
+        return {
+            **self._serialize_group(group),
+            "owner_name": owner_user.full_name if owner_user else None,
+            "subject": {
+                "id": subject.id if subject else group.subject_id,
+                "name": subject.name if subject else None,
+            },
+            "member_count": len(students),
+            "student_count": len(students),
+            "students": students,
+        }
+
     def _serialize_group(self, group: StudentGroup) -> dict:
         return {
             "id": group.id,
@@ -412,16 +482,7 @@ class StudentGroupService:
     def _serialize_group_detail(self, group: StudentGroup) -> dict:
         subject = group.subject or self.subjects.get_by_id(group.subject_id)
         member_rows = self.groups.list_members_with_users(group.id)
-        students = [
-            {
-                "id": membership.id,
-                "membership_id": membership.id,
-                "user_id": membership.user_id,
-                "full_name": user.full_name if user else None,
-                "email": user.email if user else None,
-            }
-            for _member, membership, user in member_rows
-        ]
+        students = self._serialize_group_students(member_rows)
         owner = group.created_by
         owner_user = owner.user if owner else None
         return {

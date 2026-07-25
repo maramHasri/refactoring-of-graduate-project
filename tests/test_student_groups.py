@@ -259,6 +259,90 @@ def test_assign_schema_requires_students_or_groups():
     assert data["student_membership_ids"] == []
 
 
+def test_list_workspace_groups_admin_sees_all():
+    svc = _svc()
+    workspace = SimpleNamespace(id=1, owner_membership_id=99)
+    actor = SimpleNamespace(id=99, role="ADMIN")
+    group = SimpleNamespace(
+        id=3,
+        name="Section A",
+        description=None,
+        subject_id=5,
+        workspace_id=1,
+        created_by_membership_id=10,
+        created_at=None,
+        updated_at=None,
+        subject=SimpleNamespace(id=5, name="Programming"),
+        created_by=SimpleNamespace(user=SimpleNamespace(full_name="Teacher A")),
+    )
+    svc.workspaces.get_by_id.return_value = workspace
+    svc.groups.list_by_workspace.return_value = [group]
+    svc.groups.map_members_with_users_for_groups.return_value = {
+        3: [
+            (
+                SimpleNamespace(group_id=3),
+                SimpleNamespace(id=12, user_id=40),
+                SimpleNamespace(full_name="Student A", email="a@x.com"),
+            )
+        ]
+    }
+
+    with patch(
+        "service.student_group_service.can_manage_subjects",
+        return_value=True,
+    ):
+        items = svc.list_workspace_groups(workspace_id=1, actor_membership=actor)
+
+    assert len(items) == 1
+    assert items[0]["name"] == "Section A"
+    assert items[0]["owner_name"] == "Teacher A"
+    assert items[0]["subject"]["name"] == "Programming"
+    assert items[0]["member_count"] == 1
+    assert items[0]["students"][0]["membership_id"] == 12
+    svc.groups.list_by_workspace.assert_called_once_with(1)
+
+
+def test_list_workspace_groups_teacher_sees_own_only():
+    svc = _svc()
+    workspace = SimpleNamespace(id=1, owner_membership_id=99)
+    actor = SimpleNamespace(id=10, role="TEACHER")
+    svc.workspaces.get_by_id.return_value = workspace
+    svc.groups.list_by_workspace_for_owner.return_value = []
+    svc.groups.map_members_with_users_for_groups.return_value = {}
+
+    with patch(
+        "service.student_group_service.can_manage_subjects",
+        return_value=False,
+    ):
+        items = svc.list_workspace_groups(workspace_id=1, actor_membership=actor)
+
+    assert items == []
+    svc.groups.list_by_workspace_for_owner.assert_called_once_with(1, 10)
+
+
+def test_list_workspace_groups_student_forbidden():
+    from service.exceptions import ForbiddenError
+    from utils.messages import Messages
+
+    svc = _svc()
+    workspace = SimpleNamespace(id=1, owner_membership_id=99)
+    actor = SimpleNamespace(id=20, role="STUDENT")
+    svc.workspaces.get_by_id.return_value = workspace
+
+    with patch(
+        "service.student_group_service.can_manage_subjects",
+        return_value=False,
+    ):
+        try:
+            svc.list_workspace_groups(workspace_id=1, actor_membership=actor)
+            assert False, "expected ForbiddenError"
+        except ForbiddenError as exc:
+            assert (
+                Messages.ONLY_SUBJECT_TEACHERS_OR_WORKSPACE_ADMINS_CAN_MANAGE_STUDENT_GROUPS
+                in str(exc)
+            )
+
+
 if __name__ == "__main__":
     test_create_group_requires_assigned_teacher()
     test_create_group_success_for_assigned_teacher()
@@ -267,4 +351,7 @@ if __name__ == "__main__":
     test_non_owner_cannot_update_group()
     test_available_students_marks_assigned()
     test_assign_schema_requires_students_or_groups()
+    test_list_workspace_groups_admin_sees_all()
+    test_list_workspace_groups_teacher_sees_own_only()
+    test_list_workspace_groups_student_forbidden()
     print("all student group checks passed")

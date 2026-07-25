@@ -874,6 +874,37 @@ paths:
                     updated_at: { type: string }
         403:
           description: Forbidden (not workspace owner, or not an institution workspace)
+  /workspaces/groups:
+    get:
+      tags: [Workspaces, Student Groups]
+      summary: List all student groups in the workspace
+      description: |
+        Returns student groups for the workspace selected via X-Workspace-Id.
+
+        **Authorization:**
+        - Workspace owner/ADMIN: all groups across all subjects (monitor mode).
+        - TEACHER: only groups they own (`created_by_membership_id`).
+        - Students: 403.
+
+        Each item includes subject, creating teacher (`owner_name`),
+        `created_at`, member count, and the full `students` list
+        (`membership_id`, name, email).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      responses:
+        200:
+          description: Workspace student groups
+          schema:
+            type: object
+            properties:
+              count: { type: integer, example: 4 }
+              groups:
+                type: array
+                items:
+                  $ref: "#/definitions/StudentGroupWorkspaceItem"
+        403:
+          description: Caller is not owner/admin/teacher
+        404:
+          description: Workspace not found
   /workspaces/students:
     get:
       tags: [Workspaces]
@@ -4900,6 +4931,8 @@ definitions:
       name: { type: string, example: "Section A" }
       description: { type: string, example: "Morning students" }
       student_count: { type: integer, example: 18 }
+      created_by_membership_id: { type: integer, example: 4 }
+      owner_name: { type: string, example: "Teacher A" }
       created_at: { type: string, format: date-time }
   StudentGroup:
     type: object
@@ -4916,9 +4949,33 @@ definitions:
     type: object
     properties:
       id: { type: integer, description: "Workspace membership id", example: 12 }
+      membership_id: { type: integer, description: "Same as id", example: 12 }
       user_id: { type: integer, example: 42 }
       full_name: { type: string, example: "Jane Doe" }
       email: { type: string, example: "jane@school.edu" }
+  StudentGroupWorkspaceItem:
+    type: object
+    properties:
+      id: { type: integer, example: 5 }
+      name: { type: string, example: "Section A" }
+      description: { type: string, example: "Morning students" }
+      subject_id: { type: integer, example: 3 }
+      workspace_id: { type: integer, example: 1 }
+      created_by_membership_id: { type: integer, example: 4 }
+      owner_name: { type: string, example: "Teacher A" }
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
+      subject:
+        type: object
+        properties:
+          id: { type: integer, example: 3 }
+          name: { type: string, example: "Cybersecurity" }
+      member_count: { type: integer, example: 3 }
+      student_count: { type: integer, example: 3 }
+      students:
+        type: array
+        items:
+          $ref: "#/definitions/StudentGroupMember"
   UserProfile:
     type: object
     properties:

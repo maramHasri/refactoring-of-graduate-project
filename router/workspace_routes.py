@@ -12,6 +12,7 @@ from schemas.workspace_schema import (
     WorkspaceRecentlyActiveQuerySchema,
     WorkspaceTestsListQuerySchema,
 )
+from service.student_group_service import StudentGroupService
 from service.teacher_dashboard_service import TeacherDashboardService
 from service.workspace_dashboard_service import WorkspaceDashboardService
 from service.workspace_service import WorkspaceService
@@ -122,6 +123,24 @@ def list_institution_workspace_tests():
         per_page=query.get("per_page"),
         status=query.get("status"),
     ), 200
+
+
+@workspace_bp.route("/groups", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_workspace_student_groups():
+    """
+    GET /workspaces/groups — all student groups in the active workspace.
+
+    Owner/ADMIN: every group across subjects (monitor).
+    TEACHER: only groups they own.
+    Includes subject, creating teacher, created_at, and member students.
+    """
+    items = StudentGroupService().list_workspace_groups(
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    )
+    return {"groups": items, "count": len(items)}, 200
 
 
 @workspace_bp.route("/dashboard", methods=["GET"])

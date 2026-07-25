@@ -72,6 +72,69 @@ class StudentGroupRepository(BaseRepository):
             .all()
         )
 
+    def list_by_workspace(self, workspace_id: int) -> list[StudentGroup]:
+        return list(
+            db.session.execute(
+                db.select(StudentGroup)
+                .options(
+                    joinedload(StudentGroup.created_by).joinedload(Membership.user),
+                    joinedload(StudentGroup.subject),
+                )
+                .where(StudentGroup.workspace_id == workspace_id)
+                .order_by(StudentGroup.subject_id, StudentGroup.name)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+
+    def list_by_workspace_for_owner(
+        self, workspace_id: int, owner_membership_id: int
+    ) -> list[StudentGroup]:
+        return list(
+            db.session.execute(
+                db.select(StudentGroup)
+                .options(
+                    joinedload(StudentGroup.created_by).joinedload(Membership.user),
+                    joinedload(StudentGroup.subject),
+                )
+                .where(
+                    StudentGroup.workspace_id == workspace_id,
+                    StudentGroup.created_by_membership_id == owner_membership_id,
+                )
+                .order_by(StudentGroup.subject_id, StudentGroup.name)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+
+    def map_members_with_users_for_groups(
+        self, group_ids: list[int]
+    ) -> dict[int, list[tuple[StudentGroupMember, Membership, User | None]]]:
+        if not group_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(StudentGroupMember, Membership, User)
+            .join(
+                Membership,
+                Membership.id == StudentGroupMember.student_membership_id,
+            )
+            .join(User, User.id == Membership.user_id)
+            .where(StudentGroupMember.group_id.in_(group_ids))
+            .order_by(
+                StudentGroupMember.group_id,
+                User.full_name,
+                Membership.id,
+            )
+        ).all()
+        result: dict[int, list[tuple[StudentGroupMember, Membership, User | None]]] = {
+            group_id: [] for group_id in group_ids
+        }
+        for member, membership, user in rows:
+            result.setdefault(member.group_id, []).append((member, membership, user))
+        return result
+
     def count_members_for_groups(self, group_ids: list[int]) -> dict[int, int]:
         if not group_ids:
             return {}
