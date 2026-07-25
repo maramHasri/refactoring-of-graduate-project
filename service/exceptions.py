@@ -48,5 +48,17 @@ class TeacherScheduleConflictError(ConflictError):
         )
 
 
+class StudentGroupSubjectConflictError(ConflictError):
+    """Student already belongs to another group in the same subject."""
+
+    error_code = "STUDENT_GROUP_SUBJECT_CONFLICT"
+
+    def __init__(self, conflicts: list[dict]):
+        self.conflicts = conflicts
+        super().__init__(
+            Messages.SOME_STUDENTS_ARE_ALREADY_ASSIGNED_TO_ANOTHER_GROUP_IN_THIS_SUBJECT
+        )
+
+
 class ValidationError(ServiceError):
     status_code = 422

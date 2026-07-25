@@ -208,9 +208,21 @@ class ImportAIQuestionsSchema(Schema):
 class AssignStudentsToTestSchema(Schema):
     student_membership_ids = fields.List(
         fields.Int(validate=validate.Range(min=1)),
-        required=True,
-        validate=validate.Length(min=1),
+        load_default=list,
     )
+    group_ids = fields.List(
+        fields.Int(validate=validate.Range(min=1)),
+        load_default=list,
+    )
+
+    @validates_schema
+    def require_students_or_groups(self, data, **kwargs):
+        student_ids = data.get("student_membership_ids") or []
+        group_ids = data.get("group_ids") or []
+        if not student_ids and not group_ids:
+            raise ValidationError(
+                Messages.AT_LEAST_ONE_OF_STUDENT_MEMBERSHIP_IDS_OR_GROUP_IDS_IS_REQUIRED
+            )
 
 
 class UpdateTestQuestionSchema(Schema):

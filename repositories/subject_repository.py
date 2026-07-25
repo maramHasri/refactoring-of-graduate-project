@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import joinedload
 
-from models import Subject, SubjectMembership
+from models import Membership, Subject, SubjectMembership
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import MembershipStatus, SubjectMembershipStatus, SubjectRole
@@ -75,6 +75,9 @@ class SubjectMembershipRepository(BaseRepository):
         return list(
             db.session.execute(
                 db.select(SubjectMembership)
+                .options(
+                    joinedload(SubjectMembership.membership).joinedload(Membership.user),
+                )
                 .where(
                     SubjectMembership.subject_id == subject_id,
                     SubjectMembership.subject_role == SubjectRole.TEACHER.value,
@@ -82,13 +85,48 @@ class SubjectMembershipRepository(BaseRepository):
                     SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
                 )
                 .order_by(SubjectMembership.id)
-            ).scalars().all()
+            )
+            .scalars()
+            .unique()
+            .all()
         )
+
+    def map_teachers_by_subject_ids(
+        self, subject_ids: list[int]
+    ) -> dict[int, list[SubjectMembership]]:
+        """Active TEACHER subject memberships grouped by subject_id (batched)."""
+        if not subject_ids:
+            return {}
+        rows = list(
+            db.session.execute(
+                db.select(SubjectMembership)
+                .options(
+                    joinedload(SubjectMembership.membership).joinedload(Membership.user),
+                )
+                .where(
+                    SubjectMembership.subject_id.in_(subject_ids),
+                    SubjectMembership.subject_role == SubjectRole.TEACHER.value,
+                    SubjectMembership.deleted_at.is_(None),
+                    SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                )
+                .order_by(SubjectMembership.subject_id, SubjectMembership.id)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        result: dict[int, list[SubjectMembership]] = {sid: [] for sid in subject_ids}
+        for link in rows:
+            result.setdefault(link.subject_id, []).append(link)
+        return result
 
     def list_students_for_subject(self, subject_id: int) -> list[SubjectMembership]:
         return list(
             db.session.execute(
                 db.select(SubjectMembership)
+                .options(
+                    joinedload(SubjectMembership.membership).joinedload(Membership.user),
+                )
                 .where(
                     SubjectMembership.subject_id == subject_id,
                     SubjectMembership.subject_role == SubjectRole.STUDENT.value,
@@ -96,7 +134,10 @@ class SubjectMembershipRepository(BaseRepository):
                     SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
                 )
                 .order_by(SubjectMembership.id)
-            ).scalars().all()
+            )
+            .scalars()
+            .unique()
+            .all()
         )
 
     def find_by_membership_and_subject(

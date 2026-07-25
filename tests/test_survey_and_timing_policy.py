@@ -122,6 +122,70 @@ def test_availability_mode_includes_survey():
     }
 
 
+def test_scheduled_starts_at_in_past_is_rejected():
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from service.exceptions import ValidationError
+    from service.test_service import TestService
+    from utils.messages import Messages
+
+    tz = ZoneInfo("Asia/Damascus")
+    past = datetime.now(tz) - timedelta(hours=3)
+    test = SimpleNamespace(
+        availability_time_mode="SCHEDULED",
+        starts_at=past,
+        closed_at=None,
+        duration_minutes=60,
+    )
+    svc = object.__new__(TestService)
+    try:
+        svc._validate_test_timing_rules(test)
+        assert False, "expected ValidationError for past starts_at"
+    except ValidationError as exc:
+        assert Messages.STARTS_AT_MUST_BE_IN_THE_FUTURE in str(exc)
+
+
+def test_scheduled_starts_at_in_future_is_allowed():
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from service.test_service import TestService
+
+    tz = ZoneInfo("Asia/Damascus")
+    future = datetime.now(tz) + timedelta(hours=2)
+    test = SimpleNamespace(
+        availability_time_mode="SCHEDULED",
+        starts_at=future,
+        closed_at=None,
+        duration_minutes=60,
+    )
+    svc = object.__new__(TestService)
+    svc._validate_test_timing_rules(test)
+
+
+def test_flexible_past_starts_at_is_allowed():
+    """FLEXIBLE ignores starts_at for take-time; past value must not block PATCH."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from service.test_service import TestService
+
+    tz = ZoneInfo("Asia/Damascus")
+    past = datetime.now(tz) - timedelta(hours=3)
+    test = SimpleNamespace(
+        availability_time_mode="FLEXIBLE",
+        starts_at=past,
+        closed_at=None,
+        duration_minutes=60,
+    )
+    svc = object.__new__(TestService)
+    svc._validate_test_timing_rules(test)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

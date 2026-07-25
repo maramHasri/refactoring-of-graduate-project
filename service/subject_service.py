@@ -6,6 +6,7 @@ from utils.messages import Messages
 from datetime import datetime, timezone
 
 from models import Subject, SubjectMembership
+from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import (
     SubjectMembershipRepository,
     SubjectRepository,
@@ -30,6 +31,7 @@ class SubjectService:
         self.memberships = MembershipRepository()
         self.workspaces = WorkspaceRepository()
         self.topics = TopicRepository()
+        self.student_groups = StudentGroupRepository()
 
     def create_subject(
         self,
@@ -66,32 +68,22 @@ class SubjectService:
 
         if can_manage_subjects(workspace, actor_membership):
             rows = self.subjects.list_active_by_workspace(workspace_id)
-            topics_map = self.topics.map_by_subject_ids(
-                workspace_id, [s.id for s in rows]
-            )
-            return [
-                self._serialize_subject(s, topics_map=topics_map) for s in rows
-            ]
+        elif actor_membership.role == MembershipRole.TEACHER.value:
+            rows = self._subjects_for_membership(actor_membership.id, workspace_id)
+        elif actor_membership.role == MembershipRole.STUDENT.value:
+            rows = self._subjects_for_membership(actor_membership.id, workspace_id)
+        else:
+            raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_LIST_SUBJECTS)
 
-        if actor_membership.role == MembershipRole.TEACHER.value:
-            links = self._subjects_for_membership(actor_membership.id, workspace_id)
-            topics_map = self.topics.map_by_subject_ids(
-                workspace_id, [s.id for s in links]
+        subject_ids = [s.id for s in rows]
+        topics_map = self.topics.map_by_subject_ids(workspace_id, subject_ids)
+        teachers_map = self.subject_memberships.map_teachers_by_subject_ids(subject_ids)
+        return [
+            self._serialize_subject(
+                s, topics_map=topics_map, teachers_map=teachers_map
             )
-            return [
-                self._serialize_subject(s, topics_map=topics_map) for s in links
-            ]
-
-        if actor_membership.role == MembershipRole.STUDENT.value:
-            links = self._subjects_for_membership(actor_membership.id, workspace_id)
-            topics_map = self.topics.map_by_subject_ids(
-                workspace_id, [s.id for s in links]
-            )
-            return [
-                self._serialize_subject(s, topics_map=topics_map) for s in links
-            ]
-
-        raise ForbiddenError(Messages.INSUFFICIENT_PERMISSIONS_TO_LIST_SUBJECTS)
+            for s in rows
+        ]
 
     def get_subject(
         self, subject_id: int, workspace_id: int, actor_membership
@@ -99,7 +91,10 @@ class SubjectService:
         subject = self._get_subject_or_404(subject_id, workspace_id)
         self._ensure_can_view_subject(subject, actor_membership)
         topics_map = self.topics.map_by_subject_ids(workspace_id, [subject.id])
-        return self._serialize_subject(subject, topics_map=topics_map)
+        teachers_map = self.subject_memberships.map_teachers_by_subject_ids([subject.id])
+        return self._serialize_subject(
+            subject, topics_map=topics_map, teachers_map=teachers_map
+        )
 
     def update_subject(
         self,
@@ -345,6 +340,9 @@ class SubjectService:
         if not link:
             raise NotFoundError(Messages.STUDENT_ENROLLMENT_NOT_FOUND)
         self.subject_memberships.soft_remove(link)
+        self.student_groups.delete_members_for_student_in_subject(
+            student_membership_id, subject_id
+        )
         db.session.commit()
 
     def list_subject_students(
@@ -467,6 +465,9 @@ class SubjectService:
             raise NotFoundError(Messages.STUDENT_SUBJECT_ASSIGNMENT_NOT_FOUND)
 
         self.subject_memberships.soft_remove(link)
+        self.student_groups.delete_members_for_student_in_subject(
+            student_membership_id, subject_id
+        )
         db.session.commit()
         return self._serialize_student_subjects_response(
             workspace_id, student_membership_id
@@ -525,6 +526,7 @@ class SubjectService:
         *,
         workspace_id: int | None = None,
         topics_map: dict | None = None,
+        teachers_map: dict | None = None,
     ) -> dict:
         if topics_map is not None:
             topic_rows = topics_map.get(subject.id, [])
@@ -532,6 +534,11 @@ class SubjectService:
             topic_rows = self.topics.list_by_subject(subject.id, workspace_id)
         else:
             topic_rows = []
+
+        if teachers_map is not None:
+            teacher_links = teachers_map.get(subject.id, [])
+        else:
+            teacher_links = self.subject_memberships.list_teachers_for_subject(subject.id)
 
         return {
             "id": subject.id,
@@ -544,10 +551,14 @@ class SubjectService:
             "created_at": subject.created_at.isoformat() if subject.created_at else None,
             "updated_at": subject.updated_at.isoformat() if subject.updated_at else None,
             "topics": [self._serialize_topic_summary(t) for t in topic_rows],
+            "teachers": [self._serialize_assignment(link) for link in teacher_links],
+            "teachers_count": len(teacher_links),
         }
 
     def _serialize_assignment(self, link: SubjectMembership) -> dict:
-        membership = self.memberships.get_by_id(link.membership_id)
+        membership = getattr(link, "membership", None) or self.memberships.get_by_id(
+            link.membership_id
+        )
         user = membership.user if membership else None
         return {
             "assignment_id": link.id,
@@ -642,12 +653,15 @@ class SubjectService:
         )
         subject_ids = [link.subject_id for link in links]
         topics_map = self.topics.map_by_subject_ids(workspace_id, subject_ids)
+        teachers_map = self.subject_memberships.map_teachers_by_subject_ids(subject_ids)
         subjects = []
         for link in links:
             subject = self.subjects.get_by_id(link.subject_id)
             if subject:
                 subjects.append(
-                    self._serialize_subject(subject, topics_map=topics_map)
+                    self._serialize_subject(
+                        subject, topics_map=topics_map, teachers_map=teachers_map
+                    )
                 )
         return {
             "membership_id": student_membership_id,

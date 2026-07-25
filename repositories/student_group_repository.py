@@ -1,4 +1,5 @@
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from models import Membership, StudentGroup, StudentGroupMember, User
 from repositories.base_repository import BaseRepository
@@ -11,7 +12,12 @@ class StudentGroupRepository(BaseRepository):
 
     def get_in_workspace(self, group_id: int, workspace_id: int) -> StudentGroup | None:
         return db.session.execute(
-            db.select(StudentGroup).where(
+            db.select(StudentGroup)
+            .options(
+                joinedload(StudentGroup.created_by).joinedload(Membership.user),
+                joinedload(StudentGroup.subject),
+            )
+            .where(
                 StudentGroup.id == group_id,
                 StudentGroup.workspace_id == workspace_id,
             )
@@ -31,12 +37,39 @@ class StudentGroupRepository(BaseRepository):
         return list(
             db.session.execute(
                 db.select(StudentGroup)
+                .options(
+                    joinedload(StudentGroup.created_by).joinedload(Membership.user),
+                )
                 .where(
                     StudentGroup.subject_id == subject_id,
                     StudentGroup.workspace_id == workspace_id,
                 )
                 .order_by(StudentGroup.name)
-            ).scalars().all()
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+
+    def list_by_subject_for_owner(
+        self, subject_id: int, workspace_id: int, owner_membership_id: int
+    ) -> list[StudentGroup]:
+        return list(
+            db.session.execute(
+                db.select(StudentGroup)
+                .options(
+                    joinedload(StudentGroup.created_by).joinedload(Membership.user),
+                )
+                .where(
+                    StudentGroup.subject_id == subject_id,
+                    StudentGroup.workspace_id == workspace_id,
+                    StudentGroup.created_by_membership_id == owner_membership_id,
+                )
+                .order_by(StudentGroup.name)
+            )
+            .scalars()
+            .unique()
+            .all()
         )
 
     def count_members_for_groups(self, group_ids: list[int]) -> dict[int, int]:
@@ -80,7 +113,19 @@ class StudentGroupRepository(BaseRepository):
         ).scalars().all()
         return set(rows)
 
-    def list_members_with_users(self, group_id: int) -> list[tuple[StudentGroupMember, Membership, User | None]]:
+    def list_member_ids_for_groups(self, group_ids: list[int]) -> set[int]:
+        if not group_ids:
+            return set()
+        rows = db.session.execute(
+            db.select(StudentGroupMember.student_membership_id).where(
+                StudentGroupMember.group_id.in_(group_ids)
+            )
+        ).scalars().all()
+        return set(int(value) for value in rows)
+
+    def list_members_with_users(
+        self, group_id: int
+    ) -> list[tuple[StudentGroupMember, Membership, User | None]]:
         rows = db.session.execute(
             db.select(StudentGroupMember, Membership, User)
             .join(
@@ -92,6 +137,35 @@ class StudentGroupRepository(BaseRepository):
             .order_by(User.full_name, Membership.id)
         ).all()
         return list(rows)
+
+    def map_current_groups_for_students_in_subject(
+        self,
+        *,
+        subject_id: int,
+        student_membership_ids: list[int],
+        exclude_group_id: int | None = None,
+    ) -> dict[int, StudentGroup]:
+        """
+        Map student_membership_id -> StudentGroup for students already in a
+        group of this subject (optionally excluding one group).
+        """
+        if not student_membership_ids:
+            return {}
+        stmt = (
+            db.select(StudentGroupMember.student_membership_id, StudentGroup)
+            .join(StudentGroup, StudentGroup.id == StudentGroupMember.group_id)
+            .options(
+                joinedload(StudentGroup.created_by).joinedload(Membership.user),
+            )
+            .where(
+                StudentGroup.subject_id == subject_id,
+                StudentGroupMember.student_membership_id.in_(student_membership_ids),
+            )
+        )
+        if exclude_group_id is not None:
+            stmt = stmt.where(StudentGroup.id != exclude_group_id)
+        rows = db.session.execute(stmt).unique().all()
+        return {int(membership_id): group for membership_id, group in rows}
 
     def delete_group(self, group: StudentGroup) -> None:
         db.session.delete(group)
@@ -109,3 +183,18 @@ class StudentGroupRepository(BaseRepository):
         ).scalars().all()
         for row in rows:
             db.session.delete(row)
+
+    def delete_members_for_student_in_subject(
+        self, student_membership_id: int, subject_id: int
+    ) -> int:
+        rows = db.session.execute(
+            db.select(StudentGroupMember)
+            .join(StudentGroup, StudentGroup.id == StudentGroupMember.group_id)
+            .where(
+                StudentGroupMember.student_membership_id == student_membership_id,
+                StudentGroup.subject_id == subject_id,
+            )
+        ).scalars().all()
+        for row in rows:
+            db.session.delete(row)
+        return len(rows)

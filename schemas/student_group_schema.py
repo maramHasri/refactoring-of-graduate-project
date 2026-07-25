@@ -19,7 +19,7 @@ class AddStudentGroupMembersSchema(Schema):
     """POST /groups/{groupId}/members"""
 
     student_ids = fields.List(
-        fields.Int(),
+        fields.Int(validate=validate.Range(min=1)),
         required=True,
         validate=validate.Length(min=1),
     )

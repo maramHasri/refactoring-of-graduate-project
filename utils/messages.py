@@ -112,6 +112,21 @@ class Messages:
     NOT_A_MEMBER_OF_THIS_WORKSPACE = "Not a member of this workspace"
     ONLY_ADMIN_OWNER_OR_ASSIGNED_SUBJECT_TEACHERS_CAN_ENROLL_STUDENTS = "Only admin, owner, or assigned subject teachers can enroll students"
     ONLY_SUBJECT_TEACHERS_OR_WORKSPACE_ADMINS_CAN_MANAGE_STUDENT_GROUPS = "Only subject teachers or workspace admins can manage student groups"
+    ONLY_ASSIGNED_SUBJECT_TEACHERS_CAN_CREATE_STUDENT_GROUPS = (
+        "Only assigned subject teachers can create student groups"
+    )
+    ONLY_THE_GROUP_OWNER_CAN_MANAGE_THIS_STUDENT_GROUP = (
+        "Only the group owner can manage this student group"
+    )
+    SOME_STUDENTS_ARE_ALREADY_ASSIGNED_TO_ANOTHER_GROUP_IN_THIS_SUBJECT = (
+        "Some students are already assigned to another group in this subject"
+    )
+    AT_LEAST_ONE_OF_STUDENT_MEMBERSHIP_IDS_OR_GROUP_IDS_IS_REQUIRED = (
+        "At least one of student_membership_ids or group_ids is required"
+    )
+    GROUP_GROUP_ID_IS_NOT_OWNED_BY_YOU_OR_NOT_IN_THIS_TEST_SUBJECT = (
+        "Group {group_id} is not owned by you or not in this test subject"
+    )
     ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_DELETE_THIS_BANK = "Only the creator or workspace admin can delete this bank"
     ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_UPDATE_THIS_BANK = "Only the creator or workspace admin can update this bank"
     ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS = "Only the institution owner or workspace admin can list workspace members"
@@ -298,6 +313,7 @@ class Messages:
     ONLY_THE_TEST_CREATOR_CAN_DELETE_THIS_TEST = "Only the test creator can delete this test"
     PUBLISH_AT_IS_REQUIRED = "publish_at is required"
     PUBLISH_AT_MUST_BE_IN_THE_FUTURE = "publish_at must be in the future"
+    STARTS_AT_MUST_BE_IN_THE_FUTURE = "starts_at must be in the future"
     SCHEDULED_TESTS_CAN_ONLY_BE_EDITED_AT_LEAST_30_MINUTES_BEFORE_PUBLISH_TIME = "Scheduled tests can only be edited at least 30 minutes before publish time"
     SCHEDULED_TEST_IS_MISSING_SCHEDULED_PUBLISH_AT = "Scheduled test is missing scheduled_publish_at"
     SLUG_ALREADY_IN_USE = "Slug already in use"

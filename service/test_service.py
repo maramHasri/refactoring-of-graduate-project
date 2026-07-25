@@ -13,6 +13,7 @@ from repositories.ai_generation_repository import (
     AIGeneratedQuestionRepository,
     AIGenerationRequestRepository,
 )
+from repositories.student_group_repository import StudentGroupRepository
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
 from repositories.question_repository import QuestionRepository, QuestionTypeRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
@@ -57,6 +58,7 @@ class TestService:
         self.attempts = TestAttemptRepository()
         self.questions = QuestionRepository()
         self.test_assignments = TestStudentAssignmentRepository()
+        self.student_groups = StudentGroupRepository()
         self.question_types = QuestionTypeRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
@@ -77,17 +79,48 @@ class TestService:
         test_id: int,
         workspace_id: int,
         actor_membership,
-        student_membership_ids: list[int],
+        student_membership_ids: list[int] | None = None,
+        group_ids: list[int] | None = None,
     ) -> int:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         unique_ids: list[int] = []
         seen: set[int] = set()
-        for membership_id in student_membership_ids:
+
+        for membership_id in student_membership_ids or []:
             student_id = int(membership_id)
             if student_id in seen:
                 continue
             seen.add(student_id)
             unique_ids.append(student_id)
+
+        if group_ids:
+            owned_group_ids: list[int] = []
+            for raw_group_id in group_ids:
+                group_id = int(raw_group_id)
+                group = self.student_groups.get_in_workspace(group_id, workspace_id)
+                if (
+                    not group
+                    or group.subject_id != test.subject_id
+                    or group.created_by_membership_id != actor_membership.id
+                ):
+                    raise ValidationError(
+                        Messages.GROUP_GROUP_ID_IS_NOT_OWNED_BY_YOU_OR_NOT_IN_THIS_TEST_SUBJECT.format(
+                            group_id=group_id
+                        )
+                    )
+                owned_group_ids.append(group.id)
+            for membership_id in self.student_groups.list_member_ids_for_groups(
+                owned_group_ids
+            ):
+                if membership_id in seen:
+                    continue
+                seen.add(membership_id)
+                unique_ids.append(membership_id)
+
+        if not unique_ids:
+            raise ValidationError(
+                Messages.AT_LEAST_ONE_OF_STUDENT_MEMBERSHIP_IDS_OR_GROUP_IDS_IS_REQUIRED
+            )
 
         self._validate_students_belong_to_test_subject(
             workspace_id=workspace_id,
@@ -1051,6 +1084,7 @@ class TestService:
         else:
             self._sync_total_score_from_questions(test)
         self._validate_passing_score(test)
+        self._validate_test_timing_rules(test)
         self.schedule_conflicts.ensure_no_schedule_conflicts(
             test=test,
             workspace_id=workspace_id,
@@ -1096,6 +1130,7 @@ class TestService:
         now = local_timezone_now()
         if publish_at <= now:
             raise ValidationError(Messages.PUBLISH_AT_MUST_BE_IN_THE_FUTURE)
+        self._validate_test_timing_rules(test)
         test.status = TestStatus.SCHEDULED.value
         test.scheduled_publish_at = publish_at
         self.schedule_conflicts.ensure_no_schedule_conflicts(
@@ -1684,6 +1719,11 @@ class TestService:
             return
         if mode == AvailabilityTimeMode.SCHEDULED.value:
             # Duration required when publishing/taking; allow null while drafting.
+            # starts_at, when set, must be strictly in the future.
+            if test.starts_at is not None:
+                starts_at = ensure_local_aware(test.starts_at)
+                if starts_at <= local_timezone_now():
+                    raise ValidationError(Messages.STARTS_AT_MUST_BE_IN_THE_FUTURE)
             return
 
     def _normalize_settings_config(self, value, *, test: Test | None = None) -> str | None:

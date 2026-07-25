@@ -100,9 +100,34 @@ def can_manage_student_groups(
     actor: Membership | None,
     actor_subject_link: SubjectMembership | None,
 ) -> bool:
-    """Subject teachers and workspace admins may manage student groups."""
+    """
+    Legacy helper: subject teachers and workspace admins may access student groups.
+
+    Prefer finer-grained checks in StudentGroupService:
+    - create/mutate: assigned subject teacher (owner for mutations)
+    - view: assigned teacher (own groups) or workspace admin (all groups)
+    """
     if can_manage_subjects(workspace, actor):
         return True
+    return verify_subject_teacher_access(actor_subject_link)
+
+
+def can_view_subject_student_groups(
+    workspace: Workspace,
+    actor: Membership | None,
+    actor_subject_link: SubjectMembership | None,
+) -> bool:
+    """List/view groups: assigned subject teacher or workspace owner/admin."""
+    if can_manage_subjects(workspace, actor):
+        return True
+    return verify_subject_teacher_access(actor_subject_link)
+
+
+def can_create_subject_student_group(
+    workspace: Workspace,
+    actor_subject_link: SubjectMembership | None,
+) -> bool:
+    """Create groups: assigned subject teacher only (not institution admin override)."""
     return verify_subject_teacher_access(actor_subject_link)
 
 

@@ -122,6 +122,11 @@ Do not change these strings casually — they are part of the API contract.
 | ONLY_ADMIN_OWNER_OR_ASSIGNED_SUBJECT_TEACHERS_CAN_ENROLL_STUDENTS | Only admin, owner, or assigned subject teachers can enroll students | Authorization / permission failure message. |
 | ONLY_STUDENT_MEMBERSHIPS_ARE_ALLOWED_NOT_STUDENT_ROLE | Only STUDENT memberships are allowed: {not_student_role} | Authorization / permission failure message. |
 | ONLY_SUBJECT_TEACHERS_OR_WORKSPACE_ADMINS_CAN_MANAGE_STUDENT_GROUPS | Only subject teachers or workspace admins can manage student groups | Authorization / permission failure message. |
+| ONLY_ASSIGNED_SUBJECT_TEACHERS_CAN_CREATE_STUDENT_GROUPS | Only assigned subject teachers can create student groups | Teachers must be assigned to the subject to create groups. |
+| ONLY_THE_GROUP_OWNER_CAN_MANAGE_THIS_STUDENT_GROUP | Only the group owner can manage this student group | Owner-only mutate/view for non-admin teachers. |
+| SOME_STUDENTS_ARE_ALREADY_ASSIGNED_TO_ANOTHER_GROUP_IN_THIS_SUBJECT | Some students are already assigned to another group in this subject | Atomic add conflict across subject groups. |
+| AT_LEAST_ONE_OF_STUDENT_MEMBERSHIP_IDS_OR_GROUP_IDS_IS_REQUIRED | At least one of student_membership_ids or group_ids is required | Test assign validation. |
+| GROUP_GROUP_ID_IS_NOT_OWNED_BY_YOU_OR_NOT_IN_THIS_TEST_SUBJECT | Group {group_id} is not owned by you or not in this test subject | Invalid group_ids on test assign. |
 | ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_DELETE_THIS_BANK | Only the creator or workspace admin can delete this bank | Authorization / permission failure message. |
 | ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_UPDATE_THIS_BANK | Only the creator or workspace admin can update this bank | Authorization / permission failure message. |
 | ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS | Only the institution owner or workspace admin can list workspace members | Authorization / permission failure message. |
@@ -357,6 +362,7 @@ Do not change these strings casually — they are part of the API contract.
 | PROCTORING_IS_NOT_ENABLED_FOR_THIS_TEST | Proctoring is not enabled for this test | API response message. |
 | PUBLISH_AT_IS_REQUIRED | publish_at is required | Validation or authorization failure message. |
 | PUBLISH_AT_MUST_BE_IN_THE_FUTURE | publish_at must be in the future | Validation or authorization failure message. |
+| STARTS_AT_MUST_BE_IN_THE_FUTURE | starts_at must be in the future | Validation when SCHEDULED exam start time is in the past. |
 | REQUEST_ID_DOES_NOT_BELONG_TO_THIS_TEST | request_id does not belong to this test | API response message. |
 | SCHEDULED_TESTS_CAN_ONLY_BE_EDITED_AT_LEAST_30_MINUTES_BEFORE_PUBLISH_TIME | Scheduled tests can only be edited at least 30 minutes before publish time | API response message. |
 | SCHEDULED_TEST_IS_MISSING_SCHEDULED_PUBLISH_AT | Scheduled test is missing scheduled_publish_at | API response message. |

@@ -226,7 +226,8 @@ def assign_students_to_test(test_id):
         test_id=test_id,
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
-        student_membership_ids=data["student_membership_ids"],
+        student_membership_ids=data.get("student_membership_ids") or [],
+        group_ids=data.get("group_ids") or [],
     )
     return {"message": Messages.STUDENTS_ASSIGNED_SUCCESSFULLY, "count": count}, 201
 

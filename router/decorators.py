@@ -154,6 +154,8 @@ def handle_service_errors(f):
                     payload["conflicting_test_ids"] = exc.conflicting_test_ids
                 if hasattr(exc, "conflicting_test_id"):
                     payload["conflicting_test_id"] = exc.conflicting_test_id
+                if hasattr(exc, "conflicts"):
+                    payload["conflicts"] = exc.conflicts
             else:
                 payload = {"error": exc.message}
             return jsonify(payload), exc.status_code

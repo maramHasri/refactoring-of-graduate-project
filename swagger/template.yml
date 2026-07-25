@@ -1307,7 +1307,10 @@ paths:
     get:
       tags: [Subjects]
       summary: List workspace subjects
-      description: Admin/owner see all. Teachers/students see assigned subjects only. Requires X-Workspace-Id.
+      description: |
+        Admin/owner see all. Teachers/students see assigned subjects only.
+        Requires X-Workspace-Id. Each subject includes `teachers` (assigned
+        subject teachers with `full_name` / `membership_id`) and `teachers_count`.
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
         200:
@@ -1537,8 +1540,9 @@ paths:
       tags: [Student Groups]
       summary: List student groups for a subject
       description: |
-        Subject teachers and workspace admins only.
-        Returns group summaries with `student_count`.
+        Assigned subject teachers see **their own** groups only.
+        Workspace owner/admin see **all** groups in the subject (read/monitor).
+        Returns group summaries with `student_count` and owner info.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -1560,9 +1564,10 @@ paths:
       tags: [Student Groups]
       summary: Create student group
       description: |
-        Subject teachers and workspace admins only.
-        Group names must be unique within the subject (duplicate names across different subjects are allowed).
+        **Assigned subject teachers only** (institution admin cannot create in this flow).
+        Group names must be unique within the subject.
         Students are added separately via POST /groups/{group_id}/members.
+        A teacher may own multiple groups in the same subject.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: subject_id
@@ -1587,6 +1592,47 @@ paths:
               message: { type: string, example: "Group created successfully" }
               group:
                 $ref: "#/definitions/StudentGroup"
+        403:
+          description: Caller is not an assigned subject teacher
+  /subjects/{subject_id}/groups/available-students:
+    get:
+      tags: [Student Groups]
+      summary: List subject students with group availability
+      description: |
+        Returns all active students enrolled in the subject.
+        Each item includes `is_available` and `current_group` when the student
+        already belongs to another group in this subject (Student+Subject = one group max).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: subject_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Enrolled students with availability
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              students:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    membership_id: { type: integer }
+                    name: { type: string }
+                    full_name: { type: string }
+                    email: { type: string }
+                    is_available: { type: boolean }
+                    current_group:
+                      type: object
+                      x-nullable: true
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        owner_membership_id: { type: integer }
+                        owner_name: { type: string }
   /groups/{group_id}:
     get:
       tags: [Student Groups]
@@ -1651,9 +1697,12 @@ paths:
       tags: [Student Groups]
       summary: Add students to group
       description: |
-        Each `student_id` is the workspace **membership id** of an active student
-        already enrolled in the group's subject. Duplicate IDs in the request and
-        students already in the group are skipped (`skipped_count`).
+        Group **owner** only. Each `student_id` is the workspace membership id of an
+        active student enrolled in the group's subject.
+
+        **Atomic:** if any student already belongs to another group in the same subject,
+        the whole request is rejected with `error=STUDENT_GROUP_SUBJECT_CONFLICT` and
+        `conflicts[]`. Students already in *this* group are skipped (`skipped_count`).
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: group_id
@@ -1673,13 +1722,32 @@ paths:
                 example: [12, 15, 19]
       responses:
         200:
-          description: Members added (partial skip possible)
+          description: Members added
           schema:
             type: object
             properties:
               message: { type: string, example: "Group members updated" }
               added_count: { type: integer, example: 2 }
               skipped_count: { type: integer, example: 1 }
+        409:
+          description: One or more students already in another group for this subject
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: STUDENT_GROUP_SUBJECT_CONFLICT }
+              message: { type: string }
+              conflicts:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    membership_id: { type: integer }
+                    student_name: { type: string }
+                    existing_group_id: { type: integer }
+                    existing_group_name: { type: string }
+                    existing_group_owner: { type: string }
+        403:
+          description: Not the group owner
   /groups/{group_id}/members/{student_id}:
     delete:
       tags: [Student Groups]
@@ -2814,8 +2882,13 @@ paths:
       tags: [Tests]
       summary: Assign students to exam whitelist
       description: |
-        Creates or updates explicit allowed students for the exam.
-        Each membership must be an active STUDENT enrolled in the exam subject.
+        Creates or updates explicit allowed students for the exam
+        (`TestStudentAssignment` is the source of truth after assign).
+
+        Provide `student_membership_ids` and/or `group_ids` (at least one required).
+        `group_ids` expands to current members of groups **owned by the caller**
+        in the same subject as the test. Later group membership changes do not
+        alter existing assignments automatically.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -2827,12 +2900,16 @@ paths:
           required: true
           schema:
             type: object
-            required: [student_membership_ids]
             properties:
               student_membership_ids:
                 type: array
                 items: { type: integer }
-                example: [15, 22, 35, 40]
+                example: [15, 22]
+              group_ids:
+                type: array
+                items: { type: integer }
+                example: [3, 4]
+                description: Optional owned student groups to expand into members
       responses:
         201:
           description: Students assigned successfully
@@ -4941,6 +5018,20 @@ definitions:
       created_by_membership_id: { type: integer }
       created_at: { type: string, format: date-time }
       updated_at: { type: string, format: date-time }
+      teachers_count: { type: integer, example: 2 }
+      teachers:
+        type: array
+        description: Active teachers assigned to this subject
+        items:
+          type: object
+          properties:
+            assignment_id: { type: integer }
+            membership_id: { type: integer, example: 6 }
+            subject_id: { type: integer }
+            subject_role: { type: string, example: TEACHER }
+            membership_role: { type: string, example: TEACHER }
+            full_name: { type: string, example: "Sara Ahmad" }
+            assigned_at: { type: string, format: date-time }
       topics:
         type: array
         items:
