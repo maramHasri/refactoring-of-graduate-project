@@ -38,6 +38,24 @@ class TestRepository(BaseRepository):
             or 0
         )
 
+    def count_by_subject_ids(self, subject_ids: list[int]) -> dict[int, int]:
+        """Non-archived tests per subject."""
+        if not subject_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(Test.subject_id, db.func.count(Test.id))
+            .where(
+                Test.subject_id.in_(subject_ids),
+                Test.archived_at.is_(None),
+            )
+            .group_by(Test.subject_id)
+        ).all()
+        result = {int(sid): 0 for sid in subject_ids}
+        for subject_id, count in rows:
+            if subject_id is not None:
+                result[int(subject_id)] = int(count)
+        return result
+
     def list_for_creator(self, creator_membership_id: int) -> list[Test]:
         return list(
             db.session.execute(

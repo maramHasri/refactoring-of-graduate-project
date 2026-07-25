@@ -40,6 +40,27 @@ class QuestionBankRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def count_by_subject_ids(
+        self, subject_ids: list[int], workspace_id: int
+    ) -> dict[int, int]:
+        """Non-deleted question banks per subject in the workspace."""
+        if not subject_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(QuestionBank.subject_id, db.func.count(QuestionBank.id))
+            .where(
+                QuestionBank.subject_id.in_(subject_ids),
+                QuestionBank.workspace_id == workspace_id,
+                QuestionBank.deleted_at.is_(None),
+            )
+            .group_by(QuestionBank.subject_id)
+        ).all()
+        result = {int(sid): 0 for sid in subject_ids}
+        for subject_id, count in rows:
+            if subject_id is not None:
+                result[int(subject_id)] = int(count)
+        return result
+
     def count_by_creator(self, membership_id: int, workspace_id: int) -> int:
         return (
             db.session.execute(

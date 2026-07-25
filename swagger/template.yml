@@ -1310,7 +1310,9 @@ paths:
       description: |
         Admin/owner see all. Teachers/students see assigned subjects only.
         Requires X-Workspace-Id. Each subject includes `teachers` (assigned
-        subject teachers with `full_name` / `membership_id`) and `teachers_count`.
+        subject teachers with `full_name` / `membership_id`), `teachers_count`,
+        `question_banks_count` (non-deleted banks), and `tests_count`
+        (non-archived exams for the subject).
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
         200:
@@ -5019,6 +5021,14 @@ definitions:
       created_at: { type: string, format: date-time }
       updated_at: { type: string, format: date-time }
       teachers_count: { type: integer, example: 2 }
+      question_banks_count:
+        type: integer
+        example: 4
+        description: Non-deleted question banks for this subject
+      tests_count:
+        type: integer
+        example: 7
+        description: Non-archived exams/tests for this subject
       teachers:
         type: array
         description: Active teachers assigned to this subject

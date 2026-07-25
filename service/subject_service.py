@@ -6,11 +6,13 @@ from utils.messages import Messages
 from datetime import datetime, timezone
 
 from models import Subject, SubjectMembership
+from repositories.question_bank_repository import QuestionBankRepository
 from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import (
     SubjectMembershipRepository,
     SubjectRepository,
 )
+from repositories.test_repository import TestRepository
 from repositories.topic_repository import TopicRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
@@ -32,6 +34,8 @@ class SubjectService:
         self.workspaces = WorkspaceRepository()
         self.topics = TopicRepository()
         self.student_groups = StudentGroupRepository()
+        self.question_banks = QuestionBankRepository()
+        self.tests = TestRepository()
 
     def create_subject(
         self,
@@ -78,9 +82,17 @@ class SubjectService:
         subject_ids = [s.id for s in rows]
         topics_map = self.topics.map_by_subject_ids(workspace_id, subject_ids)
         teachers_map = self.subject_memberships.map_teachers_by_subject_ids(subject_ids)
+        banks_count_map = self.question_banks.count_by_subject_ids(
+            subject_ids, workspace_id
+        )
+        tests_count_map = self.tests.count_by_subject_ids(subject_ids)
         return [
             self._serialize_subject(
-                s, topics_map=topics_map, teachers_map=teachers_map
+                s,
+                topics_map=topics_map,
+                teachers_map=teachers_map,
+                banks_count_map=banks_count_map,
+                tests_count_map=tests_count_map,
             )
             for s in rows
         ]
@@ -92,8 +104,16 @@ class SubjectService:
         self._ensure_can_view_subject(subject, actor_membership)
         topics_map = self.topics.map_by_subject_ids(workspace_id, [subject.id])
         teachers_map = self.subject_memberships.map_teachers_by_subject_ids([subject.id])
+        banks_count_map = self.question_banks.count_by_subject_ids(
+            [subject.id], workspace_id
+        )
+        tests_count_map = self.tests.count_by_subject_ids([subject.id])
         return self._serialize_subject(
-            subject, topics_map=topics_map, teachers_map=teachers_map
+            subject,
+            topics_map=topics_map,
+            teachers_map=teachers_map,
+            banks_count_map=banks_count_map,
+            tests_count_map=tests_count_map,
         )
 
     def update_subject(
@@ -527,6 +547,8 @@ class SubjectService:
         workspace_id: int | None = None,
         topics_map: dict | None = None,
         teachers_map: dict | None = None,
+        banks_count_map: dict | None = None,
+        tests_count_map: dict | None = None,
     ) -> dict:
         if topics_map is not None:
             topic_rows = topics_map.get(subject.id, [])
@@ -539,6 +561,24 @@ class SubjectService:
             teacher_links = teachers_map.get(subject.id, [])
         else:
             teacher_links = self.subject_memberships.list_teachers_for_subject(subject.id)
+
+        if banks_count_map is not None:
+            question_banks_count = banks_count_map.get(subject.id, 0)
+        elif workspace_id is not None:
+            question_banks_count = self.question_banks.count_by_subject_ids(
+                [subject.id], workspace_id
+            ).get(subject.id, 0)
+        else:
+            question_banks_count = self.question_banks.count_by_subject_ids(
+                [subject.id], subject.workspace_id
+            ).get(subject.id, 0)
+
+        if tests_count_map is not None:
+            tests_count = tests_count_map.get(subject.id, 0)
+        else:
+            tests_count = self.tests.count_by_subject_ids([subject.id]).get(
+                subject.id, 0
+            )
 
         return {
             "id": subject.id,
@@ -553,6 +593,8 @@ class SubjectService:
             "topics": [self._serialize_topic_summary(t) for t in topic_rows],
             "teachers": [self._serialize_assignment(link) for link in teacher_links],
             "teachers_count": len(teacher_links),
+            "question_banks_count": question_banks_count,
+            "tests_count": tests_count,
         }
 
     def _serialize_assignment(self, link: SubjectMembership) -> dict:
@@ -654,13 +696,21 @@ class SubjectService:
         subject_ids = [link.subject_id for link in links]
         topics_map = self.topics.map_by_subject_ids(workspace_id, subject_ids)
         teachers_map = self.subject_memberships.map_teachers_by_subject_ids(subject_ids)
+        banks_count_map = self.question_banks.count_by_subject_ids(
+            subject_ids, workspace_id
+        )
+        tests_count_map = self.tests.count_by_subject_ids(subject_ids)
         subjects = []
         for link in links:
             subject = self.subjects.get_by_id(link.subject_id)
             if subject:
                 subjects.append(
                     self._serialize_subject(
-                        subject, topics_map=topics_map, teachers_map=teachers_map
+                        subject,
+                        topics_map=topics_map,
+                        teachers_map=teachers_map,
+                        banks_count_map=banks_count_map,
+                        tests_count_map=tests_count_map,
                     )
                 )
         return {
