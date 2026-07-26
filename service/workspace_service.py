@@ -357,7 +357,15 @@ class WorkspaceService:
             offset=offset,
             limit=per_page,
         )
-        items = [self._serialize_institution_workspace_test(test) for test in rows]
+        stats_by_test = self.test_attempts.exam_card_stats_by_test_ids(
+            [test.id for test in rows]
+        )
+        items = [
+            self._serialize_institution_workspace_test(
+                test, exam_stats=stats_by_test.get(test.id)
+            )
+            for test in rows
+        ]
         return {
             "success": True,
             "tests": items,
@@ -751,9 +759,20 @@ class WorkspaceService:
             subject_count_field="assigned_subjects_count",
         )
 
-    def _serialize_institution_workspace_test(self, test: Test) -> dict:
+    def _serialize_institution_workspace_test(
+        self,
+        test: Test,
+        *,
+        exam_stats: dict | None = None,
+    ) -> dict:
         creator = test.created_by
         creator_user = creator.user if creator else None
+        stats = exam_stats or {
+            "participants_count": 0,
+            "average_score": None,
+            "graded_attempts_count": 0,
+            "submitted_attempts_count": 0,
+        }
         return {
             "test_id": test.id,
             "name": test.name,
@@ -769,6 +788,10 @@ class WorkspaceService:
             "passing_score": float(test.passing_score)
             if test.passing_score is not None
             else None,
+            "average_score": stats.get("average_score"),
+            "participants_count": int(stats.get("participants_count") or 0),
+            "graded_attempts_count": int(stats.get("graded_attempts_count") or 0),
+            "submitted_attempts_count": int(stats.get("submitted_attempts_count") or 0),
             "availability_time_mode": test.availability_time_mode,
             "starts_at": format_local_datetime(test.starts_at),
             "duration_minutes": test.duration_minutes,

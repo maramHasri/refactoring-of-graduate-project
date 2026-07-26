@@ -811,6 +811,10 @@ paths:
 
         Institution workspaces only. Caller must be the **workspace owner**
         (ADMIN alone is not enough). Supports optional `status`, `page`, and `per_page`.
+
+        Each test includes exam-card stats: `participants_count`, `average_score`
+        (GRADED final_score with raw_score fallback), `graded_attempts_count`,
+        and `submitted_attempts_count`.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: status
@@ -2349,10 +2353,25 @@ paths:
     get:
       tags: [Tests]
       summary: My tests (current membership)
+      description: |
+        Lists tests created by the current membership.
+        Each item includes exam-card stats:
+        - `participants_count`: distinct students with an IN_PROGRESS, SUBMITTED, or GRADED attempt
+        - `average_score`: mean of GRADED attempt `final_score` (fallback `raw_score`); null when none
+        - `graded_attempts_count`: count of GRADED attempts
+        - `submitted_attempts_count`: count of SUBMITTED attempts awaiting grading/approval
       security: [{ Bearer: [], WorkspaceId: [] }]
       responses:
         200:
           description: List created tests
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              tests:
+                type: array
+                items:
+                  $ref: "#/definitions/TestSummary"
   /tests/{test_id}:
     get:
       tags: [Tests]
@@ -5546,6 +5565,26 @@ definitions:
       slug: { type: string }
       subject_id: { type: integer }
       status: { type: string, example: PUBLISHED }
+      average_score:
+        type: number
+        x-nullable: true
+        example: 76.5
+        description: >
+          Mean of GRADED attempt scores using final_score when set, otherwise raw_score.
+          Null when there are no graded attempts with a score.
+      participants_count:
+        type: integer
+        example: 42
+        description: >
+          Distinct students with an IN_PROGRESS, SUBMITTED, or GRADED attempt.
+      graded_attempts_count:
+        type: integer
+        example: 40
+        description: Number of GRADED attempts for this test.
+      submitted_attempts_count:
+        type: integer
+        example: 2
+        description: Number of SUBMITTED attempts awaiting grading/approval.
       availability_time_mode:
         type: string
         x-nullable: true

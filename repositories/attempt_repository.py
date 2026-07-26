@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import case, func
+from sqlalchemy import case, distinct, func
 from sqlalchemy.orm import joinedload
 
 from models import (
@@ -86,6 +86,136 @@ class TestAttemptRepository(BaseRepository):
                 .order_by(TestAttempt.started_at.desc())
             ).scalars().all()
         )
+
+    def exam_card_stats_by_test_ids(self, test_ids: list[int]) -> dict[int, dict]:
+        """
+        Batch exam-card stats per test_id.
+
+        - participants_count: distinct students with IN_PROGRESS|SUBMITTED|GRADED
+        - graded_attempts_count: attempts with status GRADED
+        - submitted_attempts_count: attempts with status SUBMITTED
+        - average_score: mean of (final_score if set else raw_score) for GRADED only
+        """
+        empty = {
+            "participants_count": 0,
+            "average_score": None,
+            "graded_attempts_count": 0,
+            "submitted_attempts_count": 0,
+        }
+        if not test_ids:
+            return {}
+
+        participant_statuses = (
+            TestAttemptStatus.IN_PROGRESS.value,
+            TestAttemptStatus.SUBMITTED.value,
+            TestAttemptStatus.GRADED.value,
+        )
+        score_expr = case(
+            (TestAttempt.final_score.is_not(None), TestAttempt.final_score),
+            else_=TestAttempt.raw_score,
+        )
+        rows = db.session.execute(
+            db.select(
+                TestAttempt.test_id,
+                func.count(
+                    distinct(
+                        case(
+                            (
+                                TestAttempt.status.in_(participant_statuses),
+                                TestAttempt.student_membership_id,
+                            ),
+                            else_=None,
+                        )
+                    )
+                ).label("participants_count"),
+                func.sum(
+                    case(
+                        (TestAttempt.status == TestAttemptStatus.GRADED.value, 1),
+                        else_=0,
+                    )
+                ).label("graded_attempts_count"),
+                func.sum(
+                    case(
+                        (TestAttempt.status == TestAttemptStatus.SUBMITTED.value, 1),
+                        else_=0,
+                    )
+                ).label("submitted_attempts_count"),
+                func.avg(
+                    case(
+                        (
+                            TestAttempt.status == TestAttemptStatus.GRADED.value,
+                            score_expr,
+                        ),
+                        else_=None,
+                    )
+                ).label("average_score"),
+            )
+            .where(TestAttempt.test_id.in_(test_ids))
+            .group_by(TestAttempt.test_id)
+        ).all()
+
+        result: dict[int, dict] = {int(tid): dict(empty) for tid in test_ids}
+        for (
+            test_id,
+            participants_count,
+            graded_attempts_count,
+            submitted_attempts_count,
+            average_score,
+        ) in rows:
+            avg_value = None
+            if average_score is not None:
+                avg_value = round(float(average_score), 2)
+            result[int(test_id)] = {
+                "participants_count": int(participants_count or 0),
+                "average_score": avg_value,
+                "graded_attempts_count": int(graded_attempts_count or 0),
+                "submitted_attempts_count": int(submitted_attempts_count or 0),
+            }
+        return result
+
+    def exam_card_stats_for_test(self, test_id: int) -> dict:
+        return self.exam_card_stats_by_test_ids([test_id]).get(
+            int(test_id),
+            {
+                "participants_count": 0,
+                "average_score": None,
+                "graded_attempts_count": 0,
+                "submitted_attempts_count": 0,
+            },
+        )
+
+    def average_percentage_by_test_ids(
+        self, test_ids: list[int]
+    ) -> dict[int, float | None]:
+        """
+        Mean of GRADED attempt ``percentage`` values per test.
+
+        Kept for dashboard-style percentage averages; exam cards use
+        ``exam_card_stats_by_test_ids`` (final_score / raw_score) instead.
+        """
+        if not test_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(
+                TestAttempt.test_id,
+                func.avg(TestAttempt.percentage),
+            )
+            .where(
+                TestAttempt.test_id.in_(test_ids),
+                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                TestAttempt.percentage.is_not(None),
+            )
+            .group_by(TestAttempt.test_id)
+        ).all()
+        result: dict[int, float | None] = {int(tid): None for tid in test_ids}
+        for test_id, avg_value in rows:
+            if avg_value is None:
+                continue
+            result[int(test_id)] = round(float(avg_value), 2)
+        return result
+
+    def average_percentage_for_test(self, test_id: int) -> float | None:
+        return self.average_percentage_by_test_ids([test_id]).get(int(test_id))
 
     def map_relevant_attempts_for_monitoring(
         self, test_id: int

@@ -296,12 +296,21 @@ class TestService:
 
     def list_my_tests(self, actor_membership) -> list[dict]:
         rows = self.tests.list_for_creator(actor_membership.id)
-        return [self.serialize_test(row) for row in rows]
+        stats_by_test = self.attempts.exam_card_stats_by_test_ids(
+            [row.id for row in rows]
+        )
+        return [
+            self.serialize_test(row, exam_stats=stats_by_test.get(row.id))
+            for row in rows
+        ]
 
     def get_test(self, *, test_id: int, workspace_id: int, actor_membership) -> dict:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
         questions = self.test_questions.list_for_test(test.id)
-        payload = self.serialize_test(test)
+        payload = self.serialize_test(
+            test,
+            exam_stats=self.attempts.exam_card_stats_for_test(test.id),
+        )
         payload["questions"] = [self.serialize_test_question(row) for row in questions]
         return payload
 
@@ -1476,12 +1485,25 @@ class TestService:
 
     def serialize_test_updated(self, test: Test) -> dict:
         """PATCH /tests/{id} — full settings without lifecycle close/archive timestamps."""
-        payload = self.serialize_test(test)
+        payload = self.serialize_test(
+            test,
+            exam_stats=self.attempts.exam_card_stats_for_test(test.id),
+        )
         for key in ("published_at", "closed_at", "archived_at"):
             payload.pop(key, None)
         return payload
 
-    def serialize_test(self, test: Test) -> dict:
+    def serialize_test(
+        self,
+        test: Test,
+        *,
+        exam_stats: dict | None = None,
+    ) -> dict:
+        stats = (
+            exam_stats
+            if exam_stats is not None
+            else self.attempts.exam_card_stats_for_test(test.id)
+        )
         return {
             "test_id": test.id,
             "name": test.name,
@@ -1496,6 +1518,10 @@ class TestService:
             else None,
             "passing_score": float(test.passing_score) if test.passing_score is not None else None,
             "auto_distribute_scores": bool(test.auto_distribute_scores),
+            "average_score": stats.get("average_score"),
+            "participants_count": int(stats.get("participants_count") or 0),
+            "graded_attempts_count": int(stats.get("graded_attempts_count") or 0),
+            "submitted_attempts_count": int(stats.get("submitted_attempts_count") or 0),
             "settings_config": self._load_json(test.settings_config),
             "availability_time_mode": test.availability_time_mode,
             "starts_at": format_local_datetime(test.starts_at),
