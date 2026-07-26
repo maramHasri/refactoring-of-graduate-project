@@ -92,6 +92,13 @@ class AttemptSubmissionSource(str, enum.Enum):
     STUDENT = "STUDENT"
     TIMEOUT = "TIMEOUT"
     FORCE = "FORCE"
+    PROCTORING_AUTO = "PROCTORING_AUTO"
+
+
+class AttemptTerminationReason(str, enum.Enum):
+    """Machine-readable reason when an attempt ends for a special cause."""
+
+    PROCTORING_THRESHOLD_EXCEEDED = "PROCTORING_THRESHOLD_EXCEEDED"
 
 
 class AnswerGradingStatus(str, enum.Enum):

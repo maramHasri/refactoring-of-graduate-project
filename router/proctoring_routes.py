@@ -6,6 +6,7 @@ from flask import Blueprint, g, request
 from router.decorators import handle_service_errors, require_workspace_membership
 from schemas.proctoring_schema import (
     IngestProctoringEventSchema,
+    ListProctoringEventsQuerySchema,
     ReviewViolationSchema,
     StartProctoringSessionSchema,
 )
@@ -13,6 +14,18 @@ from service.proctoring_service import ProctoringService
 
 proctoring_bp = Blueprint("proctoring", __name__)
 _svc = lambda: ProctoringService()
+
+
+@proctoring_bp.route("/<int:test_id>/monitoring", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_test_monitoring(test_id):
+    """GET /tests/{test_id}/monitoring — assigned-student monitoring snapshot."""
+    return _svc().get_test_monitoring(
+        test_id=test_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    ), 200
 
 
 @proctoring_bp.route("/<int:test_id>/proctoring/sessions", methods=["GET"])
@@ -81,6 +94,25 @@ def ingest_proctoring_event(test_id, attempt_id):
         source="REST",
     )
     return {"message": Messages.EVENT_RECORDED, **result}, 201
+
+
+@proctoring_bp.route(
+    "/<int:test_id>/attempts/<int:attempt_id>/proctoring/events", methods=["GET"]
+)
+@require_workspace_membership
+@handle_service_errors
+def list_proctoring_events(test_id, attempt_id):
+    """GET /tests/{test_id}/attempts/{attempt_id}/proctoring/events — proctor timeline."""
+    query = ListProctoringEventsQuerySchema().load(request.args.to_dict())
+    items = _svc().list_events_for_attempt(
+        test_id=test_id,
+        attempt_id=attempt_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+        since=query.get("since"),
+        limit=query.get("limit", 500),
+    )
+    return {"events": items, "count": len(items)}, 200
 
 
 @proctoring_bp.route(

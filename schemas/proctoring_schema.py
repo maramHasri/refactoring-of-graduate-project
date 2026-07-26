@@ -15,6 +15,11 @@ class IngestProctoringEventSchema(Schema):
     occurred_at = fields.DateTime(allow_none=True)
 
 
+class ListProctoringEventsQuerySchema(Schema):
+    since = fields.DateTime(allow_none=True)
+    limit = fields.Int(load_default=500, validate=validate.Range(min=1, max=1000))
+
+
 class ReviewViolationSchema(Schema):
     status = fields.Str(
         required=True,

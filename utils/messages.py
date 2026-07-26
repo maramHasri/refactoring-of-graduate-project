@@ -379,6 +379,9 @@ class Messages:
     INSUFFICIENT_PERMISSIONS_FOR_PROCTORING_ACCESS = "Insufficient permissions for proctoring access"
     INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_VIOLATION = "Insufficient permissions to view this violation"
     PROCTORING_IS_NOT_ENABLED_FOR_THIS_TEST = "Proctoring is not enabled for this test"
+    PROCTORING_WARNING_SUSPICIOUS_ACTIVITY = (
+        "Suspicious activity has been detected. Continued violations may terminate this attempt."
+    )
     PROCTORING_FINAL_SCORE_ALREADY_APPROVED = "Proctoring final score already approved"
     PROCTORING_FINAL_SCORE_APPROVAL_NOT_REQUIRED = "Proctoring final score approval is not required for this attempt"
     PROCTORING_GRADING_REVIEW_NOT_AVAILABLE = "Proctoring grading review is not available for this attempt"

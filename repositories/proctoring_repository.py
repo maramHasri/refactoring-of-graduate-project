@@ -39,6 +39,18 @@ class ProctoringSessionRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def map_by_attempt_ids(
+        self, attempt_ids: list[int]
+    ) -> dict[int, ProctoringSession]:
+        if not attempt_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(ProctoringSession).where(
+                ProctoringSession.test_attempt_id.in_(attempt_ids)
+            )
+        ).scalars().all()
+        return {int(row.test_attempt_id): row for row in rows}
+
 
 class ProctoringEventRepository(BaseRepository):
     def list_for_session(
@@ -48,14 +60,33 @@ class ProctoringEventRepository(BaseRepository):
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 500,
+        ascending: bool = False,
     ) -> list[ProctoringEvent]:
         query = db.select(ProctoringEvent).where(ProctoringEvent.session_id == session_id)
         if since:
             query = query.where(ProctoringEvent.occurred_at >= since)
         if until:
             query = query.where(ProctoringEvent.occurred_at <= until)
-        query = query.order_by(ProctoringEvent.occurred_at.desc()).limit(limit)
+        order = (
+            ProctoringEvent.occurred_at.asc()
+            if ascending
+            else ProctoringEvent.occurred_at.desc()
+        )
+        query = query.order_by(order).limit(limit)
         return list(db.session.execute(query).scalars().all())
+
+    def count_for_sessions(self, session_ids: list[int]) -> dict[int, int]:
+        if not session_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(
+                ProctoringEvent.session_id,
+                db.func.count(ProctoringEvent.id),
+            )
+            .where(ProctoringEvent.session_id.in_(session_ids))
+            .group_by(ProctoringEvent.session_id)
+        ).all()
+        return {int(session_id): int(count) for session_id, count in rows}
 
     def count_by_type_since(
         self, session_id: int, event_type: str, since: datetime
@@ -112,6 +143,36 @@ class ProctoringViolationRepository(BaseRepository):
                 .order_by(ProctoringViolation.created_at.desc())
             ).scalars().all()
         )
+
+    def map_for_sessions(
+        self, session_ids: list[int]
+    ) -> dict[int, list[ProctoringViolation]]:
+        if not session_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(ProctoringViolation)
+            .where(ProctoringViolation.session_id.in_(session_ids))
+            .order_by(ProctoringViolation.created_at.desc())
+        ).scalars().all()
+        result: dict[int, list[ProctoringViolation]] = {
+            session_id: [] for session_id in session_ids
+        }
+        for row in rows:
+            result.setdefault(int(row.session_id), []).append(row)
+        return result
+
+    def count_for_sessions(self, session_ids: list[int]) -> dict[int, int]:
+        if not session_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(
+                ProctoringViolation.session_id,
+                db.func.count(ProctoringViolation.id),
+            )
+            .where(ProctoringViolation.session_id.in_(session_ids))
+            .group_by(ProctoringViolation.session_id)
+        ).all()
+        return {int(session_id): int(count) for session_id, count in rows}
 
 
 class ProctoringEvidenceRepository(BaseRepository):

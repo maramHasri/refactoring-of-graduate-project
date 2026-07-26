@@ -1,13 +1,21 @@
 """
-Proctoring WebSocket channel — real-time event streaming.
+Proctoring WebSocket channels.
 
-Connect: ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&workspace_id=<id>
+Student ingest (unchanged):
+  ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&workspace_id=<id>
 
-Client message format:
+Teacher live monitor (delta only; REST snapshot remains source of truth):
+  ws://host/ws/proctoring/tests/{test_id}/monitor?token=<JWT>&workspace_id=<id>
+
+Client message format (student):
   { "type": "tab_switch", "payload": { ... } }
 
-Server message types:
-  session_started | event_recorded | violation_triggered | error
+Server message types (student):
+  session_started | event_recorded | violation_triggered | warning_generated |
+  attempt_terminated | error
+
+Server message types (teacher monitor):
+  subscribed | student_row_updated | violation_created | error
 """
 
 from __future__ import annotations
@@ -16,6 +24,8 @@ from utils.messages import Messages
 
 import json
 import logging
+import threading
+from collections import defaultdict
 
 from flask import request
 from flask_sock import Sock
@@ -30,6 +40,43 @@ from utils.jwt_tokens import decode_token
 
 logger = logging.getLogger(__name__)
 sock = Sock()
+
+# In-memory teacher monitor subscribers: test_id -> set[ws]
+_teacher_monitor_lock = threading.Lock()
+_teacher_monitor_subscribers: dict[int, set] = defaultdict(set)
+
+
+def subscribe_teacher_monitor(test_id: int, ws) -> None:
+    with _teacher_monitor_lock:
+        _teacher_monitor_subscribers[int(test_id)].add(ws)
+
+
+def unsubscribe_teacher_monitor(test_id: int, ws) -> None:
+    with _teacher_monitor_lock:
+        bucket = _teacher_monitor_subscribers.get(int(test_id))
+        if not bucket:
+            return
+        bucket.discard(ws)
+        if not bucket:
+            _teacher_monitor_subscribers.pop(int(test_id), None)
+
+
+def broadcast_teacher_monitor(test_id: int, message: dict) -> None:
+    """Fan-out compact deltas to teachers watching this test (same process only)."""
+    payload = json.dumps(message)
+    with _teacher_monitor_lock:
+        subscribers = list(_teacher_monitor_subscribers.get(int(test_id), set()))
+    dead = []
+    for ws in subscribers:
+        try:
+            ws.send(payload)
+        except Exception:
+            dead.append(ws)
+            logger.exception(
+                "Teacher monitor broadcast failed test_id=%s", test_id
+            )
+    for ws in dead:
+        unsubscribe_teacher_monitor(test_id, ws)
 
 
 def _authenticate_ws() -> tuple:
@@ -128,3 +175,88 @@ def register_proctoring_websocket(app) -> None:
         logger.info(
             "WebSocket disconnected user_id=%s attempt_id=%s", user.id, attempt_id
         )
+
+    @sock.route("/ws/proctoring/tests/<int:test_id>/monitor")
+    def teacher_monitor_ws(ws, test_id: int):
+        """
+        Teacher/admin live monitoring room for one test.
+
+        Authz uses the same proctor access helper as REST monitoring.
+        On reconnect, clients must re-fetch GET /tests/{test_id}/monitoring.
+        """
+        try:
+            user, membership, workspace_id = _authenticate_ws()
+        except ServiceError as exc:
+            ws.send(json.dumps({"type": "error", "payload": {"error": exc.message}}))
+            return
+
+        if membership is None:
+            ws.send(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "payload": {
+                            "error": Messages.INSUFFICIENT_PERMISSIONS_FOR_PROCTORING_ACCESS
+                        },
+                    }
+                )
+            )
+            return
+
+        svc = ProctoringService()
+        try:
+            test = svc._get_test_in_workspace(test_id, workspace_id)
+            svc._ensure_proctor_access(test, workspace_id, membership)
+        except ServiceError as exc:
+            ws.send(json.dumps({"type": "error", "payload": {"error": exc.message}}))
+            return
+        except Exception:
+            logger.exception("Teacher monitor authz failed test_id=%s", test_id)
+            ws.send(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "payload": {"error": Messages.INTERNAL_SERVER_ERROR},
+                    }
+                )
+            )
+            return
+
+        subscribe_teacher_monitor(test_id, ws)
+        logger.info(
+            "Teacher monitor connected user_id=%s test_id=%s", user.id, test_id
+        )
+        ws.send(
+            json.dumps(
+                {
+                    "type": "subscribed",
+                    "payload": {
+                        "test_id": test_id,
+                        "message": (
+                            "Subscribed to live monitoring deltas. "
+                            "Re-fetch REST snapshot after reconnect."
+                        ),
+                    },
+                }
+            )
+        )
+
+        try:
+            while True:
+                raw = ws.receive()
+                if raw is None:
+                    break
+                # Teacher monitor is push-only; ignore client payloads except ping.
+                try:
+                    message = json.loads(raw) if raw else {}
+                except json.JSONDecodeError:
+                    continue
+                if (message.get("type") or "").lower() == "ping":
+                    ws.send(json.dumps({"type": "pong", "payload": {}}))
+        finally:
+            unsubscribe_teacher_monitor(test_id, ws)
+            logger.info(
+                "Teacher monitor disconnected user_id=%s test_id=%s",
+                user.id,
+                test_id,
+            )

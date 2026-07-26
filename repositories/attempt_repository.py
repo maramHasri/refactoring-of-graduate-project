@@ -87,6 +87,37 @@ class TestAttemptRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def map_relevant_attempts_for_monitoring(
+        self, test_id: int
+    ) -> dict[int, TestAttempt]:
+        """
+        One attempt per student for teacher monitoring:
+        prefer IN_PROGRESS; otherwise the most recently started attempt.
+        """
+        rows = self.list_for_test(test_id)
+        by_student: dict[int, list[TestAttempt]] = {}
+        for attempt in rows:
+            by_student.setdefault(int(attempt.student_membership_id), []).append(attempt)
+
+        result: dict[int, TestAttempt] = {}
+        for membership_id, attempts in by_student.items():
+            in_progress = [
+                a
+                for a in attempts
+                if a.status == TestAttemptStatus.IN_PROGRESS.value
+            ]
+            if in_progress:
+                result[membership_id] = max(
+                    in_progress,
+                    key=lambda a: (a.started_at, a.id),
+                )
+                continue
+            result[membership_id] = max(
+                attempts,
+                key=lambda a: (a.started_at, a.id),
+            )
+        return result
+
     def list_published_for_subjects(
         self, subject_ids: list[int], workspace_id: int, student_membership_id: int
     ) -> list[Test]:

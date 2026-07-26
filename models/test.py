@@ -117,6 +117,7 @@ class TestAttempt(db.Model):
     expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
     last_activity_at = db.Column(db.DateTime(timezone=True), nullable=True)
     submission_source = db.Column(String(30), nullable=True)
+    termination_reason = db.Column(String(80), nullable=True)
     raw_score = db.Column(Float, nullable=True)
     final_score = db.Column(Float, nullable=True)
     percentage = db.Column(Float, nullable=True)

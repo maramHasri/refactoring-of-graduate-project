@@ -3071,7 +3071,9 @@ paths:
         - `UPCOMING` — assigned and not yet started (no attempt yet)
         - `IN_PROGRESS` — active attempt the student may resume (`can_resume`, `resume_attempt_id`)
         - `PENDING_GRADING` — submitted (`attempt_status=SUBMITTED`); use `submission_source`
-          (`STUDENT`, `TIMEOUT`, `FORCE`) to distinguish manual submit vs timeout
+          (`STUDENT`, `TIMEOUT`, `FORCE`, `PROCTORING_AUTO`) to distinguish manual submit vs timeout
+          vs teacher force-submit vs automatic proctoring termination. When `PROCTORING_AUTO`,
+          also read `termination_reason` (e.g. `PROCTORING_THRESHOLD_EXCEEDED`).
         - `GRADED` — graded attempt with score and optional `review_allowed`
 
         Sorted by lifecycle priority (in progress first), then most recent activity.
@@ -3802,6 +3804,66 @@ paths:
         200:
           description: Timed out and finalized
   # ── Proctoring — teacher/proctor monitoring ─────────────────────────────
+  /tests/{test_id}/monitoring:
+    get:
+      tags: [Proctoring]
+      summary: Teacher monitoring snapshot for all assigned students
+      description: |
+        Returns a **source-of-truth snapshot** of every student assigned to the test
+        (`TestStudentAssignment`), including students who have not started yet.
+
+        **Authorization:** same as other proctoring teacher endpoints
+        (`can_manage_test_attempts` — workspace owner/admin, test creator, or assigned
+        subject teacher). Workspace-scoped via `X-Workspace-Id`.
+
+        `monitoring_state` is a **derived** view (not a DB enum):
+        `NOT_STARTED` | `IN_PROGRESS` | `SUBMITTED` | `TIMED_OUT` | `FORCE_SUBMITTED` |
+        `PROCTORING_AUTO_TERMINATED` | `TERMINATED` | `COMPLETED`.
+
+        Automatic proctoring termination uses `submission_source=PROCTORING_AUTO` and
+        `termination_reason` (e.g. `PROCTORING_THRESHOLD_EXCEEDED`), distinct from teacher
+        `FORCE` force-submit.
+
+        Risk fields reuse `ProctoringRiskService.calculate` (aligned with grading-review).
+
+        **Live updates:** open WebSocket `/ws/proctoring/tests/{test_id}/monitor` after
+        loading this snapshot. On reconnect, re-fetch this endpoint (do not rely on WS history).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Monitoring snapshot
+          schema:
+            type: object
+            properties:
+              test_id: { type: integer }
+              name: { type: string }
+              title: { type: string }
+              count: { type: integer }
+              monitoring:
+                type: object
+                properties:
+                  total_assigned_students: { type: integer }
+                  not_started: { type: integer }
+                  in_progress: { type: integer }
+                  submitted: { type: integer }
+                  timed_out: { type: integer }
+                  force_submitted: { type: integer }
+                  proctoring_auto_terminated: { type: integer }
+                  terminated: { type: integer }
+                  completed: { type: integer }
+              students:
+                type: array
+                items:
+                  $ref: "#/definitions/MonitoringStudentRow"
+        403:
+          description: Insufficient proctoring permissions
+        404:
+          description: Test not found in workspace
   /tests/{test_id}/proctoring/sessions:
     get:
       tags: [Proctoring]
@@ -3859,6 +3921,52 @@ paths:
         200:
           description: Session status
   /tests/{test_id}/attempts/{attempt_id}/proctoring/events:
+    get:
+      tags: [Proctoring]
+      summary: List proctoring events for an attempt (teacher/proctor)
+      description: |
+        Chronological event timeline for investigation. Proctor access required.
+        Reuses repository filters `since` and `limit`.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+        - name: since
+          in: query
+          type: string
+          format: date-time
+          required: false
+        - name: limit
+          in: query
+          type: integer
+          default: 500
+          description: Max events (1-1000)
+      responses:
+        200:
+          description: Event timeline
+          schema:
+            type: object
+            properties:
+              count: { type: integer }
+              events:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    session_id: { type: integer }
+                    event_type: { type: string }
+                    payload: { type: object }
+                    occurred_at: { type: string, format: date-time }
+                    source: { type: string }
+        403:
+          description: Insufficient proctoring permissions
     post:
       tags: [Student Exams]
       summary: Ingest proctoring event (REST)
@@ -4976,6 +5084,52 @@ definitions:
         type: array
         items:
           $ref: "#/definitions/StudentGroupMember"
+  MonitoringStudentRow:
+    type: object
+    properties:
+      student_membership_id: { type: integer, example: 15 }
+      full_name: { type: string, example: "Student Name" }
+      student_name: { type: string, example: "Student Name" }
+      attempt_id: { type: integer, x-nullable: true, example: 101 }
+      attempt_status:
+        type: string
+        x-nullable: true
+        enum: [IN_PROGRESS, SUBMITTED, GRADED]
+      submission_source:
+        type: string
+        x-nullable: true
+        enum: [STUDENT, TIMEOUT, FORCE, PROCTORING_AUTO]
+      termination_reason:
+        type: string
+        x-nullable: true
+        description: >
+          Machine-readable reason when the attempt ended for a special cause
+          (e.g. PROCTORING_THRESHOLD_EXCEEDED for PROCTORING_AUTO).
+        enum: [PROCTORING_THRESHOLD_EXCEEDED]
+      proctoring_session_id: { type: integer, x-nullable: true }
+      proctoring_session_status:
+        type: string
+        x-nullable: true
+        enum: [ACTIVE, TERMINATED, COMPLETED]
+      monitoring_state:
+        type: string
+        description: Derived view state (not a persisted enum)
+        enum:
+          [
+            NOT_STARTED,
+            IN_PROGRESS,
+            SUBMITTED,
+            TIMED_OUT,
+            FORCE_SUBMITTED,
+            PROCTORING_AUTO_TERMINATED,
+            TERMINATED,
+            COMPLETED,
+          ]
+      effective_violation_score: { type: integer, example: 10 }
+      risk_percentage: { type: number, example: 5 }
+      violation_count: { type: integer, example: 2 }
+      event_count: { type: integer, example: 12 }
+      last_activity_at: { type: string, format: date-time, x-nullable: true }
   UserProfile:
     type: object
     properties:
@@ -5332,8 +5486,14 @@ definitions:
       submission_source:
         type: string
         x-nullable: true
-        enum: [STUDENT, TIMEOUT, FORCE]
-        description: Set when submitted; TIMEOUT indicates the attempt ended by deadline
+        enum: [STUDENT, TIMEOUT, FORCE, PROCTORING_AUTO]
+        description: >
+          Set when submitted; TIMEOUT = deadline; FORCE = teacher/admin manual end;
+          PROCTORING_AUTO = backend automatic proctoring termination
+      termination_reason:
+        type: string
+        x-nullable: true
+        enum: [PROCTORING_THRESHOLD_EXCEEDED]
       started_at: { type: string, format: date-time, x-nullable: true }
       submitted_at: { type: string, format: date-time, x-nullable: true }
       graded_at: { type: string, format: date-time, x-nullable: true }
@@ -5423,7 +5583,12 @@ definitions:
       submitted_at: { type: string, format: date-time }
       expires_at: { type: string, format: date-time }
       last_activity_at: { type: string, format: date-time }
-      submission_source: { type: string, enum: [STUDENT, TIMEOUT, FORCE] }
+      submission_source: { type: string, enum: [STUDENT, TIMEOUT, FORCE, PROCTORING_AUTO] }
+      termination_reason:
+        type: string
+        x-nullable: true
+        enum: [PROCTORING_THRESHOLD_EXCEEDED]
+        description: Present for PROCTORING_AUTO (and other special terminations)
       raw_score: { type: number }
       final_score: { type: number }
       requires_manual_grading:

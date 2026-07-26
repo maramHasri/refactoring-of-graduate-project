@@ -36,6 +36,7 @@ from utils.app_timezone import ensure_local_aware, format_local_datetime, local_
 from utils.db import db
 from utils.enums import (
     AttemptSubmissionSource,
+    AttemptTerminationReason,
     AvailabilityTimeMode,
     MembershipRole,
     TestAttemptStatus,
@@ -316,6 +317,7 @@ class AttemptService:
                 self._ensure_resume_allowed(existing, test)
                 existing.last_activity_at = local_timezone_now()
                 db.session.commit()
+                self._notify_teacher_monitoring(test=test, attempt=existing)
                 deadline = self._attempt_end_deadline(existing, test)
                 if deadline:
                     remaining_minutes = max(
@@ -418,6 +420,7 @@ class AttemptService:
             test=test,
             workspace_id=workspace_id,
         )
+        self._notify_teacher_monitoring(test=test, attempt=attempt)
         logger.info(
             "event=attempt_created attempt_id=%s test_id=%s student_membership_id=%s result=success",
             attempt.id,
@@ -791,6 +794,8 @@ class AttemptService:
         test: Test,
         *,
         submission_source: str,
+        termination_reason: str | None = None,
+        proctoring_completed: bool = True,
     ) -> dict:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             raise ConflictError(Messages.ATTEMPT_IS_ALREADY_FINALIZED)
@@ -800,6 +805,11 @@ class AttemptService:
         attempt.submitted_at = now
         attempt.last_activity_at = now
         attempt.submission_source = submission_source
+        if termination_reason is not None:
+            attempt.termination_reason = termination_reason
+        elif submission_source != AttemptSubmissionSource.PROCTORING_AUTO.value:
+            # Keep null for normal student/timeout/force unless explicitly set.
+            pass
 
         became_graded = self.grading.process_submission_grading(
             attempt,
@@ -814,19 +824,62 @@ class AttemptService:
             became_graded_first_time=became_graded,
         )
 
-        self._maybe_terminate_proctoring(attempt=attempt, completed=True)
+        self._maybe_terminate_proctoring(
+            attempt=attempt, completed=proctoring_completed
+        )
 
         db.session.commit()
+        self._notify_teacher_monitoring(test=test, attempt=attempt)
         logger.info(
-            "Finalized attempt id=%s source=%s status=%s raw_score=%s",
+            "Finalized attempt id=%s source=%s reason=%s status=%s raw_score=%s",
             attempt.id,
             submission_source,
+            attempt.termination_reason,
             attempt.status,
             attempt.raw_score,
         )
         return {
             "attempt": self.serialize_attempt(attempt, include_answers=True),
         }
+
+    def finalize_for_proctoring_auto(
+        self,
+        *,
+        attempt_id: int,
+        termination_reason: str | None = None,
+    ) -> dict | None:
+        """
+        Backend-authoritative auto-termination after proctoring escalation.
+
+        Uses row lock + IN_PROGRESS check to avoid double finalization.
+        Returns None if the attempt is no longer in progress.
+        """
+        reason = (
+            termination_reason
+            or AttemptTerminationReason.PROCTORING_THRESHOLD_EXCEEDED.value
+        )
+        attempt = db.session.execute(
+            db.select(TestAttempt)
+            .where(TestAttempt.id == attempt_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if not attempt:
+            return None
+        if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            return None
+
+        test = attempt.test or self.tests.get_by_id(attempt.test_id)
+        if not test:
+            return None
+
+        return self._finalize_attempt(
+            attempt,
+            test,
+            submission_source=AttemptSubmissionSource.PROCTORING_AUTO.value,
+            termination_reason=reason,
+            # Automatic proctoring end → session TERMINATED (not normal COMPLETED).
+            proctoring_completed=False,
+        )
 
     def _upsert_answers(
         self,
@@ -1079,6 +1132,7 @@ class AttemptService:
             if attempt.last_activity_at
             else None,
             "submission_source": attempt.submission_source,
+            "termination_reason": attempt.termination_reason,
             "raw_score": attempt.raw_score,
             "final_score": attempt.final_score,
             "percentage": attempt.percentage,
@@ -1409,6 +1463,7 @@ class AttemptService:
             "lifecycle_status": lifecycle_status,
             "attempt_status": attempt.status,
             "submission_source": attempt.submission_source,
+            "termination_reason": attempt.termination_reason,
             "started_at": format_local_datetime(attempt.started_at),
             "submitted_at": format_local_datetime(attempt.submitted_at),
             "graded_at": format_local_datetime(attempt.graded_at),
@@ -1886,6 +1941,19 @@ class AttemptService:
         except Exception:
             logger.exception(
                 "Failed to terminate proctoring for attempt id=%s", attempt.id
+            )
+
+    def _notify_teacher_monitoring(self, *, test: Test, attempt: TestAttempt) -> None:
+        from service.proctoring_service import ProctoringService
+
+        try:
+            ProctoringService().notify_monitoring_row_updated(
+                test=test,
+                attempt=attempt,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify teacher monitors for attempt id=%s", attempt.id
             )
 
     def _load_json(self, value):

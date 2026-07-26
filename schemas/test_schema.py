@@ -267,6 +267,7 @@ class TestAttemptSchema(Schema):
     expires_at = fields.DateTime(allow_none=True)
     last_activity_at = fields.DateTime(allow_none=True)
     submission_source = fields.Str(allow_none=True)
+    termination_reason = fields.Str(allow_none=True)
     raw_score = fields.Float(allow_none=True)
     final_score = fields.Float(allow_none=True)
 

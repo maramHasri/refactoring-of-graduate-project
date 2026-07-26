@@ -30,14 +30,18 @@ from repositories.proctoring_repository import (
     ProctoringViolationRepository,
 )
 from repositories.subject_repository import SubjectMembershipRepository
-from repositories.test_repository import TestRepository
+from repositories.test_assignment_repository import TestStudentAssignmentRepository
+from repositories.test_repository import TestQuestionRepository, TestRepository
 from repositories.workspace_repository import WorkspaceRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from service.proctoring_risk_service import ProctoringRiskService
 from service.proctoring_storage import ProctoringStorageService
 from service.proctoring_violation_engine import ProctoringViolationEngine, ViolationDecision
 from utils.academic_rbac import can_manage_test_attempts, verify_subject_student_access
 from utils.db import db
 from utils.enums import (
+    AttemptSubmissionSource,
+    AttemptTerminationReason,
     ProctoringAuditAction,
     ProctoringEventType,
     ProctoringSessionStatus,
@@ -52,6 +56,16 @@ _EVIDENCE_SEVERITIES = frozenset(
     {ViolationSeverity.MEDIUM.value, ViolationSeverity.HIGH.value}
 )
 
+# Derived monitoring view states (not persisted enums).
+_MONITORING_NOT_STARTED = "NOT_STARTED"
+_MONITORING_IN_PROGRESS = "IN_PROGRESS"
+_MONITORING_SUBMITTED = "SUBMITTED"
+_MONITORING_TIMED_OUT = "TIMED_OUT"
+_MONITORING_FORCE_SUBMITTED = "FORCE_SUBMITTED"
+_MONITORING_PROCTORING_AUTO = "PROCTORING_AUTO_TERMINATED"
+_MONITORING_TERMINATED = "TERMINATED"
+_MONITORING_COMPLETED = "COMPLETED"
+
 
 class ProctoringService:
     def __init__(self):
@@ -61,11 +75,14 @@ class ProctoringService:
         self.evidence = ProctoringEvidenceRepository()
         self.audit_logs = ProctoringAuditLogRepository()
         self.attempts = TestAttemptRepository()
+        self.test_questions = TestQuestionRepository()
+        self.assignments = TestStudentAssignmentRepository()
         self.tests = TestRepository()
         self.subject_memberships = SubjectMembershipRepository()
         self.workspaces = WorkspaceRepository()
         self.engine = ProctoringViolationEngine()
         self.storage = ProctoringStorageService()
+        self.risk = ProctoringRiskService()
 
     def is_proctoring_enabled(self, test: Test) -> bool:
         mode = (test.availability_time_mode or "").upper()
@@ -183,6 +200,325 @@ class ProctoringService:
         rows = self.sessions.list_active_for_test(test.id, workspace_id)
         return [self.serialize_session(row, include_counts=True) for row in rows]
 
+    def get_test_monitoring(
+        self, *, test_id: int, workspace_id: int, actor_membership
+    ) -> dict:
+        """
+        Teacher/admin snapshot: all assigned students for a test, with derived
+        monitoring_state. Backend remains source of truth for live dashboards.
+        """
+        test = self._get_test_in_workspace(test_id, workspace_id)
+        self._ensure_proctor_access(test, workspace_id, actor_membership)
+
+        assigned = self.assignments.list_for_test_with_student_profile(test.id)
+        attempts_by_student = self.attempts.map_relevant_attempts_for_monitoring(test.id)
+        attempt_ids = [a.id for a in attempts_by_student.values()]
+        sessions_by_attempt = self.sessions.map_by_attempt_ids(attempt_ids)
+        session_ids = [s.id for s in sessions_by_attempt.values()]
+        violations_by_session = self.violations.map_for_sessions(session_ids)
+        event_counts = self.events.count_for_sessions(session_ids)
+        question_count = len(self.test_questions.list_active_for_test(test.id))
+
+        students: list[dict] = []
+        for row in assigned:
+            membership = row["membership"]
+            user = row["user"]
+            attempt = attempts_by_student.get(membership.id)
+            session = (
+                sessions_by_attempt.get(attempt.id) if attempt is not None else None
+            )
+            session_violations = (
+                violations_by_session.get(session.id, []) if session is not None else []
+            )
+            students.append(
+                self._serialize_monitoring_student_row(
+                    membership_id=membership.id,
+                    full_name=user.full_name if user else None,
+                    attempt=attempt,
+                    session=session,
+                    violations=session_violations,
+                    event_count=(
+                        event_counts.get(session.id, 0) if session is not None else 0
+                    ),
+                    question_count=question_count,
+                    test=test,
+                )
+            )
+
+        return {
+            "test_id": test.id,
+            "name": test.name,
+            "title": test.name,
+            "monitoring": self._monitoring_summary(students),
+            "students": students,
+            "count": len(students),
+        }
+
+    def list_events_for_attempt(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+        since: datetime | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        attempt, test = self._resolve_attempt_view(
+            test_id, attempt_id, workspace_id, actor_membership
+        )
+        self._ensure_proctor_access(test, workspace_id, actor_membership)
+        session = self.sessions.get_by_attempt_id(attempt.id)
+        if not session:
+            return []
+        limit = max(1, min(int(limit or 500), 1000))
+        rows = self.events.list_for_session(
+            session.id, since=since, limit=limit, ascending=True
+        )
+        return [self._serialize_event(row) for row in rows]
+
+    @staticmethod
+    def derive_monitoring_state(
+        *,
+        attempt: TestAttempt | None,
+        session: ProctoringSession | None,
+    ) -> str:
+        if attempt is None:
+            return _MONITORING_NOT_STARTED
+
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            if (
+                session is not None
+                and session.status == ProctoringSessionStatus.TERMINATED.value
+            ):
+                return _MONITORING_TERMINATED
+            return _MONITORING_IN_PROGRESS
+
+        if attempt.status == TestAttemptStatus.SUBMITTED.value:
+            source = (attempt.submission_source or "").upper()
+            if source == AttemptSubmissionSource.TIMEOUT.value:
+                return _MONITORING_TIMED_OUT
+            if source == AttemptSubmissionSource.FORCE.value:
+                return _MONITORING_FORCE_SUBMITTED
+            if source == AttemptSubmissionSource.PROCTORING_AUTO.value:
+                return _MONITORING_PROCTORING_AUTO
+            return _MONITORING_SUBMITTED
+
+        if attempt.status == TestAttemptStatus.GRADED.value:
+            return _MONITORING_COMPLETED
+
+        return _MONITORING_NOT_STARTED
+
+    def build_monitoring_student_row(
+        self,
+        *,
+        test: Test,
+        membership_id: int,
+        full_name: str | None,
+        attempt: TestAttempt | None,
+        session: ProctoringSession | None = None,
+        violations: list[ProctoringViolation] | None = None,
+        event_count: int | None = None,
+        question_count: int | None = None,
+    ) -> dict:
+        if session is None and attempt is not None:
+            session = self.sessions.get_by_attempt_id(attempt.id)
+        if violations is None:
+            violations = (
+                self.violations.list_for_session(session.id) if session is not None else []
+            )
+        if event_count is None:
+            event_count = (
+                len(self.events.list_for_session(session.id, limit=1000))
+                if session is not None
+                else 0
+            )
+        if question_count is None:
+            question_count = len(self.test_questions.list_active_for_test(test.id))
+        return self._serialize_monitoring_student_row(
+            membership_id=membership_id,
+            full_name=full_name,
+            attempt=attempt,
+            session=session,
+            violations=violations,
+            event_count=event_count,
+            question_count=question_count,
+            test=test,
+        )
+
+    def notify_teacher_monitors(
+        self,
+        *,
+        test_id: int,
+        message_type: str,
+        student_membership_id: int,
+        attempt: TestAttempt | None = None,
+        session: ProctoringSession | None = None,
+        changes: dict | None = None,
+        violation: dict | None = None,
+    ) -> None:
+        payload: dict = {
+            "type": message_type,
+            "test_id": test_id,
+            "student_membership_id": student_membership_id,
+            "attempt_id": attempt.id if attempt is not None else None,
+        }
+        if changes is not None:
+            payload["changes"] = changes
+        if violation is not None:
+            payload["violation"] = violation
+        try:
+            from router.proctoring_ws import broadcast_teacher_monitor
+
+            broadcast_teacher_monitor(test_id, payload)
+        except Exception:
+            logger.exception(
+                "Failed to broadcast teacher monitor event test_id=%s type=%s",
+                test_id,
+                message_type,
+            )
+
+    def notify_monitoring_row_updated(
+        self,
+        *,
+        test: Test,
+        attempt: TestAttempt,
+        session: ProctoringSession | None = None,
+        violation: ProctoringViolation | None = None,
+    ) -> None:
+        membership = attempt.student_membership
+        user = membership.user if membership else None
+        full_name = user.full_name if user else None
+        row = self.build_monitoring_student_row(
+            test=test,
+            membership_id=attempt.student_membership_id,
+            full_name=full_name,
+            attempt=attempt,
+            session=session,
+        )
+        self.notify_teacher_monitors(
+            test_id=test.id,
+            message_type="student_row_updated",
+            student_membership_id=attempt.student_membership_id,
+            attempt=attempt,
+            session=session,
+            changes={
+                "monitoring_state": row["monitoring_state"],
+                "attempt_status": row["attempt_status"],
+                "submission_source": row["submission_source"],
+                "termination_reason": row["termination_reason"],
+                "proctoring_session_id": row["proctoring_session_id"],
+                "proctoring_session_status": row["proctoring_session_status"],
+                "effective_violation_score": row["effective_violation_score"],
+                "risk_percentage": row["risk_percentage"],
+                "violation_count": row["violation_count"],
+                "event_count": row["event_count"],
+                "last_activity_at": row["last_activity_at"],
+            },
+        )
+        if violation is not None:
+            self.notify_teacher_monitors(
+                test_id=test.id,
+                message_type="violation_created",
+                student_membership_id=attempt.student_membership_id,
+                attempt=attempt,
+                session=session,
+                violation={
+                    "id": violation.id,
+                    "violation_type": violation.violation_type,
+                    "type": violation.violation_type,
+                    "severity": violation.severity,
+                    "status": violation.status,
+                    "score_contribution": violation.score_contribution,
+                },
+            )
+
+    def _serialize_monitoring_student_row(
+        self,
+        *,
+        membership_id: int,
+        full_name: str | None,
+        attempt: TestAttempt | None,
+        session: ProctoringSession | None,
+        violations: list[ProctoringViolation],
+        event_count: int,
+        question_count: int,
+        test: Test,
+    ) -> dict:
+        monitoring_state = self.derive_monitoring_state(attempt=attempt, session=session)
+        risk_percentage = 0.0
+        effective_score = 0
+        if attempt is not None:
+            risk = self.risk.calculate(
+                attempt=attempt,
+                test=test,
+                violations=violations,
+                question_count=question_count,
+            )
+            risk_percentage = float(risk["proctoring_risk_percentage"])
+            effective_score = int(risk["effective_violation_score"])
+
+        return {
+            "student_membership_id": membership_id,
+            "full_name": full_name,
+            "student_name": full_name,
+            "attempt_id": attempt.id if attempt is not None else None,
+            "attempt_status": attempt.status if attempt is not None else None,
+            "submission_source": (
+                attempt.submission_source if attempt is not None else None
+            ),
+            "termination_reason": (
+                getattr(attempt, "termination_reason", None)
+                if attempt is not None
+                else None
+            ),
+            "proctoring_session_id": session.id if session is not None else None,
+            "proctoring_session_status": session.status if session is not None else None,
+            "monitoring_state": monitoring_state,
+            "effective_violation_score": effective_score,
+            "risk_percentage": risk_percentage,
+            "violation_count": len(violations),
+            "event_count": int(event_count or 0),
+            "last_activity_at": (
+                attempt.last_activity_at.isoformat()
+                if attempt is not None and attempt.last_activity_at
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _monitoring_summary(students: list[dict]) -> dict:
+        counts = {
+            "total_assigned_students": len(students),
+            "not_started": 0,
+            "in_progress": 0,
+            "submitted": 0,
+            "timed_out": 0,
+            "force_submitted": 0,
+            "proctoring_auto_terminated": 0,
+            "terminated": 0,
+            "completed": 0,
+        }
+        for row in students:
+            state = row.get("monitoring_state")
+            if state == _MONITORING_NOT_STARTED:
+                counts["not_started"] += 1
+            elif state == _MONITORING_IN_PROGRESS:
+                counts["in_progress"] += 1
+            elif state == _MONITORING_SUBMITTED:
+                counts["submitted"] += 1
+            elif state == _MONITORING_TIMED_OUT:
+                counts["timed_out"] += 1
+            elif state == _MONITORING_FORCE_SUBMITTED:
+                counts["force_submitted"] += 1
+            elif state == _MONITORING_PROCTORING_AUTO:
+                counts["proctoring_auto_terminated"] += 1
+            elif state == _MONITORING_TERMINATED:
+                counts["terminated"] += 1
+            elif state == _MONITORING_COMPLETED:
+                counts["completed"] += 1
+        return counts
+
     def ingest_event(
         self,
         *,
@@ -224,27 +560,203 @@ class ProctoringService:
             details={"event_type": normalized, "source": source},
         )
 
-        result = {"event": self._serialize_event(event), "violation": None, "warning": None}
+        result = {
+            "event": self._serialize_event(event),
+            "violation": None,
+            "warning": None,
+            "terminated": False,
+            "attempt": None,
+        }
+        created_violation = None
+        should_terminate = False
 
         if not skip_violation_check:
             decision = self.engine.evaluate(
                 session, normalized, payload=payload, occurred_at=occurred_at
             )
             if decision:
-                violation = self._create_violation(
+                created_violation = self._create_violation(
                     session,
                     decision,
                     trigger_event=event,
                     payload=payload,
                 )
-                result["violation"] = self.serialize_violation(violation)
+                result["violation"] = self.serialize_violation(created_violation)
                 if decision.severity in _EVIDENCE_SEVERITIES:
                     result["evidence"] = self.serialize_evidence(
-                        violation.evidence_package
+                        created_violation.evidence_package
                     )
 
+        if created_violation is not None:
+            db.session.flush()
+            should_terminate = self._apply_progressive_escalation(
+                session,
+                result=result,
+                actor_user_id=actor_user_id,
+                actor_membership_id=actor_membership_id,
+            )
+
         db.session.commit()
+
+        if should_terminate:
+            from service.attempt_service import AttemptService
+
+            finalized = AttemptService().finalize_for_proctoring_auto(
+                attempt_id=session.test_attempt_id,
+                termination_reason=AttemptTerminationReason.PROCTORING_THRESHOLD_EXCEEDED.value,
+            )
+            if finalized:
+                result["terminated"] = True
+                result["attempt"] = finalized["attempt"]
+            # finalize_for_proctoring_auto already notifies teacher monitoring
+        else:
+            self._broadcast_session_monitoring_update(
+                session, violation=created_violation
+            )
         return result
+
+    def _apply_progressive_escalation(
+        self,
+        session: ProctoringSession,
+        *,
+        result: dict,
+        actor_user_id: int | None = None,
+        actor_membership_id: int | None = None,
+    ) -> bool:
+        """
+        Progressive warning / auto-termination after a new violation.
+
+        Returns True when automatic termination should run after commit.
+        """
+        from service.proctoring_escalation import evaluate_escalation
+
+        locked = db.session.execute(
+            db.select(ProctoringSession)
+            .where(ProctoringSession.id == session.id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if not locked or locked.status != ProctoringSessionStatus.ACTIVE.value:
+            return False
+
+        attempt = locked.test_attempt or self.attempts.get_by_id(locked.test_attempt_id)
+        if not attempt or attempt.status != TestAttemptStatus.IN_PROGRESS.value:
+            return False
+
+        test = attempt.test or self.tests.get_by_id(attempt.test_id)
+        if not test:
+            return False
+
+        violations = self.violations.list_for_session(locked.id)
+        events = self.events.list_for_session(locked.id, limit=1000)
+        question_count = len(self.test_questions.list_active_for_test(test.id))
+        risk = self.risk.calculate(
+            attempt=attempt,
+            test=test,
+            violations=violations,
+            question_count=question_count,
+        )
+        decision = evaluate_escalation(
+            effective_violation_score=int(risk["effective_violation_score"]),
+            risk_percentage=float(risk["proctoring_risk_percentage"]),
+            violations=violations,
+            session_events=events,
+        )
+
+        if decision.should_warn:
+            warning = self._emit_warning(
+                locked,
+                effective_violation_score=decision.effective_violation_score,
+                risk_percentage=decision.risk_percentage,
+                actor_user_id=actor_user_id,
+                actor_membership_id=actor_membership_id,
+            )
+            result["warning"] = warning
+            db.session.flush()
+
+        if decision.should_terminate:
+            self._record_audit(
+                locked,
+                action=ProctoringAuditAction.SESSION_TERMINATED.value,
+                actor_user_id=actor_user_id,
+                actor_membership_id=actor_membership_id,
+                details={
+                    "automatic": True,
+                    "submission_source": AttemptSubmissionSource.PROCTORING_AUTO.value,
+                    "termination_reason": (
+                        AttemptTerminationReason.PROCTORING_THRESHOLD_EXCEEDED.value
+                    ),
+                    "effective_violation_score": decision.effective_violation_score,
+                    "risk_percentage": decision.risk_percentage,
+                    "open_violations_count": decision.open_violations_count,
+                    "warning_count": decision.warning_count,
+                    "violations_after_warning": decision.violations_after_warning,
+                },
+            )
+            return True
+        return False
+
+    def _emit_warning(
+        self,
+        session: ProctoringSession,
+        *,
+        effective_violation_score: int,
+        risk_percentage: float,
+        actor_user_id: int | None = None,
+        actor_membership_id: int | None = None,
+    ) -> dict:
+        """Persist WARNING_GENERATED event + audit (idempotent per session)."""
+        existing = [
+            e
+            for e in self.events.list_for_session(session.id, limit=1000)
+            if (e.event_type or "").upper()
+            == ProctoringEventType.WARNING_GENERATED.value
+        ]
+        if existing:
+            payload = existing[-1].payload or {}
+            return {
+                "level": payload.get("level") or "WARNING",
+                "message": payload.get("message")
+                or Messages.PROCTORING_WARNING_SUSPICIOUS_ACTIVITY,
+                "effective_violation_score": effective_violation_score,
+                "risk_percentage": risk_percentage,
+            }
+
+        now = datetime.now(timezone.utc)
+        warning_payload = {
+            "level": "WARNING",
+            "message": Messages.PROCTORING_WARNING_SUSPICIOUS_ACTIVITY,
+            "effective_violation_score": effective_violation_score,
+            "risk_percentage": risk_percentage,
+        }
+        warning_event = ProctoringEvent(
+            session_id=session.id,
+            event_type=ProctoringEventType.WARNING_GENERATED.value,
+            payload=warning_payload,
+            occurred_at=now,
+            source="SYSTEM",
+        )
+        self.events.add(warning_event)
+        self._record_audit(
+            session,
+            action=ProctoringAuditAction.WARNING_GENERATED.value,
+            actor_user_id=actor_user_id,
+            actor_membership_id=actor_membership_id,
+            details={
+                "effective_violation_score": effective_violation_score,
+                "risk_percentage": risk_percentage,
+            },
+        )
+        logger.warning(
+            "Proctoring warning generated session_id=%s score=%s",
+            session.id,
+            effective_violation_score,
+        )
+        return {
+            "level": "WARNING",
+            "message": Messages.PROCTORING_WARNING_SUSPICIOUS_ACTIVITY,
+            "effective_violation_score": effective_violation_score,
+            "risk_percentage": risk_percentage,
+        }
 
     def ingest_event_for_attempt(
         self,
@@ -401,6 +913,7 @@ class ProctoringService:
             status,
             actor_membership.id,
         )
+        self._broadcast_session_monitoring_update(session)
         return {
             "message": Messages.VIOLATION_REVIEWED,
             "violation": self.serialize_violation(violation),
@@ -464,7 +977,27 @@ class ProctoringService:
             session.id,
             completed,
         )
+        self._broadcast_session_monitoring_update(session)
         return session
+
+    def _broadcast_session_monitoring_update(
+        self,
+        session: ProctoringSession,
+        *,
+        violation: ProctoringViolation | None = None,
+    ) -> None:
+        attempt = session.test_attempt or self.attempts.get_by_id(session.test_attempt_id)
+        if not attempt:
+            return
+        test = attempt.test or self.tests.get_by_id(attempt.test_id)
+        if not test:
+            return
+        self.notify_monitoring_row_updated(
+            test=test,
+            attempt=attempt,
+            session=session,
+            violation=violation,
+        )
 
     def handle_websocket_message(
         self,
@@ -522,6 +1055,10 @@ class ProctoringService:
         response_type = "event_recorded"
         if result.get("violation"):
             response_type = "violation_triggered"
+        if result.get("warning"):
+            response_type = "warning_generated"
+        if result.get("terminated"):
+            response_type = "attempt_terminated"
         return {"type": response_type, "payload": result}
 
     def _create_violation(
