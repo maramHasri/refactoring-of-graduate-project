@@ -1117,11 +1117,14 @@ class AttemptService:
         if deadline:
             remaining_seconds = max(0, int((deadline - now).total_seconds()))
 
+        student_name = self._student_display_name(attempt)
         payload = {
             "id": attempt.id,
             "test_id": attempt.test_id,
             "student_membership_id": attempt.student_membership_id,
             "user_id": attempt.user_id,
+            "student_name": student_name,
+            "user_name": student_name,
             "status": attempt.status,
             "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
             "submitted_at": attempt.submitted_at.isoformat()
@@ -1225,6 +1228,16 @@ class AttemptService:
             "updated_at": answer.updated_at.isoformat() if answer.updated_at else None,
         }
 
+    @staticmethod
+    def _student_display_name(attempt: TestAttempt) -> str | None:
+        user = attempt.user
+        if user is not None and user.full_name:
+            return user.full_name
+        membership = attempt.student_membership
+        if membership is not None and membership.user is not None:
+            return membership.user.full_name
+        return None
+
     def _build_start_or_resume_response(
         self,
         *,
@@ -1234,17 +1247,14 @@ class AttemptService:
         resumed: bool,
         student_name: str | None,
     ) -> dict:
-        resolved_user_name = student_name
-        if not resolved_user_name:
-            user = attempt.user
-            if user is not None:
-                resolved_user_name = user.full_name
+        resolved_user_name = student_name or self._student_display_name(attempt)
 
         teacher_name = None
         if test.created_by and test.created_by.user:
             teacher_name = test.created_by.user.full_name
 
         attempt_payload = self.serialize_attempt(attempt, include_answers=True)
+        attempt_payload["student_name"] = resolved_user_name
         attempt_payload["user_name"] = resolved_user_name
 
         return {
@@ -1356,6 +1366,7 @@ class AttemptService:
         return {
             "test_id": test.id,
             "attempt_id": attempt.id,
+            "student_name": self._student_display_name(attempt),
             "title": test.name,
             "subject": test.subject.name if test.subject else None,
             "teacher_name": teacher_name,
@@ -1393,6 +1404,7 @@ class AttemptService:
 
         return {
             "attempt_id": attempt.id,
+            "student_name": self._student_display_name(attempt),
             "status": ui_status,
             "submitted_at": attempt.submitted_at.isoformat()
             if attempt.submitted_at
@@ -1452,6 +1464,7 @@ class AttemptService:
         return {
             "test_id": test.id,
             "attempt_id": attempt.id,
+            "student_name": self._student_display_name(attempt),
             "title": test.name,
             "subject": {
                 "id": subject.id,

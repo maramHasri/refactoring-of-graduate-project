@@ -3354,7 +3354,9 @@ paths:
     get:
       tags: [Tests]
       summary: List attempts for a test (teacher/admin)
-      description: Requires test creator, workspace owner/admin, or subject-assigned teacher.
+      description: |
+        Requires test creator, workspace owner/admin, or subject-assigned teacher.
+        Each attempt includes `student_name` / `user_name` of the attempt owner.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id
@@ -5689,6 +5691,16 @@ definitions:
       test_id: { type: integer }
       student_membership_id: { type: integer }
       user_id: { type: integer }
+      student_name:
+        type: string
+        x-nullable: true
+        example: "Ahmad Ali"
+        description: Full name of the student who owns this attempt
+      user_name:
+        type: string
+        x-nullable: true
+        example: "Ahmad Ali"
+        description: Alias of `student_name`
       status: { type: string, enum: [IN_PROGRESS, SUBMITTED, GRADED] }
       started_at: { type: string, format: date-time }
       submitted_at: { type: string, format: date-time }

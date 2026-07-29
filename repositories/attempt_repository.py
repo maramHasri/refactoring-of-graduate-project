@@ -24,7 +24,9 @@ class TestAttemptRepository(BaseRepository):
 
     def get_for_test(self, attempt_id: int, test_id: int) -> TestAttempt | None:
         return db.session.execute(
-            db.select(TestAttempt).where(
+            db.select(TestAttempt)
+            .options(joinedload(TestAttempt.user))
+            .where(
                 TestAttempt.id == attempt_id,
                 TestAttempt.test_id == test_id,
             )
@@ -82,9 +84,13 @@ class TestAttemptRepository(BaseRepository):
         return list(
             db.session.execute(
                 db.select(TestAttempt)
+                .options(joinedload(TestAttempt.user))
                 .where(TestAttempt.test_id == test_id)
                 .order_by(TestAttempt.started_at.desc())
-            ).scalars().all()
+            )
+            .scalars()
+            .unique()
+            .all()
         )
 
     def exam_card_stats_by_test_ids(self, test_ids: list[int]) -> dict[int, dict]:

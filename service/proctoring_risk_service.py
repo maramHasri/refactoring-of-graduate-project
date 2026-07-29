@@ -76,6 +76,11 @@ class ProctoringRiskService:
         requires_approval = self.requires_teacher_approval(test, attempt)
         return {
             "attempt_id": attempt.id,
+            "student_name": (
+                attempt.user.full_name
+                if attempt.user is not None and attempt.user.full_name
+                else None
+            ),
             "raw_score": attempt.raw_score,
             "maximum_score": None,
             "proctoring": {

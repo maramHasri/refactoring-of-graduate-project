@@ -215,6 +215,11 @@ class StudentAnalyticsService:
             "final_score": float(attempt.final_score or 0.0),
             "percentage": float(attempt.percentage or 0.0),
             "attempt_id": attempt.id,
+            "student_name": (
+                attempt.user.full_name
+                if attempt.user is not None and attempt.user.full_name
+                else None
+            ),
             "topics": topics,
         }
 

@@ -346,6 +346,7 @@ class ExamGradingService:
         return {
             "message": Messages.FINAL_SCORE_APPROVED_SUCCESSFULLY,
             "attempt_id": attempt.id,
+            "student_name": self._student_display_name(attempt),
             "raw_score": attempt.raw_score,
             "suggested_final_score": suggested,
             "final_score": attempt.final_score,
@@ -435,31 +436,42 @@ class ExamGradingService:
         return 0.0
 
     def build_grading_result(self, attempt: TestAttempt, test: Test) -> dict:
+        student_name = self._student_display_name(attempt)
         if attempt.status == TestAttemptStatus.SUBMITTED.value:
             if self.has_pending_review(attempt):
                 return {
                     "grading_completed": False,
+                    "attempt_id": attempt.id,
+                    "student_name": student_name,
                     "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_MANUAL_GRADING,
                 }
             if self.awaiting_proctoring_final_score_approval(attempt, test):
                 return {
                     "grading_completed": False,
+                    "attempt_id": attempt.id,
+                    "student_name": student_name,
                     "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_PROCTORING_FINAL_SCORE_APPROVAL,
                 }
             return {
                 "grading_completed": False,
+                "attempt_id": attempt.id,
+                "student_name": student_name,
                 "message": Messages.THIS_ATTEMPT_IS_WAITING_FOR_MANUAL_GRADING,
             }
 
         if attempt.status != TestAttemptStatus.GRADED.value:
             return {
                 "grading_completed": False,
+                "attempt_id": attempt.id,
+                "student_name": student_name,
                 "message": Messages.GRADING_IS_NOT_AVAILABLE_FOR_THIS_ATTEMPT_STATUS,
                 "status": attempt.status,
             }
 
         return {
             "grading_completed": True,
+            "attempt_id": attempt.id,
+            "student_name": student_name,
             "final_score": attempt.final_score,
             "maximum_score": self.maximum_score(test),
             "percentage": round(float(attempt.percentage), 2)
@@ -471,6 +483,16 @@ class ExamGradingService:
             else None,
             "graded_at": attempt.graded_at.isoformat() if attempt.graded_at else None,
         }
+
+    @staticmethod
+    def _student_display_name(attempt: TestAttempt) -> str | None:
+        user = attempt.user
+        if user is not None and user.full_name:
+            return user.full_name
+        membership = attempt.student_membership
+        if membership is not None and membership.user is not None:
+            return membership.user.full_name
+        return None
 
     def _run_initial_auto_grading(self, attempt: TestAttempt, test: Test) -> None:
         question_rows = {
