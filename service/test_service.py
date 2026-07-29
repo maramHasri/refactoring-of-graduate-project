@@ -1195,15 +1195,65 @@ class TestService:
 
     def close_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
+        self._apply_test_close(test)
+        db.session.commit()
+        return test
+
+    def close_due_scheduled_tests(self) -> list[int]:
+        """
+        Close PUBLISHED scheduled exams whose global end (starts_at + duration) has passed.
+
+        Uses the same close mutation as manual close (`_apply_test_close`).
+        Each candidate is isolated: one failure is logged and does not stop the batch.
+        """
+        from service.attempt_service import AttemptService
+
+        attempt_svc = AttemptService()
+        now = local_timezone_now()
+        candidates = self.tests.list_published_scheduled_for_auto_close()
+        closed_ids: list[int] = []
+
+        for test in candidates:
+            try:
+                global_end = attempt_svc._scheduled_global_end_time(test)
+                if not global_end or now < global_end:
+                    continue
+                applied = self._apply_test_close(test)
+                if not applied:
+                    continue
+                db.session.commit()
+                closed_ids.append(test.id)
+                logger.info(
+                    "event=exam_closed test_id=%s actor_membership_id=%s reason=scheduled_window_ended result=success",
+                    test.id,
+                    "system",
+                )
+            except Exception:
+                logger.exception(
+                    "event=exam_auto_close_failed test_id=%s reason=unexpected_error result=failed",
+                    getattr(test, "id", None),
+                )
+                db.session.rollback()
+
+        return closed_ids
+
+    def _apply_test_close(self, test: Test) -> bool:
+        """
+        Single close mutation used by manual close and auto-close.
+
+        Returns True when close was applied, False when already CLOSED (idempotent no-op).
+        Caller is responsible for committing the session after a True result.
+        """
         if test.status == TestStatus.ARCHIVED.value:
             raise ValidationError(Messages.ARCHIVED_TESTS_CANNOT_BE_CLOSED)
+        if test.status == TestStatus.CLOSED.value:
+            return False
         test.status = TestStatus.CLOSED.value
         test.closed_at = local_timezone_now()
         from service.attempt_service import AttemptService
 
         AttemptService().finalize_in_progress_for_test(test)
-        db.session.commit()
-        return test
+        return True
 
     def archive_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)

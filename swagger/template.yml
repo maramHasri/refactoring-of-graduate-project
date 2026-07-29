@@ -3085,8 +3085,11 @@ paths:
         Sets status to SCHEDULED and stores publish_at in scheduled_publish_at.
         Send naive local datetime (no Z suffix), e.g. `2026-06-29T08:00:00`.
         Times use APP_TIMEZONE from server config (default Asia/Damascus).
-        A background job checks every 5s (configurable) and auto-publishes due tests.
-        You can also run `flask publish-due-tests` manually.
+        A background job checks periodically and:
+        1) auto-publishes due SCHEDULED tests,
+        2) auto-submits overdue attempts,
+        3) auto-closes PUBLISHED scheduled exams after `starts_at + duration_minutes`.
+        You can also run `flask publish-due-tests` manually for publish.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: test_id

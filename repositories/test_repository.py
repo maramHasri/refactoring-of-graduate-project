@@ -162,6 +162,32 @@ class TestRepository(BaseRepository):
             db.session.commit()
         return published_ids
 
+    def list_published_scheduled_for_auto_close(self) -> list[Test]:
+        """
+        PUBLISHED non-flexible/non-survey tests that have starts_at + duration configured.
+
+        Callers decide which rows are due using the shared scheduled global-end helper.
+        """
+        return list(
+            db.session.execute(
+                db.select(Test)
+                .where(
+                    Test.status == TestStatus.PUBLISHED.value,
+                    Test.archived_at.is_(None),
+                    Test.starts_at.is_not(None),
+                    Test.duration_minutes.is_not(None),
+                    or_(
+                        Test.availability_time_mode.is_(None),
+                        Test.availability_time_mode
+                        == AvailabilityTimeMode.SCHEDULED.value,
+                    ),
+                )
+                .order_by(Test.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+
     def _find_time_overlapping_scheduled_test_ids(
         self,
         *,

@@ -1,4 +1,4 @@
-"""Background job: auto-publish SCHEDULED tests when scheduled_publish_at is reached."""
+"""Background job: auto-publish, auto-submit attempts, then auto-close due scheduled tests."""
 from __future__ import annotations
 
 import logging
@@ -25,6 +25,13 @@ def _auto_submit_due_attempts(app) -> list[int]:
         return AttemptService().auto_submit_due_attempts()
 
 
+def _auto_close_due_tests(app) -> list[int]:
+    with app.app_context():
+        from service.test_service import TestService
+
+        return TestService().close_due_scheduled_tests()
+
+
 def _run_loop(app, interval: int) -> None:
     first_run = True
     while not _stop_event.is_set():
@@ -33,6 +40,7 @@ def _run_loop(app, interval: int) -> None:
         first_run = False
 
         try:
+            # Order matters: publish → finalize due attempts → close ended exams.
             published_ids = _publish_due_tests(app)
             if published_ids:
                 logger.info(
@@ -46,6 +54,13 @@ def _run_loop(app, interval: int) -> None:
                     "Auto-submitted %s attempt(s): %s",
                     len(auto_submitted_attempt_ids),
                     auto_submitted_attempt_ids,
+                )
+            closed_ids = _auto_close_due_tests(app)
+            if closed_ids:
+                logger.info(
+                    "Auto-closed %s scheduled test(s): %s",
+                    len(closed_ids),
+                    closed_ids,
                 )
         except Exception:
             logger.exception("Scheduled test publish job failed")
