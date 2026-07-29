@@ -37,6 +37,14 @@ class TestSchema(Schema):
     updated_at = fields.DateTime(dump_only=True)
 
 
+class TestsListQuerySchema(Schema):
+    """GET /tests | GET /tests/my — paginated teacher test list."""
+
+    page = fields.Int(load_default=1, validate=validate.Range(min=1))
+    per_page = fields.Int(load_default=20, validate=validate.Range(min=1, max=100))
+    include_archived = fields.Bool(load_default=False)
+
+
 class CreateTestSchema(Schema):
     """Step 1 exam / survey creation payload from the UI."""
 

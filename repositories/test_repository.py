@@ -57,13 +57,42 @@ class TestRepository(BaseRepository):
         return result
 
     def list_for_creator(self, creator_membership_id: int) -> list[Test]:
-        return list(
+        rows, _total = self.list_for_creator_paginated(
+            creator_membership_id,
+            include_archived=True,
+            offset=0,
+            limit=10_000,
+        )
+        return rows
+
+    def list_for_creator_paginated(
+        self,
+        creator_membership_id: int,
+        *,
+        include_archived: bool = False,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[Test], int]:
+        filters = [Test.created_by_membership_id == creator_membership_id]
+        if not include_archived:
+            filters.append(Test.status != TestStatus.ARCHIVED.value)
+
+        total = (
+            db.session.execute(
+                db.select(db.func.count(Test.id)).where(*filters)
+            ).scalar_one()
+            or 0
+        )
+        rows = list(
             db.session.execute(
                 db.select(Test)
-                .where(Test.created_by_membership_id == creator_membership_id)
+                .where(*filters)
                 .order_by(Test.updated_at.desc(), Test.id.desc())
+                .offset(offset)
+                .limit(limit)
             ).scalars().all()
         )
+        return rows, int(total)
 
     def list_for_workspace(
         self,
@@ -263,6 +292,23 @@ class TestQuestionRepository(BaseRepository):
                 .order_by(TestQuestion.id)
             ).scalars().all()
         )
+
+    def count_by_test_ids(self, test_ids: list[int]) -> dict[int, int]:
+        """Batch count of TestQuestion rows per test (all statuses)."""
+        if not test_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(TestQuestion.test_id, db.func.count(TestQuestion.id))
+            .where(TestQuestion.test_id.in_(test_ids))
+            .group_by(TestQuestion.test_id)
+        ).all()
+        result = {int(test_id): 0 for test_id in test_ids}
+        for test_id, count in rows:
+            result[int(test_id)] = int(count or 0)
+        return result
+
+    def count_for_test(self, test_id: int) -> int:
+        return self.count_by_test_ids([test_id]).get(int(test_id), 0)
 
     def find_by_test_and_question(self, test_id: int, question_id: int) -> TestQuestion | None:
         return db.session.execute(

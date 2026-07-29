@@ -17,7 +17,7 @@ from repositories.question_bank_repository import QuestionBankRepository
 from repositories.student_group_repository import StudentGroupRepository
 from repositories.subject_repository import SubjectMembershipRepository
 from repositories.test_assignment_repository import TestStudentAssignmentRepository
-from repositories.test_repository import TestRepository
+from repositories.test_repository import TestQuestionRepository, TestRepository
 from repositories.user_repository import UserRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.attempt_service import AttemptService
@@ -56,6 +56,7 @@ class WorkspaceService:
         self.test_assignments = TestStudentAssignmentRepository()
         self.test_attempts = TestAttemptRepository()
         self.tests = TestRepository()
+        self.test_questions = TestQuestionRepository()
         self.question_banks = QuestionBankRepository()
         self.user_repo = UserRepository()
         self.user_service = UserService()
@@ -357,12 +358,14 @@ class WorkspaceService:
             offset=offset,
             limit=per_page,
         )
-        stats_by_test = self.test_attempts.exam_card_stats_by_test_ids(
-            [test.id for test in rows]
-        )
+        test_ids = [test.id for test in rows]
+        stats_by_test = self.test_attempts.exam_card_stats_by_test_ids(test_ids)
+        questions_counts = self.test_questions.count_by_test_ids(test_ids)
         items = [
             self._serialize_institution_workspace_test(
-                test, exam_stats=stats_by_test.get(test.id)
+                test,
+                exam_stats=stats_by_test.get(test.id),
+                questions_count=questions_counts.get(test.id, 0),
             )
             for test in rows
         ]
@@ -764,6 +767,7 @@ class WorkspaceService:
         test: Test,
         *,
         exam_stats: dict | None = None,
+        questions_count: int | None = None,
     ) -> dict:
         creator = test.created_by
         creator_user = creator.user if creator else None
@@ -773,7 +777,7 @@ class WorkspaceService:
             "graded_attempts_count": 0,
             "submitted_attempts_count": 0,
         }
-        return {
+        payload = {
             "test_id": test.id,
             "name": test.name,
             "slug": test.slug,
@@ -809,6 +813,12 @@ class WorkspaceService:
             "created_at": format_local_datetime(test.created_at),
             "updated_at": format_local_datetime(test.updated_at),
         }
+        if questions_count is not None:
+            count = int(questions_count)
+            payload["questions_count"] = count
+            payload["question_count"] = count
+        payload["title"] = payload["name"]
+        return payload
 
     def _serialize_workspace(
         self, workspace: Workspace, *, role: str | None, membership_id: int | None

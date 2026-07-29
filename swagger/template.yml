@@ -814,7 +814,7 @@ paths:
 
         Each test includes exam-card stats: `participants_count`, `average_score`
         (GRADED final_score with raw_score fallback), `graded_attempts_count`,
-        and `submitted_attempts_count`.
+        `submitted_attempts_count`, and `questions_count` (TestQuestion rows).
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: status
@@ -2265,6 +2265,47 @@ paths:
           description: Archived
   # ── Tests — teacher/admin management ────────────────────────────────────
   /tests:
+    get:
+      tags: [Tests]
+      summary: List my tests (paginated)
+      description: |
+        Primary exam list for the teacher `/exams` page.
+        Supports `page`, `per_page`, and `include_archived` query params.
+        Each item in `tests[]` includes exam-card stats plus `questions_count`
+        (alias `question_count`) and `title` (same value as `name`).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+          description: Max 100
+        - name: include_archived
+          in: query
+          type: boolean
+          default: false
+          description: When false, tests with status ARCHIVED are excluded
+      responses:
+        200:
+          description: Paginated list of tests created by current membership
+          schema:
+            type: object
+            properties:
+              count:
+                type: integer
+                description: Number of items in the current page
+              total: { type: integer }
+              page: { type: integer }
+              per_page: { type: integer }
+              pages: { type: integer }
+              tests:
+                type: array
+                items:
+                  $ref: "#/definitions/TestSummary"
     post:
       tags: [Tests]
       summary: Create test (exam)
@@ -2354,20 +2395,40 @@ paths:
       tags: [Tests]
       summary: My tests (current membership)
       description: |
+        Alias of `GET /tests` — same pagination, filters, and response shape.
         Lists tests created by the current membership.
         Each item includes exam-card stats:
         - `participants_count`: distinct students with an IN_PROGRESS, SUBMITTED, or GRADED attempt
         - `average_score`: mean of GRADED attempt `final_score` (fallback `raw_score`); null when none
         - `graded_attempts_count`: count of GRADED attempts
         - `submitted_attempts_count`: count of SUBMITTED attempts awaiting grading/approval
+        - `questions_count` / `question_count`: number of TestQuestion rows linked to the test
+        - `title`: same value as `name` for frontend card compatibility
       security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: page
+          in: query
+          type: integer
+          default: 1
+        - name: per_page
+          in: query
+          type: integer
+          default: 20
+        - name: include_archived
+          in: query
+          type: boolean
+          default: false
       responses:
         200:
-          description: List created tests
+          description: Paginated list created tests
           schema:
             type: object
             properties:
               count: { type: integer }
+              total: { type: integer }
+              page: { type: integer }
+              per_page: { type: integer }
+              pages: { type: integer }
               tests:
                 type: array
                 items:
@@ -5562,6 +5623,9 @@ definitions:
     properties:
       test_id: { type: integer }
       name: { type: string }
+      title:
+        type: string
+        description: Same value as `name` for frontend exam cards
       slug: { type: string }
       subject_id: { type: integer }
       status: { type: string, example: PUBLISHED }
@@ -5585,6 +5649,14 @@ definitions:
         type: integer
         example: 2
         description: Number of SUBMITTED attempts awaiting grading/approval.
+      questions_count:
+        type: integer
+        example: 25
+        description: Number of TestQuestion rows linked to this test.
+      question_count:
+        type: integer
+        example: 25
+        description: Alias of `questions_count` for frontend compatibility.
       availability_time_mode:
         type: string
         x-nullable: true

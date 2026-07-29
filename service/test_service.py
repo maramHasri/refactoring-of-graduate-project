@@ -45,6 +45,7 @@ from utils.enums import (
     TestStatus,
 )
 from utils.question_type_validation import validate_question_create_payload
+from utils.pagination import build_pagination_meta, normalize_pagination
 from utils.test_scoring import distribute_points, sum_points
 
 
@@ -294,15 +295,52 @@ class TestService:
         db.session.commit()
         return test
 
-    def list_my_tests(self, actor_membership) -> list[dict]:
-        rows = self.tests.list_for_creator(actor_membership.id)
-        stats_by_test = self.attempts.exam_card_stats_by_test_ids(
-            [row.id for row in rows]
+    def list_tests(
+        self,
+        actor_membership,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        include_archived: bool = False,
+    ) -> dict:
+        page, per_page, offset = normalize_pagination(page, per_page)
+        rows, total = self.tests.list_for_creator_paginated(
+            actor_membership.id,
+            include_archived=include_archived,
+            offset=offset,
+            limit=per_page,
         )
-        return [
-            self.serialize_test(row, exam_stats=stats_by_test.get(row.id))
+        test_ids = [row.id for row in rows]
+        stats_by_test = self.attempts.exam_card_stats_by_test_ids(test_ids)
+        questions_counts = self.test_questions.count_by_test_ids(test_ids)
+        items = [
+            self._serialize_test_list_item(
+                row,
+                exam_stats=stats_by_test.get(row.id),
+                questions_count=questions_counts.get(row.id, 0),
+            )
             for row in rows
         ]
+        return {
+            "tests": items,
+            "count": len(items),
+            **build_pagination_meta(total=total, page=page, per_page=per_page),
+        }
+
+    def list_my_tests(
+        self,
+        actor_membership,
+        *,
+        page: int | None = None,
+        per_page: int | None = None,
+        include_archived: bool = False,
+    ) -> dict:
+        return self.list_tests(
+            actor_membership,
+            page=page,
+            per_page=per_page,
+            include_archived=include_archived,
+        )
 
     def get_test(self, *, test_id: int, workspace_id: int, actor_membership) -> dict:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
@@ -1493,18 +1531,35 @@ class TestService:
             payload.pop(key, None)
         return payload
 
+    def _serialize_test_list_item(
+        self,
+        test: Test,
+        *,
+        exam_stats: dict | None = None,
+        questions_count: int = 0,
+    ) -> dict:
+        payload = self.serialize_test(
+            test,
+            exam_stats=exam_stats,
+            questions_count=questions_count,
+        )
+        payload["title"] = payload["name"]
+        payload["question_count"] = payload["questions_count"]
+        return payload
+
     def serialize_test(
         self,
         test: Test,
         *,
         exam_stats: dict | None = None,
+        questions_count: int | None = None,
     ) -> dict:
         stats = (
             exam_stats
             if exam_stats is not None
             else self.attempts.exam_card_stats_for_test(test.id)
         )
-        return {
+        payload = {
             "test_id": test.id,
             "name": test.name,
             "slug": test.slug,
@@ -1535,6 +1590,9 @@ class TestService:
             "created_at": format_local_datetime(test.created_at),
             "updated_at": format_local_datetime(test.updated_at),
         }
+        if questions_count is not None:
+            payload["questions_count"] = int(questions_count)
+        return payload
 
     def serialize_test_question(self, row: TestQuestion) -> dict:
         return {

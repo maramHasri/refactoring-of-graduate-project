@@ -9,6 +9,7 @@ from schemas.test_schema import (
     AddQuestionsFromBankSelectionSchema,
     AssignStudentsToTestSchema,
     CreateTestSchema,
+    TestsListQuerySchema,
     ExamBlueprintSchema,
     ImportAIQuestionsSchema,
     ManualTestQuestionItemSchema,
@@ -39,12 +40,30 @@ def create_test():
     }, 201
 
 
+@test_bp.route("", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def list_tests():
+    query = TestsListQuerySchema().load(request.args.to_dict())
+    return _svc().list_tests(
+        g.membership,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        include_archived=bool(query.get("include_archived")),
+    ), 200
+
+
 @test_bp.route("/my", methods=["GET"])
 @require_workspace_membership
 @handle_service_errors
 def list_my_tests():
-    items = _svc().list_my_tests(g.membership)
-    return {"tests": items, "count": len(items)}, 200
+    query = TestsListQuerySchema().load(request.args.to_dict())
+    return _svc().list_tests(
+        g.membership,
+        page=query.get("page"),
+        per_page=query.get("per_page"),
+        include_archived=bool(query.get("include_archived")),
+    ), 200
 
 
 @test_bp.route("/<int:test_id>", methods=["GET"])
