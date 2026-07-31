@@ -127,7 +127,10 @@ export class ProctoringWebSocketClient {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       return false;
     }
-    this.socket.send(JSON.stringify({ type, payload }));
+    const body = JSON.stringify({ type, payload });
+    // TEMP TRACE — remove after proctoring path diagnosis
+    console.log("[FRONTEND SEND]", body);
+    this.socket.send(body);
     return true;
   }
 

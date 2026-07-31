@@ -416,6 +416,14 @@ class ProctoringService:
                 "last_activity_at": row["last_activity_at"],
             },
         )
+        # TEMP TRACE — remove after proctoring path diagnosis
+        logger.info(
+            "[BROADCAST] student_row_updated sent test_id=%s membership_id=%s violation_count=%s event_count=%s",
+            test.id,
+            attempt.student_membership_id,
+            row["violation_count"],
+            row["event_count"],
+        )
         if violation is not None:
             self.notify_teacher_monitors(
                 test_id=test.id,
@@ -431,6 +439,13 @@ class ProctoringService:
                     "status": violation.status,
                     "score_contribution": violation.score_contribution,
                 },
+            )
+            # TEMP TRACE — remove after proctoring path diagnosis
+            logger.info(
+                "[BROADCAST] violation_created sent test_id=%s violation_id=%s type=%s",
+                test.id,
+                violation.id,
+                violation.violation_type,
             )
 
     def _serialize_monitoring_student_row(
@@ -536,6 +551,9 @@ class ProctoringService:
 
         occurred_at = occurred_at or datetime.now(timezone.utc)
         normalized = (event_type or "").upper()
+        # TEMP TRACE
+        print(f"[INGEST_EVENT]\nevent_type={normalized}", flush=True)
+        logger.info("[INGEST_EVENT]\nevent_type=%s", normalized)
 
         event = ProctoringEvent(
             session_id=session.id,
@@ -571,9 +589,29 @@ class ProctoringService:
         should_terminate = False
 
         if not skip_violation_check:
+            # TEMP TRACE
+            print(f"[BEFORE EVALUATE]\nevent_type={normalized}", flush=True)
+            logger.info("[BEFORE EVALUATE]\nevent_type=%s", normalized)
             decision = self.engine.evaluate(
                 session, normalized, payload=payload, occurred_at=occurred_at
             )
+            # TEMP TRACE
+            if decision is None:
+                print("[AFTER EVALUATE]\nNO VIOLATION", flush=True)
+                logger.info("[AFTER EVALUATE]\nNO VIOLATION")
+            else:
+                print(
+                    f"[AFTER EVALUATE]\nVIOLATION CREATED\ndecision={decision}",
+                    flush=True,
+                )
+                logger.info(
+                    "[AFTER EVALUATE]\nVIOLATION CREATED\ndecision=%s",
+                    {
+                        "violation_type": decision.violation_type,
+                        "severity": decision.severity,
+                        "score_contribution": decision.score_contribution,
+                    },
+                )
             if decision:
                 created_violation = self._create_violation(
                     session,
@@ -770,6 +808,17 @@ class ProctoringService:
         payload: dict | None = None,
         source: str = "REST",
     ) -> dict:
+        # TEMP TRACE
+        print(
+            f"[INGEST_FOR_ATTEMPT]\nattempt_id={attempt_id}\nevent_type={event_type}\nsource={source}",
+            flush=True,
+        )
+        logger.info(
+            "[INGEST_FOR_ATTEMPT] attempt_id=%s event_type=%s source=%s",
+            attempt_id,
+            event_type,
+            source,
+        )
         attempt, _ = self._resolve_student_attempt(
             test_id, attempt_id, workspace_id, actor_membership
         )
@@ -1009,6 +1058,16 @@ class ProctoringService:
         actor_user_id: int,
         message: dict,
     ) -> dict:
+        # TEMP TRACE — before any processing
+        print(
+            f"[WS HANDLE]\ntype={message.get('type') or message.get('event_type')}\npayload={message.get('payload') or message.get('data') or {}}",
+            flush=True,
+        )
+        logger.info(
+            "[WS HANDLE]\ntype=%s\npayload=%s",
+            message.get("type") or message.get("event_type"),
+            message.get("payload") or message.get("data") or {},
+        )
         event_type = (message.get("type") or message.get("event_type") or "").lower()
         type_map = {
             "student_joined": ProctoringEventType.STUDENT_JOINED.value,
@@ -1080,6 +1139,14 @@ class ProctoringService:
         )
         self.violations.add(violation)
         db.session.flush()
+        # TEMP TRACE — remove after proctoring path diagnosis
+        logger.info(
+            "[CREATE_VIOLATION] violation_type=%s severity=%s score=%s session_id=%s",
+            decision.violation_type,
+            decision.severity,
+            decision.score_contribution,
+            session.id,
+        )
 
         self._record_audit(
             session,

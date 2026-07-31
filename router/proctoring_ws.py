@@ -134,6 +134,9 @@ def register_proctoring_websocket(app) -> None:
             raw = ws.receive()
             if raw is None:
                 break
+            # TEMP TRACE
+            print(f"[WS RAW]\n{raw}", flush=True)
+            logger.info("[WS RAW]\n%s", raw)
             try:
                 message = json.loads(raw)
             except json.JSONDecodeError:
