@@ -42,9 +42,6 @@ class InstitutionAdminService:
         intent = self._get_pending_institution_intent(user_id)
         user = self._get_user_or_404(user_id)
 
-        if self.workspaces.find_by_slug(intent.slug):
-            raise ConflictError(Messages.WORKSPACE_SLUG_IS_NO_LONGER_AVAILABLE)
-
         try:
             workspace = Workspace(
                 name=intent.workspace_name,

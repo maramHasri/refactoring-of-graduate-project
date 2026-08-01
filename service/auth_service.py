@@ -104,9 +104,7 @@ class AuthService:
         if workspace_kind not in (WorkspaceKind.SOLO.value, WorkspaceKind.INSTITUTION.value):
             raise ValidationError(Messages.INVALID_WORKSPACE_KIND)
 
-        slug = slug or _slugify(workspace_name)
-        if self.workspaces.find_by_slug(slug):
-            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
+        slug = (slug or "").strip() or _slugify(workspace_name)
 
         existing_intent = self.registration_intents.find_by_email(email)
         if existing_intent:
@@ -332,8 +330,6 @@ class AuthService:
     def _complete_solo_owner_registration(self, intent: RegistrationIntent) -> dict:
         if self.users.find_by_email(intent.email):
             raise ConflictError(Messages.EMAIL_IS_ALREADY_REGISTERED)
-        if self.workspaces.find_by_slug(intent.slug):
-            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
 
         user = User(
             email=intent.email,

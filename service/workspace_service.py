@@ -222,9 +222,8 @@ class WorkspaceService:
         if kind not in (WorkspaceKind.SOLO.value, WorkspaceKind.INSTITUTION.value):
             raise ValidationError(Messages.INVALID_WORKSPACE_KIND)
 
-        slug = slug or _slugify(name)
-        if self.workspaces.find_by_slug(slug):
-            raise ConflictError(Messages.WORKSPACE_SLUG_ALREADY_EXISTS)
+        # slug is optional and not unique; derive from name when omitted.
+        slug = (slug or "").strip() or _slugify(name)
 
         workspace = Workspace(
             name=name,
@@ -648,9 +647,17 @@ class WorkspaceService:
             ):
                 raise ForbiddenError(Messages.ADMIN_ACCESS_REQUIRED)
 
-        for field in ("name", "slug", "status", "subject_assignment_mode"):
+        for field in ("name", "status", "subject_assignment_mode"):
             if field in data and data[field] is not None:
                 setattr(workspace, field, data[field])
+
+        if "slug" in data:
+            raw_slug = data.get("slug")
+            if raw_slug is None or (isinstance(raw_slug, str) and not raw_slug.strip()):
+                # Optional: keep current slug when cleared/omitted as empty.
+                pass
+            else:
+                workspace.slug = str(raw_slug).strip()
 
         if "logo_url" in data:
             workspace.logo_url = (data.get("logo_url") or "").strip() or None
@@ -660,11 +667,6 @@ class WorkspaceService:
                 workspace,
                 (data.get("description") or "").strip() or None,
             )
-
-        if "slug" in data and data["slug"]:
-            existing = self.workspaces.find_by_slug(data["slug"])
-            if existing and existing.id != workspace.id:
-                raise ConflictError(Messages.SLUG_ALREADY_IN_USE)
 
         db.session.commit()
         return workspace

@@ -13,7 +13,7 @@ from utils.enums import (
 class WorkspaceSchema(Schema):
     id = fields.Int(dump_only=True)
     name = fields.Str(required=True)
-    slug = fields.Str(required=True)
+    slug = fields.Str(allow_none=True)
     kind = fields.Str(required=True)
     owner_user_id = fields.Int(required=True)
     status = fields.Str()
@@ -28,7 +28,7 @@ class CreateWorkspaceSchema(Schema):
     """POST /workspaces — authenticated owner creates a workspace."""
 
     name = fields.Str(required=True, validate=validate.Length(min=2, max=255))
-    slug = fields.Str(allow_none=True, validate=validate.Length(min=2, max=255))
+    slug = fields.Str(allow_none=True, load_default=None, validate=validate.Length(max=255))
     kind = fields.Str(
         required=True,
         validate=validate.OneOf([k.value for k in WorkspaceKind]),
@@ -39,7 +39,7 @@ class CreateWorkspaceSchema(Schema):
 
 class UpdateWorkspaceSchema(Schema):
     name = fields.Str(validate=validate.Length(min=2, max=255))
-    slug = fields.Str(validate=validate.Length(min=2, max=255))
+    slug = fields.Str(allow_none=True, validate=validate.Length(max=255))
     kind = fields.Str(validate=validate.OneOf([k.value for k in WorkspaceKind]))
     status = fields.Str(validate=validate.OneOf([s.value for s in WorkspaceStatus]))
     subject_assignment_mode = fields.Str(allow_none=True, validate=validate.Length(max=30))

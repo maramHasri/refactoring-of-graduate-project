@@ -269,9 +269,18 @@ class TestService:
             if data.get("duration_minutes") is not None:
                 raise ValidationError(Messages.SURVEY_DURATION_IS_NOT_ALLOWED)
             duration_minutes = None
+        elif mode == AvailabilityTimeMode.FLEXIBLE.value:
+            closed_at = data.get("closed_at")
+            if closed_at is not None:
+                closed_at = ensure_local_aware(closed_at)
+                if closed_at <= local_timezone_now():
+                    raise ValidationError(Messages.CLOSED_AT_MUST_BE_IN_THE_FUTURE)
+            duration_minutes = data.get("duration_minutes")
+            if duration_minutes is None:
+                duration_minutes = 30
         else:
+            # SCHEDULED (or unset): closed_at is not a create-time availability end.
             closed_at = None
-            # Exam default duration when omitted (Survey never reaches here).
             duration_minutes = data.get("duration_minutes")
             if duration_minutes is None:
                 duration_minutes = 30
@@ -411,6 +420,16 @@ class TestService:
             test.closed_at = ensure_local_aware(value) if value is not None else None
 
         self._validate_test_timing_rules(test)
+        mode = (
+            test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value
+        ).upper()
+        if (
+            "closed_at" in data
+            and test.closed_at is not None
+            and mode == AvailabilityTimeMode.FLEXIBLE.value
+            and ensure_local_aware(test.closed_at) <= local_timezone_now()
+        ):
+            raise ValidationError(Messages.CLOSED_AT_MUST_BE_IN_THE_FUTURE)
 
         if "settings_config" in data:
             test.settings_config = self._normalize_settings_config(
@@ -1227,6 +1246,38 @@ class TestService:
                 closed_ids.append(test.id)
                 logger.info(
                     "event=exam_closed test_id=%s actor_membership_id=%s reason=scheduled_window_ended result=success",
+                    test.id,
+                    "system",
+                )
+            except Exception:
+                logger.exception(
+                    "event=exam_auto_close_failed test_id=%s reason=unexpected_error result=failed",
+                    getattr(test, "id", None),
+                )
+                db.session.rollback()
+
+        return closed_ids
+
+    def close_due_flexible_tests(self) -> list[int]:
+        """
+        Close PUBLISHED flexible exams whose planned closed_at has passed.
+
+        Same mutation as manual close (`_apply_test_close`): blocks new entry only.
+        Does not finalize IN_PROGRESS attempts (they keep their expires_at deadline).
+        """
+        now = local_timezone_now()
+        candidates = self.tests.list_published_flexible_due_for_auto_close(now=now)
+        closed_ids: list[int] = []
+
+        for test in candidates:
+            try:
+                applied = self._apply_test_close(test)
+                if not applied:
+                    continue
+                db.session.commit()
+                closed_ids.append(test.id)
+                logger.info(
+                    "event=exam_closed test_id=%s actor_membership_id=%s reason=flexible_closed_at_reached result=success",
                     test.id,
                     "system",
                 )

@@ -188,6 +188,32 @@ class TestRepository(BaseRepository):
             .all()
         )
 
+    def list_published_flexible_due_for_auto_close(
+        self, *, now: datetime | None = None
+    ) -> list[Test]:
+        """
+        PUBLISHED flexible tests whose planned closed_at has been reached.
+
+        closed_at is availability end only; callers must use _apply_test_close
+        (do not finalize in-progress attempts here).
+        """
+        now = now or local_timezone_now()
+        return list(
+            db.session.execute(
+                db.select(Test)
+                .where(
+                    Test.status == TestStatus.PUBLISHED.value,
+                    Test.archived_at.is_(None),
+                    Test.availability_time_mode == AvailabilityTimeMode.FLEXIBLE.value,
+                    Test.closed_at.is_not(None),
+                    Test.closed_at <= now,
+                )
+                .order_by(Test.id.asc())
+            )
+            .scalars()
+            .all()
+        )
+
     def _find_time_overlapping_scheduled_test_ids(
         self,
         *,

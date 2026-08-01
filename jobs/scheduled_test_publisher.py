@@ -29,7 +29,8 @@ def _auto_close_due_tests(app) -> list[int]:
     with app.app_context():
         from service.test_service import TestService
 
-        return TestService().close_due_scheduled_tests()
+        svc = TestService()
+        return svc.close_due_scheduled_tests() + svc.close_due_flexible_tests()
 
 
 def _run_loop(app, interval: int) -> None:
@@ -58,7 +59,7 @@ def _run_loop(app, interval: int) -> None:
             closed_ids = _auto_close_due_tests(app)
             if closed_ids:
                 logger.info(
-                    "Auto-closed %s scheduled test(s): %s",
+                    "Auto-closed %s test(s): %s",
                     len(closed_ids),
                     closed_ids,
                 )

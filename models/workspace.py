@@ -11,7 +11,7 @@ class Workspace(db.Model, TimestampMixin):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name = db.Column(String(255), nullable=False)
-    slug = db.Column(String(255), nullable=False, unique=True)
+    slug = db.Column(String(255), nullable=False)
     kind = db.Column(String(50), nullable=False)
     owner_user_id = db.Column(
         db.Integer,

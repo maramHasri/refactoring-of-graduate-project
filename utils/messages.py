@@ -337,6 +337,7 @@ class Messages:
     SURVEY_DURATION_IS_NOT_ALLOWED = "Survey must not have duration_minutes"
     SURVEY_PROCTORING_IS_NOT_ALLOWED = "Survey must not enable proctoring"
     SURVEY_CLOSED_AT_MUST_BE_IN_THE_FUTURE = "Survey closed_at must be in the future"
+    CLOSED_AT_MUST_BE_IN_THE_FUTURE = "closed_at must be in the future"
     THE_TEACHER_ALREADY_HAS_ANOTHER_SCHEDULED_EXAM_DURING_THIS_TIME = "The teacher already has another scheduled exam during this time."
     THIS_EXAM_OVERLAPS_WITH_ANOTHER_SCHEDULED_EXAM_FOR_ONE_OR_MORE_STUDENTS = "This exam overlaps with another scheduled exam for one or more students."
     UPLOADED_CSV_FILE_IS_EMPTY = "Uploaded CSV file is empty"

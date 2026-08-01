@@ -1064,6 +1064,8 @@ class AttemptService:
             raise ValidationError(Messages.TEST_DURATION_IS_NOT_CONFIGURED)
 
         if self._is_flexible(test):
+            if test.closed_at and now >= ensure_local_aware(test.closed_at):
+                raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
             logger.info(
                 "[FLEXIBLE] Exam available for first attempt test_id=%s",
                 test.id,
@@ -1561,6 +1563,8 @@ class AttemptService:
                 return True
             return False
         if self._is_flexible(test):
+            if test.closed_at and now >= ensure_local_aware(test.closed_at):
+                return True
             return False
 
         global_end = self._scheduled_global_end_time(test)
@@ -1773,6 +1777,8 @@ class AttemptService:
         if not test.duration_minutes:
             return False
         if self._is_flexible(test):
+            if test.closed_at and now >= ensure_local_aware(test.closed_at):
+                return False
             return True
 
         if not test.starts_at:

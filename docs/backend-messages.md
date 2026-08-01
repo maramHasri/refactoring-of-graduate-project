@@ -363,6 +363,7 @@ Do not change these strings casually — they are part of the API contract.
 | PUBLISH_AT_IS_REQUIRED | publish_at is required | Validation or authorization failure message. |
 | PUBLISH_AT_MUST_BE_IN_THE_FUTURE | publish_at must be in the future | Validation or authorization failure message. |
 | STARTS_AT_MUST_BE_IN_THE_FUTURE | starts_at must be in the future | Validation when SCHEDULED exam start time is in the past. |
+| CLOSED_AT_MUST_BE_IN_THE_FUTURE | closed_at must be in the future | Validation when FLEXIBLE planned closed_at is not in the future. |
 | REQUEST_ID_DOES_NOT_BELONG_TO_THIS_TEST | request_id does not belong to this test | API response message. |
 | SCHEDULED_TESTS_CAN_ONLY_BE_EDITED_AT_LEAST_30_MINUTES_BEFORE_PUBLISH_TIME | Scheduled tests can only be edited at least 30 minutes before publish time | API response message. |
 | SCHEDULED_TEST_IS_MISSING_SCHEDULED_PUBLISH_AT | Scheduled test is missing scheduled_publish_at | API response message. |

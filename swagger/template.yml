@@ -131,7 +131,10 @@ paths:
               full_name: { type: string, example: "Jane Owner" }
               workspace_name: { type: string, example: "My Academy" }
               workspace_kind: { type: string, enum: [SOLO, INSTITUTION] }
-              slug: { type: string }
+              slug:
+                type: string
+                x-nullable: true
+                description: Optional workspace slug. Not unique across the platform.
               phone_number: { type: string }
               country: { type: string, description: Institution registration }
               city: { type: string }
@@ -450,10 +453,14 @@ paths:
           name: body
           schema:
             type: object
+            required: [name, kind]
             properties:
               name: { type: string }
               kind: { type: string, enum: [SOLO, INSTITUTION] }
-              slug: { type: string }
+              slug:
+                type: string
+                x-nullable: true
+                description: Optional. Not unique. When omitted, derived from name.
               logo_url: { type: string, example: "https://cdn.example.com/logos/school.png" }
               description: { type: string, example: "Independent teacher workspace" }
       responses:
@@ -1222,7 +1229,10 @@ paths:
             type: object
             properties:
               name: { type: string }
-              slug: { type: string }
+              slug:
+                type: string
+                x-nullable: true
+                description: Optional. Not unique across workspaces.
               logo_url: { type: string, example: "https://cdn.example.com/logos/school.png" }
               description: { type: string, example: "Independent teacher workspace" }
       responses:
@@ -2341,7 +2351,12 @@ paths:
                 type: string
                 format: date-time
                 x-nullable: true
-                description: Required for SURVEY — hard availability deadline (local app timezone).
+                description: |
+                  Required for SURVEY — availability deadline (local app timezone).
+                  Optional for FLEXIBLE — planned availability end; when reached the
+                  background job sets status=CLOSED via the same close path as manual
+                  close (in-progress attempts keep their expires_at timer).
+                  Ignored for SCHEDULED on create.
               total_score:
                 type: number
                 default: 100
@@ -2516,11 +2531,17 @@ paths:
                       allow_review_after_grading:
                         type: boolean
                         description: "When enabled, students may open graded attempt content for study (questions, their answers, correct answers, explanations, and teacher feedback). Does not control score or results visibility."
+              closed_at:
+                type: string
+                format: date-time
+                x-nullable: true
+                description: |
+                  Planned availability end for SURVEY (required) and FLEXIBLE (optional).
+                  Local app timezone datetime. Must be in the future when set on FLEXIBLE.
               availability_time_mode: { type: string, enum: [SCHEDULED, FLEXIBLE, SURVEY] }
               starts_at: { type: string, format: date-time }
               duration_minutes: { type: integer, x-nullable: true }
               entry_window_minutes: { type: integer }
-              closed_at: { type: string, format: date-time, x-nullable: true }
       responses:
         200:
           description: Test updated (excludes published_at, closed_at, archived_at)
