@@ -1203,7 +1203,9 @@ class TestService:
         """
         Close PUBLISHED scheduled exams whose global end (starts_at + duration) has passed.
 
-        Uses the same close mutation as manual close (`_apply_test_close`).
+        Uses the same close mutation as manual close (`_apply_test_close`): status/closed_at only.
+        In-progress attempts are expected to be finalized earlier in the job loop by
+        `auto_submit_due_attempts` based on natural deadlines, not by this close step.
         Each candidate is isolated: one failure is logged and does not stop the batch.
         """
         from service.attempt_service import AttemptService
@@ -1241,6 +1243,9 @@ class TestService:
         """
         Single close mutation used by manual close and auto-close.
 
+        Close blocks new entry only. Running IN_PROGRESS attempts are left intact
+        and finish via their natural deadlines / timeout worker / student submit.
+
         Returns True when close was applied, False when already CLOSED (idempotent no-op).
         Caller is responsible for committing the session after a True result.
         """
@@ -1249,10 +1254,11 @@ class TestService:
         if test.status == TestStatus.CLOSED.value:
             return False
         test.status = TestStatus.CLOSED.value
-        test.closed_at = local_timezone_now()
-        from service.attempt_service import AttemptService
-
-        AttemptService().finalize_in_progress_for_test(test)
+        now = local_timezone_now()
+        # Preserve a future planned closed_at (e.g. survey end) so running attempts
+        # still expire naturally. Stamp closed_at only when unset.
+        if test.closed_at is None:
+            test.closed_at = now
         return True
 
     def archive_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:

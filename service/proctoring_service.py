@@ -371,6 +371,12 @@ class ProctoringService:
             from router.proctoring_ws import broadcast_teacher_monitor
 
             broadcast_teacher_monitor(test_id, payload)
+            # TEMP TRACE
+            print(
+                f"[BROADCAST] {message_type} test_id={test_id} "
+                f"membership_id={student_membership_id}",
+                flush=True,
+            )
         except Exception:
             logger.exception(
                 "Failed to broadcast teacher monitor event test_id=%s type=%s",
@@ -1075,6 +1081,7 @@ class ProctoringService:
             "face_detected": ProctoringEventType.FACE_DETECTED.value,
             "face_lost": ProctoringEventType.FACE_LOST.value,
             "tab_switch": ProctoringEventType.TAB_SWITCH.value,
+            "window_blur": ProctoringEventType.WINDOW_BLUR.value,
             "warning_generated": ProctoringEventType.WARNING_GENERATED.value,
             "violation_triggered": ProctoringEventType.VIOLATION_TRIGGERED.value,
             "session_terminated": ProctoringEventType.SESSION_TERMINATED.value,
@@ -1088,17 +1095,35 @@ class ProctoringService:
         }
         normalized = type_map.get(event_type, event_type.upper())
         payload = message.get("payload") or message.get("data") or {}
+        # TEMP TRACE
+        print(f"[NORMALIZED]\n{normalized}", flush=True)
+        logger.info("[NORMALIZED] %s", normalized)
 
         if normalized == ProctoringEventType.STUDENT_JOINED.value:
-            result = self.start_session(
-                test_id=test_id,
-                attempt_id=attempt_id,
-                workspace_id=workspace_id,
-                actor_membership=actor_membership,
-                actor_user_id=actor_user_id,
-                device_metadata=payload.get("device"),
-                browser_metadata=payload.get("browser"),
+            # TEMP DIAG — Q4/Q5
+            print("[CALL start_session]", flush=True)
+            logger.info("[CALL start_session] attempt_id=%s", attempt_id)
+            try:
+                result = self.start_session(
+                    test_id=test_id,
+                    attempt_id=attempt_id,
+                    workspace_id=workspace_id,
+                    actor_membership=actor_membership,
+                    actor_user_id=actor_user_id,
+                    device_metadata=payload.get("device"),
+                    browser_metadata=payload.get("browser"),
+                )
+            except Exception as exc:
+                print(
+                    f"[START_SESSION RESULT] EXCEPTION {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                raise
+            print(
+                f"[START_SESSION RESULT] OK keys={list(result.keys()) if isinstance(result, dict) else type(result)}",
+                flush=True,
             )
+            logger.info("[START_SESSION RESULT] OK")
             return {"type": "session_started", "payload": result}
 
         result = self.ingest_event_for_attempt(

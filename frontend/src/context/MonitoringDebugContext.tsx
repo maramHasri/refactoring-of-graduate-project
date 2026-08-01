@@ -19,6 +19,7 @@ import {
 import { ApiError, checkBackendHealth } from "@/services/apiClient";
 import { proctoringApi } from "@/services/proctoringApi";
 import { ProctoringWebSocketClient } from "@/services/proctoringWebSocket";
+import { BrowserMonitor } from "@/services/browserMonitor";
 import type {
   ApiTestResult,
   AttemptSummary,
@@ -106,6 +107,7 @@ export function MonitoringDebugProvider({ children }: { children: ReactNode }) {
   });
 
   const wsClientRef = useRef<ProctoringWebSocketClient | null>(null);
+  const browserMonitorRef = useRef<BrowserMonitor | null>(null);
   const connectedAtRef = useRef<number | null>(null);
   const messageTimesRef = useRef<number[]>([]);
   const delaysRef = useRef<number[]>([]);
@@ -298,6 +300,7 @@ export function MonitoringDebugProvider({ children }: { children: ReactNode }) {
 
   const connectWs = useCallback((onOpen?: () => void) => {
     wsClientRef.current?.disconnect();
+    browserMonitorRef.current?.disarm();
     const client = new ProctoringWebSocketClient(
       config,
       (message) => {
@@ -337,6 +340,11 @@ export function MonitoringDebugProvider({ children }: { children: ReactNode }) {
         if (message.type === "session_started") {
           const payload = message.payload as { session?: ProctoringSession };
           if (payload?.session) setSession(payload.session);
+          browserMonitorRef.current?.arm();
+          pushConsole({
+            kind: "info",
+            message: "session_started received — BrowserMonitor armed",
+          });
         }
         if (message.type === "violation_triggered") {
           void refreshSessionData();
@@ -370,10 +378,15 @@ export function MonitoringDebugProvider({ children }: { children: ReactNode }) {
       },
     );
     wsClientRef.current = client;
+    browserMonitorRef.current = new BrowserMonitor((type, payload) =>
+      client.send(type, payload),
+    );
     client.connect(onOpen);
   }, [config, pushLiveEvent, pushConsole, refreshSessionData]);
 
   const disconnectWs = useCallback(() => {
+    browserMonitorRef.current?.disarm();
+    browserMonitorRef.current = null;
     wsClientRef.current?.disconnect();
   }, []);
 

@@ -774,7 +774,12 @@ class AttemptService:
         return due_attempt_ids
 
     def finalize_in_progress_for_test(self, test: Test) -> list[int]:
-        """Finalize all IN_PROGRESS attempts for a test (e.g. on close)."""
+        """
+        Force-finalize all IN_PROGRESS attempts for a test.
+
+        Not used by teacher/manual or scheduled Test close (close = block new entry only).
+        Kept for explicit maintenance / emergency batch finalization callers.
+        """
         finalized: list[int] = []
         rows = self.attempts.list_in_progress_for_test(test.id)
         for attempt in rows:
@@ -970,13 +975,13 @@ class AttemptService:
         return bool(deadline and now >= deadline)
 
     def _is_test_hard_closed(self, test: Test, now: datetime | None = None) -> bool:
-        """CLOSED/ARCHIVED status or closed_at reached — no further attempt activity."""
-        if test.status in (TestStatus.CLOSED.value, TestStatus.ARCHIVED.value):
-            return True
-        if test.archived_at is not None:
-            return True
-        now = now or local_timezone_now()
-        if test.closed_at and now >= ensure_local_aware(test.closed_at):
+        """
+        True only when the exam must stop all attempt activity (including in-progress).
+
+        Teacher/manual CLOSED is NOT hard-close: it blocks new starts only.
+        Natural attempt end uses _attempt_end_deadline (duration / global end / survey closed_at).
+        """
+        if test.status == TestStatus.ARCHIVED.value or test.archived_at is not None:
             return True
         return False
 
@@ -1009,13 +1014,10 @@ class AttemptService:
                 return None
             return ensure_local_aware(test.closed_at)
         if self._is_flexible(test):
+            # Per-attempt timer only. Teacher close must not cut running flexible attempts.
             if not attempt.expires_at:
                 return None
-            # closed_at is also a hard stop for Flexible when set.
-            ends = [ensure_local_aware(attempt.expires_at)]
-            if test.closed_at:
-                ends.append(ensure_local_aware(test.closed_at))
-            return min(ends)
+            return ensure_local_aware(attempt.expires_at)
         return self._scheduled_global_end_time(test)
 
     def _compute_attempt_expires_at(
@@ -1053,6 +1055,8 @@ class AttemptService:
         if self._is_survey(test):
             if not test.closed_at:
                 raise ValidationError(Messages.SURVEY_CLOSED_AT_IS_REQUIRED)
+            if now >= ensure_local_aware(test.closed_at):
+                raise ForbiddenError(Messages.EXAM_HAS_ALREADY_ENDED)
             logger.info("[SURVEY] Exam available for first attempt test_id=%s", test.id)
             return
 
@@ -1092,7 +1096,13 @@ class AttemptService:
     def _ensure_resume_allowed(self, attempt: TestAttempt, test: Test) -> None:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             raise ConflictError(Messages.ATTEMPT_IS_NOT_IN_PROGRESS)
-        if test.status != TestStatus.PUBLISHED.value or self._is_test_hard_closed(test):
+        # CLOSED still allows resume of an already-running attempt; ARCHIVED does not.
+        if self._is_test_hard_closed(test):
+            raise ForbiddenError(Messages.EXAM_IS_NO_LONGER_AVAILABLE_FOR_RESUME)
+        if test.status not in (
+            TestStatus.PUBLISHED.value,
+            TestStatus.CLOSED.value,
+        ):
             raise ForbiddenError(Messages.EXAM_IS_NO_LONGER_AVAILABLE_FOR_RESUME)
         deadline = self._attempt_end_deadline(attempt, test)
         if deadline and local_timezone_now() >= deadline:
@@ -1546,7 +1556,11 @@ class AttemptService:
     def _is_upcoming_window_closed(self, test: Test, now: datetime) -> bool:
         if self._is_test_hard_closed(test, now):
             return True
-        if self._is_survey(test) or self._is_flexible(test):
+        if self._is_survey(test):
+            if test.closed_at and now >= ensure_local_aware(test.closed_at):
+                return True
+            return False
+        if self._is_flexible(test):
             return False
 
         global_end = self._scheduled_global_end_time(test)
@@ -1733,7 +1747,12 @@ class AttemptService:
     def _can_resume_attempt(self, attempt: TestAttempt, test: Test) -> bool:
         if attempt.status != TestAttemptStatus.IN_PROGRESS.value:
             return False
-        if test.status != TestStatus.PUBLISHED.value or self._is_test_hard_closed(test):
+        if self._is_test_hard_closed(test):
+            return False
+        if test.status not in (
+            TestStatus.PUBLISHED.value,
+            TestStatus.CLOSED.value,
+        ):
             return False
         deadline = self._attempt_end_deadline(attempt, test)
         if deadline and local_timezone_now() >= deadline:
@@ -1746,14 +1765,16 @@ class AttemptService:
             return False
         if self._is_test_hard_closed(test):
             return False
+        now = local_timezone_now()
         if self._is_survey(test):
-            return test.closed_at is not None
+            if test.closed_at is None:
+                return False
+            return now < ensure_local_aware(test.closed_at)
         if not test.duration_minutes:
             return False
         if self._is_flexible(test):
             return True
 
-        now = local_timezone_now()
         if not test.starts_at:
             return False
         starts_at = ensure_local_aware(test.starts_at)
@@ -1763,8 +1784,8 @@ class AttemptService:
         if global_end and now >= global_end:
             return False
         if test.entry_window_minutes:
-            window_end = starts_at + timedelta(minutes=int(test.entry_window_minutes))
-            if now > window_end:
+            entry_deadline = starts_at + timedelta(minutes=int(test.entry_window_minutes))
+            if now >= entry_deadline:
                 return False
         return True
 

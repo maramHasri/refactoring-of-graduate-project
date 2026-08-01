@@ -1,7 +1,7 @@
 """
 Proctoring WebSocket channels.
 
-Student ingest (unchanged):
+Student ingest:
   ws://host/ws/proctoring/tests/{test_id}/attempts/{attempt_id}?token=<JWT>&workspace_id=<id>
 
 Teacher live monitor (delta only; REST snapshot remains source of truth):
@@ -24,7 +24,9 @@ from utils.messages import Messages
 
 import json
 import logging
+import os
 import threading
+import traceback
 from collections import defaultdict
 
 from flask import request
@@ -63,6 +65,11 @@ def unsubscribe_teacher_monitor(test_id: int, ws) -> None:
 
 def broadcast_teacher_monitor(test_id: int, message: dict) -> None:
     """Fan-out compact deltas to teachers watching this test (same process only)."""
+    # TEMP DIAG
+    print(
+        f"[PID broadcast] pid={os.getpid()} test_id={test_id} type={message.get('type')}",
+        flush=True,
+    )
     payload = json.dumps(message)
     with _teacher_monitor_lock:
         subscribers = list(_teacher_monitor_subscribers.get(int(test_id), set()))
@@ -72,6 +79,11 @@ def broadcast_teacher_monitor(test_id: int, message: dict) -> None:
             ws.send(payload)
         except Exception:
             dead.append(ws)
+            # TEMP DIAG — never swallow silently
+            print(
+                f"[BROADCAST EXCEPTION]\n{traceback.format_exc()}",
+                flush=True,
+            )
             logger.exception(
                 "Teacher monitor broadcast failed test_id=%s", test_id
             )
@@ -116,27 +128,90 @@ def register_proctoring_websocket(app) -> None:
 
     @sock.route("/ws/proctoring/tests/<int:test_id>/attempts/<int:attempt_id>")
     def proctoring_ws(ws, test_id: int, attempt_id: int):
+        # TEMP TRACE
+        print(
+            f"[PID student_ws] pid={os.getpid()} test_id={test_id} attempt_id={attempt_id}",
+            flush=True,
+        )
+        print(
+            f"[WS CONNECT] test_id={test_id} attempt_id={attempt_id}",
+            flush=True,
+        )
+        logger.info(
+            "[WS CONNECT] test_id=%s attempt_id=%s", test_id, attempt_id
+        )
+
         try:
             user, membership, workspace_id = _authenticate_ws()
         except ServiceError as exc:
             ws.send(json.dumps({"type": "error", "payload": {"error": exc.message}}))
             return
 
+        print(
+            f"[WS ACCEPTED] user_id={user.id} membership_id={getattr(membership, 'id', None)} workspace_id={workspace_id}",
+            flush=True,
+        )
         logger.info(
-            "WebSocket connected user_id=%s test_id=%s attempt_id=%s",
+            "[WS ACCEPTED] user_id=%s test_id=%s attempt_id=%s",
             user.id,
             test_id,
             attempt_id,
         )
         svc = ProctoringService()
 
+        # Root-cause fix: push session_started on connect so BrowserMonitor can arm.
+        try:
+            started = svc.start_session(
+                test_id=test_id,
+                attempt_id=attempt_id,
+                workspace_id=workspace_id,
+                actor_membership=membership,
+                actor_user_id=user.id,
+            )
+            session_started_msg = {
+                "type": "session_started",
+                "payload": started,
+            }
+            ws.send(json.dumps(session_started_msg))
+            print("[SEND session_started]", flush=True)
+            logger.info(
+                "[SEND session_started] attempt_id=%s session_id=%s",
+                attempt_id,
+                (started.get("session") or {}).get("id"),
+            )
+        except ServiceError as exc:
+            print(
+                f"[CONNECT start_session ServiceError] {exc.message!r}\n{traceback.format_exc()}",
+                flush=True,
+            )
+            ws.send(json.dumps({"type": "error", "payload": {"error": exc.message}}))
+            return
+        except Exception:
+            print(
+                f"[CONNECT start_session EXCEPTION]\n{traceback.format_exc()}",
+                flush=True,
+            )
+            logger.exception("Failed to start proctoring session on WS connect")
+            ws.send(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "payload": {"error": Messages.INTERNAL_SERVER_ERROR},
+                    }
+                )
+            )
+            return
+
+        print("[WAITING FOR CLIENT EVENTS]", flush=True)
+        logger.info("[WAITING FOR CLIENT EVENTS] attempt_id=%s", attempt_id)
+
         while True:
             raw = ws.receive()
             if raw is None:
                 break
             # TEMP TRACE
-            print(f"[WS RAW]\n{raw}", flush=True)
-            logger.info("[WS RAW]\n%s", raw)
+            print(f"[RAW MESSAGE]\n{raw}", flush=True)
+            logger.info("[RAW MESSAGE]\n%s", raw)
             try:
                 message = json.loads(raw)
             except json.JSONDecodeError:
@@ -159,21 +234,52 @@ def register_proctoring_websocket(app) -> None:
                     actor_user_id=user.id,
                     message=message,
                 )
-                ws.send(json.dumps(response))
+                # TEMP DIAG — Q6/Q8: prove session_started reply is actually sent
+                print(
+                    f"[SEND session_started] response_type={response.get('type')!r}",
+                    flush=True,
+                )
+                try:
+                    ws.send(json.dumps(response))
+                except Exception:
+                    print(
+                        f"[WS.SEND EXCEPTION]\n{traceback.format_exc()}",
+                        flush=True,
+                    )
+                    raise
+                print(
+                    f"[SESSION_SENT] response_type={response.get('type')!r}",
+                    flush=True,
+                )
             except ServiceError as exc:
+                print(
+                    f"[WS HANDLER ServiceError] {exc.message!r}\n{traceback.format_exc()}",
+                    flush=True,
+                )
                 ws.send(
                     json.dumps({"type": "error", "payload": {"error": exc.message}})
                 )
             except Exception:
-                logger.exception("WebSocket proctoring handler error")
-                ws.send(
-                    json.dumps(
-                        {
-                            "type": "error",
-                            "payload": {"error": Messages.INTERNAL_SERVER_ERROR},
-                        }
-                    )
+                # TEMP DIAG — Q2/Q8: never swallow without printing
+                print(
+                    f"[WS HANDLER EXCEPTION]\n{traceback.format_exc()}",
+                    flush=True,
                 )
+                logger.exception("WebSocket proctoring handler error")
+                try:
+                    ws.send(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "payload": {"error": Messages.INTERNAL_SERVER_ERROR},
+                            }
+                        )
+                    )
+                except Exception:
+                    print(
+                        f"[WS.SEND ERROR-REPLY EXCEPTION]\n{traceback.format_exc()}",
+                        flush=True,
+                    )
 
         logger.info(
             "WebSocket disconnected user_id=%s attempt_id=%s", user.id, attempt_id
@@ -187,6 +293,8 @@ def register_proctoring_websocket(app) -> None:
         Authz uses the same proctor access helper as REST monitoring.
         On reconnect, clients must re-fetch GET /tests/{test_id}/monitoring.
         """
+        # TEMP DIAG
+        print(f"[PID teacher_ws] pid={os.getpid()} test_id={test_id}", flush=True)
         try:
             user, membership, workspace_id = _authenticate_ws()
         except ServiceError as exc:

@@ -38,7 +38,7 @@ def test_close_test_uses_shared_apply_close():
     assert out is test
 
 
-def test_apply_test_close_sets_status_and_finalizes():
+def test_apply_test_close_sets_status_without_finalizing_attempts():
     from service.test_service import TestService
     from utils.enums import TestStatus
 
@@ -50,15 +50,33 @@ def test_apply_test_close_sets_status_and_finalizes():
         "service.test_service.local_timezone_now", return_value=fake_now
     ):
         with patch("service.attempt_service.AttemptService") as AttemptSvc:
-            AttemptSvc.return_value.finalize_in_progress_for_test.return_value = []
             applied = TestService._apply_test_close(svc, test)
 
     assert applied is True
     assert test.status == TestStatus.CLOSED.value
     assert test.closed_at == fake_now
-    AttemptSvc.return_value.finalize_in_progress_for_test.assert_called_once_with(
-        test
+    AttemptSvc.assert_not_called()
+
+
+def test_apply_test_close_preserves_future_planned_closed_at():
+    from service.test_service import TestService
+    from utils.enums import TestStatus
+
+    svc = object.__new__(TestService)
+    planned = datetime(2026, 7, 29, 18, 0, tzinfo=timezone.utc)
+    test = SimpleNamespace(
+        id=5, status=TestStatus.PUBLISHED.value, closed_at=planned
     )
+    fake_now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+
+    with patch(
+        "service.test_service.local_timezone_now", return_value=fake_now
+    ):
+        applied = TestService._apply_test_close(svc, test)
+
+    assert applied is True
+    assert test.status == TestStatus.CLOSED.value
+    assert test.closed_at == planned
 
 
 def test_apply_test_close_is_idempotent_when_already_closed():
