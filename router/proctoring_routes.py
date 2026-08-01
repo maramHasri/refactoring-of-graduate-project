@@ -218,3 +218,19 @@ def get_proctoring_grading_review(test_id, attempt_id):
         workspace_id=g.workspace_id,
         actor_membership=g.membership,
     ), 200
+
+
+@proctoring_bp.route(
+    "/<int:test_id>/attempts/<int:attempt_id>/proctoring/report",
+    methods=["GET"],
+)
+@require_workspace_membership
+@handle_service_errors
+def get_proctoring_report(test_id, attempt_id):
+    """GET /tests/{test_id}/attempts/{attempt_id}/proctoring/report — teacher/admin only."""
+    return _svc().get_proctoring_report(
+        test_id=test_id,
+        attempt_id=attempt_id,
+        workspace_id=g.workspace_id,
+        actor_membership=g.membership,
+    ), 200

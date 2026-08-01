@@ -4181,6 +4181,118 @@ paths:
               suggested_final_score: { type: number, example: 76.5 }
               current_final_score: { type: number }
               requires_teacher_approval: { type: boolean, example: true }
+  /tests/{test_id}/attempts/{attempt_id}/proctoring/report:
+    get:
+      tags: [Proctoring]
+      summary: Get unified proctoring integrity report for a finished attempt
+      description: |
+        Returns a full cheating/integrity report for one finished attempt:
+        attempt termination info, risk summary, session, violations, events timeline,
+        and evidence packages.
+
+        **Authorization:** same proctor access as events / monitoring / audit-logs
+        (`can_manage_test_attempts` — workspace owner/admin, test creator, or assigned
+        subject teacher). Students cannot access this endpoint.
+
+        Attempt must not be `IN_PROGRESS`. A proctoring session must exist.
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: test_id
+          in: path
+          type: integer
+          required: true
+        - name: attempt_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: Unified proctoring report
+          schema:
+            type: object
+            properties:
+              attempt:
+                type: object
+                properties:
+                  attempt_id: { type: integer, example: 35 }
+                  student_id: { type: integer, example: 12, description: student_membership_id }
+                  student_name: { type: string, example: "Ahmed Ali" }
+                  test_id: { type: integer, example: 51 }
+                  test_title: { type: string, example: "Midterm Exam" }
+                  status: { type: string, example: "SUBMITTED" }
+                  submission_source:
+                    type: string
+                    enum: [STUDENT, TIMEOUT, FORCE, PROCTORING_AUTO]
+                  started_at: { type: string, format: date-time }
+                  submitted_at: { type: string, format: date-time }
+                  termination_reason:
+                    type: string
+                    x-nullable: true
+                    example: "PROCTORING_THRESHOLD_EXCEEDED"
+              proctoring_summary:
+                type: object
+                properties:
+                  session_status: { type: string, enum: [ACTIVE, TERMINATED, COMPLETED] }
+                  risk_percentage: { type: number, example: 15 }
+                  effective_violation_score: { type: integer, example: 30 }
+                  total_violations: { type: integer, example: 4 }
+                  high_severity_count: { type: integer, example: 1 }
+                  medium_severity_count: { type: integer, example: 2 }
+                  low_severity_count: { type: integer, example: 1 }
+              session:
+                type: object
+                properties:
+                  session_id: { type: integer }
+                  started_at: { type: string, format: date-time }
+                  ended_at: { type: string, format: date-time, x-nullable: true }
+                  violation_score: { type: integer }
+                  tab_switch_count: { type: integer }
+                  metadata: { type: object }
+              violations:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    type: { type: string }
+                    severity: { type: string }
+                    score: { type: integer }
+                    status: { type: string }
+                    description: { type: string }
+                    occurred_at: { type: string, format: date-time }
+                    review_status: { type: string }
+                    evidence_available: { type: boolean }
+              events_timeline:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    event_type: { type: string }
+                    occurred_at: { type: string, format: date-time }
+                    source: { type: string }
+                    payload: { type: object }
+              evidence_packages:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    violation_id: { type: integer }
+                    evidence_type: { type: string, example: "SCREENSHOT" }
+                    created_at: { type: string, format: date-time }
+                    metadata: { type: object }
+              recommendation:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [SAFE, NEEDS_REVIEW, SUSPICIOUS]
+                  reason: { type: string }
+        403:
+          description: Insufficient proctoring permissions (students denied)
+        404:
+          description: Attempt or proctoring session not found
+        400:
+          description: Attempt still in progress
   /tests/{test_id}/attempts/{attempt_id}/proctoring/audit-logs:
     get:
       tags: [Proctoring]

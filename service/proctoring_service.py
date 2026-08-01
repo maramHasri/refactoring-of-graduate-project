@@ -992,6 +992,198 @@ class ProctoringService:
         rows = self.audit_logs.list_for_session(session.id)
         return [self._serialize_audit(row) for row in rows]
 
+    def get_proctoring_report(
+        self,
+        *,
+        test_id: int,
+        attempt_id: int,
+        workspace_id: int,
+        actor_membership,
+    ) -> dict:
+        """
+        Unified teacher/admin cheating-integrity report for a finished attempt.
+
+        Reuses the same proctor access gate as events / audit-logs / monitoring
+        (students are never allowed on this endpoint).
+        """
+        attempt, test = self._resolve_attempt_view(
+            test_id, attempt_id, workspace_id, actor_membership
+        )
+        self._ensure_proctor_access(test, workspace_id, actor_membership)
+
+        if attempt.status == TestAttemptStatus.IN_PROGRESS.value:
+            raise ValidationError(Messages.GRADING_RESULTS_ARE_AVAILABLE_ONLY_AFTER_SUBMISSION)
+
+        session = self.sessions.get_by_attempt_id(attempt.id)
+        if not session:
+            raise NotFoundError(Messages.PROCTORING_SESSION_NOT_FOUND)
+
+        violations = self.violations.list_for_session(session.id)
+        events = self.events.list_for_session(
+            session.id, limit=1000, ascending=True
+        )
+        question_count = len(self.test_questions.list_active_for_test(test.id))
+        risk = self.risk.calculate(
+            attempt=attempt,
+            test=test,
+            violations=violations,
+            question_count=question_count,
+        )
+
+        student_name = None
+        if attempt.user is not None and attempt.user.full_name:
+            student_name = attempt.user.full_name
+
+        return {
+            "attempt": {
+                "attempt_id": attempt.id,
+                "student_id": attempt.student_membership_id,
+                "student_name": student_name or "",
+                "test_id": test.id,
+                "test_title": test.name or "",
+                "status": attempt.status,
+                "submission_source": attempt.submission_source,
+                "started_at": (
+                    attempt.started_at.isoformat() if attempt.started_at else None
+                ),
+                "submitted_at": (
+                    attempt.submitted_at.isoformat() if attempt.submitted_at else None
+                ),
+                "termination_reason": getattr(attempt, "termination_reason", None),
+            },
+            "proctoring_summary": {
+                "session_status": session.status,
+                "risk_percentage": risk["proctoring_risk_percentage"],
+                "effective_violation_score": risk["effective_violation_score"],
+                "total_violations": risk["violations_count"],
+                "high_severity_count": risk["high_severity_count"],
+                "medium_severity_count": risk["medium_severity_count"],
+                "low_severity_count": risk["low_severity_count"],
+            },
+            "session": {
+                "session_id": session.id,
+                "started_at": (
+                    session.started_at.isoformat() if session.started_at else None
+                ),
+                "ended_at": (
+                    session.ended_at.isoformat() if session.ended_at else None
+                ),
+                "violation_score": session.violation_score,
+                "tab_switch_count": session.tab_switch_count,
+                "metadata": {
+                    "device_metadata": session.device_metadata,
+                    "browser_metadata": session.browser_metadata,
+                    "settings_snapshot": session.settings_snapshot,
+                },
+            },
+            "violations": [
+                self._serialize_report_violation(v) for v in violations
+            ],
+            "events_timeline": [
+                {
+                    "event_type": e.event_type,
+                    "occurred_at": (
+                        e.occurred_at.isoformat() if e.occurred_at else None
+                    ),
+                    "source": e.source,
+                    "payload": e.payload or {},
+                }
+                for e in events
+            ],
+            "evidence_packages": [
+                self._serialize_report_evidence(v)
+                for v in violations
+                if v.evidence_package is not None
+            ],
+            "recommendation": self._build_report_recommendation(
+                attempt=attempt,
+                risk=risk,
+            ),
+        }
+
+    def _serialize_report_violation(self, violation: ProctoringViolation) -> dict:
+        return {
+            "id": violation.id,
+            "type": violation.violation_type,
+            "severity": violation.severity,
+            "score": violation.score_contribution,
+            "status": violation.status,
+            "description": violation.description or "",
+            "occurred_at": (
+                violation.created_at.isoformat() if violation.created_at else None
+            ),
+            "review_status": violation.status,
+            "evidence_available": (
+                violation.evidence_package is not None
+                and violation.severity in _EVIDENCE_SEVERITIES
+            ),
+        }
+
+    def _serialize_report_evidence(self, violation: ProctoringViolation) -> dict:
+        package = violation.evidence_package
+        evidence_type = "PACKAGE"
+        if package.video_clip_ref:
+            evidence_type = "VIDEO"
+        elif package.screenshots:
+            evidence_type = "SCREENSHOT"
+        return {
+            "violation_id": violation.id,
+            "evidence_type": evidence_type,
+            "created_at": (
+                package.created_at.isoformat() if package.created_at else None
+            ),
+            "metadata": {
+                "device_metadata": package.device_metadata,
+                "browser_metadata": package.browser_metadata,
+                "network_metadata": package.network_metadata,
+                "screenshots": package.screenshots,
+                "video_clip_ref": package.video_clip_ref,
+                "timeline_before": package.timeline_before,
+                "timeline_after": package.timeline_after,
+                "event_logs": package.event_logs,
+            },
+        }
+
+    @staticmethod
+    def _build_report_recommendation(*, attempt: TestAttempt, risk: dict) -> dict:
+        """Derive a simple review recommendation from existing risk / termination signals."""
+        from service.proctoring_escalation import (
+            TERMINATION_SCORE_THRESHOLD,
+            WARNING_SCORE_THRESHOLD,
+        )
+
+        source = (attempt.submission_source or "").upper()
+        effective = int(risk.get("effective_violation_score") or 0)
+        high = int(risk.get("high_severity_count") or 0)
+        termination_reason = getattr(attempt, "termination_reason", None)
+
+        if (
+            source == AttemptSubmissionSource.PROCTORING_AUTO.value
+            or effective >= TERMINATION_SCORE_THRESHOLD
+            or high >= 2
+        ):
+            reason = "Automatic proctoring termination or high accumulated violation weight."
+            if termination_reason:
+                reason = f"{reason} Reason: {termination_reason}."
+            return {"status": "SUSPICIOUS", "reason": reason}
+
+        if effective >= WARNING_SCORE_THRESHOLD or high >= 1:
+            return {
+                "status": "NEEDS_REVIEW",
+                "reason": "Violation weight reached the warning threshold or includes high-severity activity.",
+            }
+
+        if int(risk.get("violations_count") or 0) > 0:
+            return {
+                "status": "NEEDS_REVIEW",
+                "reason": "Low/medium violations present; teacher review recommended.",
+            }
+
+        return {
+            "status": "SAFE",
+            "reason": "No material proctoring violations recorded for this attempt.",
+        }
+
     def terminate_session_for_attempt(
         self,
         *,
