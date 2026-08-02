@@ -325,6 +325,144 @@ class WorkspaceService:
             **result["pagination"],
         }
 
+    def export_workspace_students_csv(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        search: str | None = None,
+    ):
+        """
+        GET /workspaces/students/export — CSV of students (workspace owner only).
+
+        Reuses the same membership/subject-count query as the students list.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        self._ensure_workspace_owner_member_export_access(workspace, actor_membership)
+
+        enrolled_only = workspace.kind == WorkspaceKind.SOLO.value
+        search_term = (search or "").strip() or None
+        rows, _total = self.memberships.list_active_members_by_role_with_subject_counts(
+            workspace.id,
+            MembershipRole.STUDENT.value,
+            subject_role=SubjectRole.STUDENT.value,
+            search=search_term,
+            offset=0,
+            limit=None,
+            enrolled_in_subjects_only=enrolled_only,
+        )
+        membership_ids = [membership.id for membership, _user, _count in rows]
+        group_counts = self.student_groups.count_groups_by_student_membership_ids(
+            workspace.id, membership_ids
+        )
+
+        csv_rows = []
+        for membership, user, subject_count in rows:
+            joined = membership.joined_at or membership.created_at
+            csv_rows.append(
+                [
+                    user.full_name or "",
+                    user.email or "",
+                    format_local_datetime(joined) or "",
+                    membership.status or "",
+                    int(subject_count),
+                    int(group_counts.get(membership.id, 0)),
+                ]
+            )
+
+        date_stamp = local_timezone_now().date().isoformat()
+        from utils.csv_download import build_csv_download_response
+
+        return build_csv_download_response(
+            filename=f"students_{date_stamp}.csv",
+            headers=[
+                "Full Name",
+                "Email",
+                "Joined At",
+                "Membership Status",
+                "Enrolled Subjects Count",
+                "Student Groups Count",
+            ],
+            rows=csv_rows,
+        )
+
+    def export_workspace_teachers_csv(
+        self,
+        workspace_id: int,
+        actor_membership: Membership,
+        *,
+        search: str | None = None,
+    ):
+        """
+        GET /workspaces/teachers/export — CSV of teachers (institution owner only).
+
+        Reuses the same membership/subject-count query as the teachers list.
+        """
+        workspace = self._get_workspace_or_404(workspace_id)
+        if workspace.kind != WorkspaceKind.INSTITUTION.value:
+            raise ForbiddenError(
+                Messages.THIS_ENDPOINT_IS_ONLY_AVAILABLE_FOR_INSTITUTION_WORKSPACES
+            )
+        if not is_workspace_owner(workspace, actor_membership):
+            raise ForbiddenError(
+                Messages.ONLY_THE_WORKSPACE_OWNER_CAN_EXPORT_WORKSPACE_MEMBERS
+            )
+
+        search_term = (search or "").strip() or None
+        rows, _total = self.memberships.list_active_members_by_role_with_subject_counts(
+            workspace.id,
+            MembershipRole.TEACHER.value,
+            subject_role=SubjectRole.TEACHER.value,
+            search=search_term,
+            offset=0,
+            limit=None,
+        )
+        membership_ids = [membership.id for membership, _user, _count in rows]
+        tests_counts = self.tests.count_created_by_membership_ids(membership_ids)
+
+        csv_rows = []
+        for membership, user, subject_count in rows:
+            joined = membership.joined_at or membership.created_at
+            csv_rows.append(
+                [
+                    user.full_name or "",
+                    user.email or "",
+                    format_local_datetime(joined) or "",
+                    membership.status or "",
+                    int(subject_count),
+                    int(tests_counts.get(membership.id, 0)),
+                ]
+            )
+
+        date_stamp = local_timezone_now().date().isoformat()
+        from utils.csv_download import build_csv_download_response
+
+        return build_csv_download_response(
+            filename=f"teachers_{date_stamp}.csv",
+            headers=[
+                "Full Name",
+                "Email",
+                "Joined At",
+                "Membership Status",
+                "Assigned Subjects Count",
+                "Tests Created Count",
+            ],
+            rows=csv_rows,
+        )
+
+    def _ensure_workspace_owner_member_export_access(
+        self, workspace: Workspace, actor_membership: Membership
+    ) -> None:
+        if workspace.kind not in (
+            WorkspaceKind.INSTITUTION.value,
+            WorkspaceKind.SOLO.value,
+        ):
+            raise ForbiddenError(Messages.UNSUPPORTED_WORKSPACE_TYPE_FOR_STUDENT_LISTING)
+        if not is_workspace_owner(workspace, actor_membership):
+            raise ForbiddenError(
+                Messages.ONLY_THE_WORKSPACE_OWNER_CAN_EXPORT_WORKSPACE_MEMBERS
+            )
+
     def list_institution_workspace_tests(
         self,
         workspace_id: int,

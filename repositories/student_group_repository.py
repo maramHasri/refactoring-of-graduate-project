@@ -135,18 +135,27 @@ class StudentGroupRepository(BaseRepository):
             result.setdefault(member.group_id, []).append((member, membership, user))
         return result
 
-    def count_members_for_groups(self, group_ids: list[int]) -> dict[int, int]:
-        if not group_ids:
+    def count_groups_by_student_membership_ids(
+        self,
+        workspace_id: int,
+        student_membership_ids: list[int],
+    ) -> dict[int, int]:
+        """Count distinct student groups per student membership in a workspace."""
+        if not student_membership_ids:
             return {}
         rows = db.session.execute(
             db.select(
-                StudentGroupMember.group_id,
-                func.count(StudentGroupMember.id),
+                StudentGroupMember.student_membership_id,
+                func.count(func.distinct(StudentGroupMember.group_id)),
             )
-            .where(StudentGroupMember.group_id.in_(group_ids))
-            .group_by(StudentGroupMember.group_id)
+            .join(StudentGroup, StudentGroup.id == StudentGroupMember.group_id)
+            .where(
+                StudentGroup.workspace_id == workspace_id,
+                StudentGroupMember.student_membership_id.in_(student_membership_ids),
+            )
+            .group_by(StudentGroupMember.student_membership_id)
         ).all()
-        return {group_id: count for group_id, count in rows}
+        return {int(membership_id): int(count) for membership_id, count in rows}
 
     def count_members(self, group_id: int) -> int:
         return (

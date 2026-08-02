@@ -9,6 +9,7 @@ from schemas.workspace_schema import (
     WorkspaceAnalyticsQuerySchema,
     WorkspaceDashboardQuerySchema,
     WorkspaceMemberRemoveQuerySchema,
+    WorkspaceMembersExportQuerySchema,
     WorkspaceMembersListQuerySchema,
     WorkspaceRecentlyActiveQuerySchema,
     WorkspaceTestsListQuerySchema,
@@ -75,6 +76,22 @@ def list_institution_workspace_teachers():
     ), 200
 
 
+@workspace_bp.route("/teachers/export", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def export_institution_workspace_teachers():
+    """
+    GET /workspaces/teachers/export — CSV export of teachers.
+    Requires X-Workspace-Id. Institution workspace owner only.
+    """
+    query = WorkspaceMembersExportQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().export_workspace_teachers_csv(
+        g.workspace_id,
+        g.membership,
+        search=query.get("search"),
+    )
+
+
 @workspace_bp.route("/teachers", methods=["DELETE"])
 @require_workspace_membership
 @handle_service_errors
@@ -107,6 +124,22 @@ def list_institution_workspace_students():
         per_page=query.get("per_page"),
         search=query.get("search"),
     ), 200
+
+
+@workspace_bp.route("/students/export", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def export_institution_workspace_students():
+    """
+    GET /workspaces/students/export — CSV export of students.
+    Requires X-Workspace-Id. Workspace owner only.
+    """
+    query = WorkspaceMembersExportQuerySchema().load(request.args.to_dict())
+    return WorkspaceService().export_workspace_students_csv(
+        g.workspace_id,
+        g.membership,
+        search=query.get("search"),
+    )
 
 
 @workspace_bp.route("/tests", methods=["GET"])

@@ -172,7 +172,7 @@ class MembershipRepository(BaseRepository):
         subject_role: str,
         search: str | None = None,
         offset: int = 0,
-        limit: int = 20,
+        limit: int | None = 20,
         enrolled_in_subjects_only: bool = False,
     ) -> tuple[list[tuple[Membership, User, int]], int]:
         """
@@ -181,6 +181,8 @@ class MembershipRepository(BaseRepository):
 
         When enrolled_in_subjects_only is True, only members with at least one
         active subject enrollment in this workspace are returned (solo teacher view).
+
+        Pass ``limit=None`` to return all matching rows (CSV export).
         """
         membership_filters = [
             Membership.workspace_id == workspace_id,
@@ -231,7 +233,7 @@ class MembershipRepository(BaseRepository):
             or 0
         )
 
-        rows = db.session.execute(
+        stmt = (
             db.select(
                 Membership,
                 User,
@@ -244,8 +246,10 @@ class MembershipRepository(BaseRepository):
             )
             .where(*membership_filters, *enrollment_filter)
             .order_by(User.full_name, User.id)
-            .offset(offset)
-            .limit(limit)
-        ).all()
+        )
+        if limit is not None:
+            stmt = stmt.offset(offset).limit(limit)
+
+        rows = db.session.execute(stmt).all()
 
         return [(membership, user, int(count)) for membership, user, count in rows], total

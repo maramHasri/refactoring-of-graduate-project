@@ -134,6 +134,9 @@ class Messages:
     ONLY_THE_CREATOR_OR_WORKSPACE_ADMIN_CAN_UPDATE_THIS_BANK = "Only the creator or workspace admin can update this bank"
     ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS = "Only the institution owner or workspace admin can list workspace members"
     ONLY_THE_WORKSPACE_OWNER_CAN_DELETE_THIS_WORKSPACE = "Only the workspace owner can delete this workspace"
+    ONLY_THE_WORKSPACE_OWNER_CAN_EXPORT_WORKSPACE_MEMBERS = (
+        "Only the workspace owner can export workspace members"
+    )
     ONLY_THE_WORKSPACE_OWNER_CAN_LIST_INSTITUTION_TESTS = "Only the workspace owner can list institution tests"
     ONLY_THE_WORKSPACE_OWNER_CAN_VIEW_INSTITUTION_ANALYTICS = (
         "Only the workspace owner can view institution analytics"

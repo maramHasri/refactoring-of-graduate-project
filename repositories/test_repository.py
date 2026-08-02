@@ -94,6 +94,29 @@ class TestRepository(BaseRepository):
         )
         return rows, int(total)
 
+    def count_created_by_membership_ids(
+        self, membership_ids: list[int]
+    ) -> dict[int, int]:
+        """Count non-archived tests created by each membership id."""
+        if not membership_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(
+                Test.created_by_membership_id,
+                db.func.count(Test.id),
+            )
+            .where(
+                Test.created_by_membership_id.in_(membership_ids),
+                Test.archived_at.is_(None),
+            )
+            .group_by(Test.created_by_membership_id)
+        ).all()
+        return {
+            int(membership_id): int(count)
+            for membership_id, count in rows
+            if membership_id is not None
+        }
+
     def list_for_workspace(
         self,
         workspace_id: int,

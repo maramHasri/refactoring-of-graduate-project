@@ -547,6 +547,43 @@ paths:
           description: Membership not found in this workspace
         422:
           description: Membership is not a teacher or not active
+  /workspaces/teachers/export:
+    get:
+      tags: [Workspaces]
+      summary: Export institution teachers as CSV
+      description: |
+        Downloads a UTF-8 CSV (with BOM for Excel) of active TEACHER memberships
+        in the workspace selected via `X-Workspace-Id`.
+
+        **Authorization:** INSTITUTION workspaces only. **Workspace owner only**
+        (not ordinary admins, teachers, or students).
+
+        Reuses the same member listing query and `search` filter as
+        `GET /workspaces/teachers`. Columns are display fields only (no internal IDs).
+
+        **Filename example:** `teachers_2026-08-02.csv`
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      produces:
+        - text/csv
+      parameters:
+        - name: search
+          in: query
+          type: string
+          required: false
+          description: Same as teachers list — matches full_name or email
+      responses:
+        200:
+          description: CSV file download
+          schema:
+            type: file
+          headers:
+            Content-Disposition:
+              type: string
+              description: 'attachment; filename="teachers_YYYY-MM-DD.csv"'
+        403:
+          description: Forbidden (not institution owner)
+        404:
+          description: Workspace not found
   /workspaces/dashboard:
     get:
       tags: [Workspaces]
@@ -1192,6 +1229,45 @@ paths:
           description: Membership not found in this workspace
         422:
           description: Membership is not a student or not active
+  /workspaces/students/export:
+    get:
+      tags: [Workspaces]
+      summary: Export workspace students as CSV
+      description: |
+        Downloads a UTF-8 CSV (with BOM for Excel) of active STUDENT memberships
+        in the workspace selected via `X-Workspace-Id`.
+
+        **Authorization:** INSTITUTION or SOLO. **Workspace owner only**
+        (not ordinary admins, teachers, or students).
+
+        Reuses the same member listing query and `search` filter as
+        `GET /workspaces/students` (including SOLO enrolled-only scope).
+        Columns are display fields only (no internal IDs). No Student Code /
+        Academic Number fields exist in the current schema.
+
+        **Filename example:** `students_2026-08-02.csv`
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      produces:
+        - text/csv
+      parameters:
+        - name: search
+          in: query
+          type: string
+          required: false
+          description: Same as students list — matches full_name or email
+      responses:
+        200:
+          description: CSV file download
+          schema:
+            type: file
+          headers:
+            Content-Disposition:
+              type: string
+              description: 'attachment; filename="students_YYYY-MM-DD.csv"'
+        403:
+          description: Forbidden (not workspace owner)
+        404:
+          description: Workspace not found
   /workspaces/members/recently-active:
     get:
       tags: [Workspaces]

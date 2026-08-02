@@ -57,6 +57,12 @@ class WorkspaceMembersListQuerySchema(Schema):
     search = fields.Str(allow_none=True, validate=validate.Length(max=255))
 
 
+class WorkspaceMembersExportQuerySchema(Schema):
+    """GET /workspaces/teachers/export | /workspaces/students/export — same search as lists."""
+
+    search = fields.Str(allow_none=True, load_default=None, validate=validate.Length(max=255))
+
+
 class WorkspaceTestsListQuerySchema(Schema):
     """GET /workspaces/tests — pagination and optional status filter."""
 
