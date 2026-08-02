@@ -274,6 +274,15 @@ class ProctoringAuditAction(str, enum.Enum):
     EVIDENCE_GENERATED = "EVIDENCE_GENERATED"
     VIOLATION_REVIEWED = "VIOLATION_REVIEWED"
     WARNING_GENERATED = "WARNING_GENERATED"
+    INTEGRITY_REPORT_CREATED = "INTEGRITY_REPORT_CREATED"
+
+
+class ProctoringIntegrityReportStatus(str, enum.Enum):
+    """Review workflow for persisted proctoring integrity reports."""
+
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    DISMISSED = "DISMISSED"
 
 
 class ReportStatus(str, enum.Enum):

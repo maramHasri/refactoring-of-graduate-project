@@ -33,6 +33,7 @@ from models.proctoring import (
     ProctoringSession,
     ProctoringViolation,
 )
+from models.proctoring_integrity_report import ProctoringIntegrityReport
 from models.report import Report
 from models.billing import (
     Feature,
@@ -71,6 +72,7 @@ __all__ = [
     "ProctoringViolation",
     "ProctoringEvidencePackage",
     "ProctoringAuditLog",
+    "ProctoringIntegrityReport",
     "Report",
     "QuestionBank",
     "QuestionType",

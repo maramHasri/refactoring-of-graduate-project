@@ -14,6 +14,7 @@ from router.attempt_routes import attempt_bp
 from router.student_routes import student_bp
 from router.grading_routes import grading_bp
 from router.proctoring_routes import proctoring_bp
+from router.proctoring_integrity_report_routes import integrity_report_bp
 from router.template_routes import template_bp
 from router.uploads_routes import uploads_bp
 from router.student_group_routes import student_group_bp
@@ -39,6 +40,7 @@ def register_blueprints(app):
     app.register_blueprint(student_bp, url_prefix="/student")
     app.register_blueprint(grading_bp, url_prefix="/tests")
     app.register_blueprint(proctoring_bp, url_prefix="/tests")
+    app.register_blueprint(integrity_report_bp, url_prefix="/proctoring")
     app.register_blueprint(template_bp, url_prefix="/templates")
     app.register_blueprint(uploads_bp, url_prefix="/uploads")
     app.register_blueprint(student_group_bp)

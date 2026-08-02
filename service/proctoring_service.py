@@ -1145,7 +1145,7 @@ class ProctoringService:
         }
 
     @staticmethod
-    def _build_report_recommendation(*, attempt: TestAttempt, risk: dict) -> dict:
+    def build_integrity_recommendation(*, attempt: TestAttempt, risk: dict) -> dict:
         """Derive a simple review recommendation from existing risk / termination signals."""
         from service.proctoring_escalation import (
             TERMINATION_SCORE_THRESHOLD,
@@ -1183,6 +1183,12 @@ class ProctoringService:
             "status": "SAFE",
             "reason": "No material proctoring violations recorded for this attempt.",
         }
+
+    @staticmethod
+    def _build_report_recommendation(*, attempt: TestAttempt, risk: dict) -> dict:
+        return ProctoringService.build_integrity_recommendation(
+            attempt=attempt, risk=risk
+        )
 
     def terminate_session_for_attempt(
         self,

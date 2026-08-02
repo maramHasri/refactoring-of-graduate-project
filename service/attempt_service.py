@@ -877,7 +877,7 @@ class AttemptService:
         if not test:
             return None
 
-        return self._finalize_attempt(
+        result = self._finalize_attempt(
             attempt,
             test,
             submission_source=AttemptSubmissionSource.PROCTORING_AUTO.value,
@@ -885,6 +885,25 @@ class AttemptService:
             # Automatic proctoring end → session TERMINATED (not normal COMPLETED).
             proctoring_completed=False,
         )
+        try:
+            from service.proctoring_integrity_report_service import (
+                ProctoringIntegrityReportService,
+            )
+
+            # Attempt is already committed by _finalize_attempt; create snapshot
+            # idempotently without altering finalize/grading/session behavior.
+            refreshed = self.attempts.get_by_id(attempt_id) or attempt
+            ProctoringIntegrityReportService().create_for_proctoring_auto(
+                attempt=refreshed,
+                test=test,
+                commit=True,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to create proctoring integrity report for attempt_id=%s",
+                attempt_id,
+            )
+        return result
 
     def _upsert_answers(
         self,

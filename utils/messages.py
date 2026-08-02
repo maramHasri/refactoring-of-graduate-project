@@ -383,6 +383,16 @@ class Messages:
 
     EVIDENCE_PACKAGE_NOT_FOUND = "Evidence package not found"
     EVIDENCE_PACKAGE_NOT_GENERATED_FOR_LOW_SEVERITY = "Evidence package not generated for LOW severity"
+    INTEGRITY_REPORT_NOT_FOUND = "Integrity report not found"
+    INTEGRITY_REPORT_STATUS_UPDATED_SUCCESSFULLY = (
+        "Integrity report status updated successfully"
+    )
+    INSUFFICIENT_PERMISSIONS_FOR_INTEGRITY_REPORTS = (
+        "Insufficient permissions for integrity reports"
+    )
+    INVALID_INTEGRITY_REPORT_REVIEW_STATUS = (
+        "Invalid integrity report review status"
+    )
     INSUFFICIENT_PERMISSIONS_FOR_PROCTORING_ACCESS = "Insufficient permissions for proctoring access"
     INSUFFICIENT_PERMISSIONS_TO_VIEW_THIS_VIOLATION = "Insufficient permissions to view this violation"
     PROCTORING_IS_NOT_ENABLED_FOR_THIS_TEST = "Proctoring is not enabled for this test"
