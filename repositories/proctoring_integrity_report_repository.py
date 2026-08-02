@@ -15,6 +15,16 @@ class ProctoringIntegrityReportRepository(BaseRepository):
     def get_by_id(self, report_id: int) -> ProctoringIntegrityReport | None:
         return db.session.get(ProctoringIntegrityReport, report_id)
 
+    def count_grouped_by_status(self) -> dict[str, int]:
+        """SQL aggregation of integrity report counts by status (platform-wide)."""
+        rows = db.session.execute(
+            select(
+                ProctoringIntegrityReport.status,
+                func.count(ProctoringIntegrityReport.id),
+            ).group_by(ProctoringIntegrityReport.status)
+        ).all()
+        return {str(status): int(count or 0) for status, count in rows}
+
     def get_by_attempt_id(self, attempt_id: int) -> ProctoringIntegrityReport | None:
         return db.session.execute(
             select(ProctoringIntegrityReport).where(

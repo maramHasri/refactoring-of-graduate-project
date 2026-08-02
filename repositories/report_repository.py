@@ -31,6 +31,13 @@ class ReportRepository(BaseRepository):
             .all()
         )
 
+    def count_grouped_by_status(self) -> dict[str, int]:
+        """SQL aggregation of Support Report counts by status (platform-wide)."""
+        rows = db.session.execute(
+            select(Report.status, func.count(Report.id)).group_by(Report.status)
+        ).all()
+        return {str(status): int(count or 0) for status, count in rows}
+
     def list_for_super_admin(
         self,
         *,

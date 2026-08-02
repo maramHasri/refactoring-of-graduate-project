@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from calendar import monthrange
 
 from sqlalchemy import distinct, func
 
 from models import (
     Membership,
-    ProctoringViolation,
     Question,
     Subject,
     Test,
@@ -14,11 +14,27 @@ from models import (
     Workspace,
 )
 from repositories.base_repository import BaseRepository
+from repositories.proctoring_integrity_report_repository import (
+    ProctoringIntegrityReportRepository,
+)
+from repositories.question_bank_repository import QuestionBankRepository
+from repositories.report_repository import ReportRepository
 from utils.db import db
-from utils.enums import MembershipRole, ProctoringViolationStatus, TestAttemptStatus, WorkspaceKind
+from utils.enums import (
+    MembershipRole,
+    ProctoringIntegrityReportStatus,
+    ReportStatus,
+    TestAttemptStatus,
+    WorkspaceKind,
+)
 
 
 class SuperAdminDashboardRepository(BaseRepository):
+    def __init__(self):
+        self.question_banks = QuestionBankRepository()
+        self.reports = ReportRepository()
+        self.integrity_reports = ProctoringIntegrityReportRepository()
+
     def build_dashboard(self) -> dict:
         now = datetime.now(timezone.utc)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -26,17 +42,16 @@ class SuperAdminDashboardRepository(BaseRepository):
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         month_30_start = now - timedelta(days=30)
 
-        users = self._users_section(day_start, week_start, month_30_start, month_start)
-        organizations = self._organizations_section(month_start)
-        content = self._content_section()
-        tests = self._tests_section(day_start, week_start, month_30_start)
-        reports = self._reports_section()
         return {
-            "users": users,
-            "organizations": organizations,
-            "content": content,
-            "tests": tests,
-            "reports": reports,
+            "users": self._users_section(
+                day_start, week_start, month_30_start, month_start
+            ),
+            "organizations": self._organizations_section(month_start, month_30_start),
+            "content": self._content_section(),
+            "tests": self._tests_section(day_start, week_start, month_30_start),
+            "support_reports": self._support_reports_section(),
+            "integrity_reports": self._integrity_reports_section(),
+            "activity_series": self._activity_series_section(now),
         }
 
     def _users_section(
@@ -47,7 +62,7 @@ class SuperAdminDashboardRepository(BaseRepository):
         month_start: datetime,
     ) -> dict:
         total = db.session.execute(
-            db.select(func.count(User.id))
+            db.select(func.count(User.id)).where(User.deleted_at.is_(None))
         ).scalar_one() or 0
 
         students = self._count_distinct_users_by_role(MembershipRole.STUDENT.value)
@@ -109,7 +124,9 @@ class SuperAdminDashboardRepository(BaseRepository):
             "new_this_month": int(new_this_month),
         }
 
-    def _organizations_section(self, month_start: datetime) -> dict:
+    def _organizations_section(
+        self, month_start: datetime, month_30_start: datetime
+    ) -> dict:
         total = db.session.execute(
             db.select(func.count(Workspace.id)).where(
                 Workspace.kind == WorkspaceKind.INSTITUTION.value
@@ -134,6 +151,7 @@ class SuperAdminDashboardRepository(BaseRepository):
             )
         ).scalar_one() or 0
 
+        # Most-active: last 30 days only (login activity / tests created / attempts started)
         active_users_sq = (
             db.select(
                 Membership.workspace_id.label("workspace_id"),
@@ -143,6 +161,7 @@ class SuperAdminDashboardRepository(BaseRepository):
             .where(
                 Membership.status == "ACTIVE",
                 User.deleted_at.is_(None),
+                User.last_login_at >= month_30_start,
             )
             .group_by(Membership.workspace_id)
             .subquery()
@@ -154,6 +173,7 @@ class SuperAdminDashboardRepository(BaseRepository):
             )
             .select_from(Test)
             .join(Membership, Membership.id == Test.created_by_membership_id)
+            .where(Test.created_at >= month_30_start)
             .group_by(Membership.workspace_id)
             .subquery()
         )
@@ -165,6 +185,7 @@ class SuperAdminDashboardRepository(BaseRepository):
             .select_from(TestAttempt)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
+            .where(TestAttempt.started_at >= month_30_start)
             .group_by(Membership.workspace_id)
             .subquery()
         )
@@ -226,6 +247,7 @@ class SuperAdminDashboardRepository(BaseRepository):
         return {
             "subjects": int(subjects),
             "topics": int(topics),
+            "question_banks": int(self.question_banks.count_not_deleted()),
             "questions": int(questions),
             "tests": int(tests),
         }
@@ -243,20 +265,25 @@ class SuperAdminDashboardRepository(BaseRepository):
             db.select(func.count(TestAttempt.id))
         ).scalar_one() or 0
         attempts_today = db.session.execute(
-            db.select(func.count(TestAttempt.id)).where(TestAttempt.started_at >= day_start)
+            db.select(func.count(TestAttempt.id)).where(
+                TestAttempt.started_at >= day_start
+            )
         ).scalar_one() or 0
         attempts_week = db.session.execute(
-            db.select(func.count(TestAttempt.id)).where(TestAttempt.started_at >= week_start)
+            db.select(func.count(TestAttempt.id)).where(
+                TestAttempt.started_at >= week_start
+            )
         ).scalar_one() or 0
         attempts_month = db.session.execute(
             db.select(func.count(TestAttempt.id)).where(
                 TestAttempt.started_at >= month_30_start
             )
         ).scalar_one() or 0
+        # Reuse persisted attempt.percentage (computed by ExamGradingService) — no formula rewrite
         average_score = db.session.execute(
-            db.select(func.avg(TestAttempt.final_score)).where(
+            db.select(func.avg(TestAttempt.percentage)).where(
                 TestAttempt.status == TestAttemptStatus.GRADED.value,
-                TestAttempt.final_score.is_not(None),
+                TestAttempt.percentage.is_not(None),
             )
         ).scalar()
         return {
@@ -268,26 +295,82 @@ class SuperAdminDashboardRepository(BaseRepository):
             "average_score": round(float(average_score or 0.0), 2),
         }
 
-    def _reports_section(self) -> dict:
-        total = db.session.execute(
-            db.select(func.count(ProctoringViolation.id))
-        ).scalar_one() or 0
-        grouped = dict(
-            db.session.execute(
-                db.select(
-                    ProctoringViolation.status,
-                    func.count(ProctoringViolation.id),
-                ).group_by(ProctoringViolation.status)
-            ).all()
-        )
-        # Mapping current system statuses to dashboard semantics.
+    def _support_reports_section(self) -> dict:
+        grouped = self.reports.count_grouped_by_status()
+        unread = int(grouped.get(ReportStatus.UNREAD.value, 0))
+        in_review = int(grouped.get(ReportStatus.IN_REVIEW.value, 0))
+        resolved = int(grouped.get(ReportStatus.REVIEWED.value, 0))
+        rejected = int(grouped.get(ReportStatus.REJECTED.value, 0))
         return {
-            "total": int(total),
-            "pending": int(grouped.get(ProctoringViolationStatus.OPEN.value, 0)),
-            "under_review": int(grouped.get(ProctoringViolationStatus.REVIEWED.value, 0)),
-            "resolved": int(grouped.get(ProctoringViolationStatus.CONFIRMED.value, 0)),
-            "rejected": int(grouped.get(ProctoringViolationStatus.DISMISSED.value, 0)),
+            "total": unread + in_review + resolved + rejected,
+            "unread": unread,
+            "in_review": in_review,
+            "resolved": resolved,
+            "rejected": rejected,
         }
+
+    def _integrity_reports_section(self) -> dict:
+        grouped = self.integrity_reports.count_grouped_by_status()
+        pending = int(grouped.get(ProctoringIntegrityReportStatus.PENDING.value, 0))
+        confirmed = int(
+            grouped.get(ProctoringIntegrityReportStatus.CONFIRMED.value, 0)
+        )
+        dismissed = int(
+            grouped.get(ProctoringIntegrityReportStatus.DISMISSED.value, 0)
+        )
+        return {
+            "total": pending + confirmed + dismissed,
+            "pending": pending,
+            "confirmed": confirmed,
+            "dismissed": dismissed,
+        }
+
+    def _activity_series_section(self, now: datetime) -> dict:
+        """Monthly attempt counts for the last 12 calendar months (incl. current)."""
+        current_month_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        series_start = self._add_months(current_month_start, -11)
+
+        month_expr = func.date_trunc("month", TestAttempt.started_at)
+        rows = db.session.execute(
+            db.select(
+                month_expr.label("month_start"),
+                func.count(TestAttempt.id),
+            )
+            .where(TestAttempt.started_at >= series_start)
+            .group_by(month_expr)
+            .order_by(month_expr.asc())
+        ).all()
+
+        counts_by_month = {}
+        for month_start, count in rows:
+            if month_start is None:
+                continue
+            if month_start.tzinfo is None:
+                month_start = month_start.replace(tzinfo=timezone.utc)
+            key = month_start.astimezone(timezone.utc).strftime("%Y-%m")
+            counts_by_month[key] = int(count or 0)
+
+        attempts = []
+        cursor = series_start
+        for _ in range(12):
+            key = cursor.strftime("%Y-%m")
+            attempts.append({"month": key, "count": counts_by_month.get(key, 0)})
+            cursor = self._add_months(cursor, 1)
+
+        return {
+            "period": "LAST_12_MONTHS",
+            "granularity": "MONTH",
+            "attempts": attempts,
+        }
+
+    @staticmethod
+    def _add_months(dt: datetime, months: int) -> datetime:
+        year = dt.year + (dt.month - 1 + months) // 12
+        month = (dt.month - 1 + months) % 12 + 1
+        day = min(dt.day, monthrange(year, month)[1])
+        return dt.replace(year=year, month=month, day=day)
 
     def _count_distinct_users_by_role(self, role: str) -> int:
         return (

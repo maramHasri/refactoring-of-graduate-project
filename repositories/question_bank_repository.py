@@ -147,6 +147,17 @@ class QuestionBankRepository(BaseRepository):
             ).scalars().all()
         )
 
+    def count_not_deleted(self) -> int:
+        """Platform-wide count of question banks excluding soft-deleted rows."""
+        return (
+            db.session.execute(
+                db.select(db.func.count())
+                .select_from(QuestionBank)
+                .where(QuestionBank.deleted_at.is_(None))
+            ).scalar()
+            or 0
+        )
+
     def count_community(self) -> int:
         return (
             db.session.execute(

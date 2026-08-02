@@ -1,0 +1,809 @@
+// =============================================================================
+// QuizHub — Complete ERD (DBML for dbdiagram.io)
+// Source: SQLAlchemy models/ (current database schema)
+// Relationships: standalone Ref: only (no inline column refs)
+// =============================================================================
+
+Project QuizHub {
+  database_type: 'PostgreSQL'
+  Note: 'QuizHub multi-tenant exam platform. Roles are varchar on memberships. Soft delete via deleted_at. Support reports != proctoring integrity reports. Analytics are computed (no tables).'
+}
+
+// =============================================================================
+// 1) AUTH & USERS
+// =============================================================================
+
+Table users {
+  id int [pk, increment]
+  full_name varchar(255) [not null]
+  email varchar(255) [unique, not null]
+  password_hash varchar(255) [not null]
+  profile_image_url varchar(512)
+  phone_number varchar(20)
+  user_status varchar(30) [not null, default: 'PENDING_VERIFICATION', note: 'PENDING_VERIFICATION | PENDING_APPROVAL | REGISTRATION_REJECTED | ACTIVE | SUSPENDED | DISABLED']
+  email_verified boolean [not null, default: false]
+  is_superadmin boolean [not null, default: false]
+  last_login_at timestamptz
+  suspended_at timestamptz
+  suspension_reason text
+  deleted_at timestamptz [note: 'soft delete']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Global identity. Soft-deletable. Superadmin flag for platform ops.'
+}
+
+Table password_reset_codes {
+  id int [pk, increment]
+  user_id int [not null]
+  reset_code_hash varchar(255) [not null]
+  expires_at timestamptz [not null]
+  is_used boolean [not null, default: false]
+
+  Note: 'One-time password reset codes (hashed).'
+}
+
+Table email_otps {
+  id int [pk, increment]
+  email varchar(255) [not null]
+  user_id int
+  otp_hash varchar(255) [not null]
+  purpose varchar(30) [not null, note: 'REGISTER_OWNER | VERIFY_ACCOUNT | RESET_PASSWORD']
+  expires_at timestamptz [not null]
+  is_used boolean [not null, default: false]
+  used_at timestamptz
+  verified_at timestamptz
+  verify_attempts int [not null, default: 0]
+  created_at timestamptz [not null]
+
+  Note: 'Hashed email OTP codes for registration / verification.'
+}
+
+Table registration_intents {
+  id int [pk, increment]
+  email varchar(255) [unique, not null]
+  password_hash varchar(255) [not null]
+  full_name varchar(255) [not null]
+  phone_number varchar(20)
+  workspace_name varchar(255) [not null]
+  slug varchar(255) [not null]
+  workspace_kind varchar(50) [not null, note: 'SOLO | INSTITUTION']
+  country varchar(120)
+  city varchar(120)
+  website_url varchar(255)
+  description text
+  expires_at timestamptz [not null]
+  consumed_at timestamptz
+  user_id int
+  approval_status varchar(30) [note: 'PENDING | APPROVED | REJECTED']
+  rejection_reason text
+  reviewed_at timestamptz
+  created_at timestamptz [not null]
+
+  Note: 'Pending owner registration payload before workspace creation / approval.'
+}
+
+Table user_sessions {
+  id int [pk, increment]
+  user_id int [not null]
+  access_token_id varchar(255) [unique, not null]
+  ip_address varchar(45)
+  user_agent text
+  is_active boolean [not null, default: true]
+  last_used_at timestamptz
+  expires_at timestamptz [not null]
+  created_at timestamptz [not null]
+
+  Note: 'JWT access-token sessions for logout / revocation.'
+}
+
+// =============================================================================
+// 2) WORKSPACES / MEMBERSHIPS / INVITES
+// =============================================================================
+
+Table workspaces {
+  id int [pk, increment]
+  name varchar(255) [not null]
+  slug varchar(255) [not null, note: 'NOT unique (constraint dropped)']
+  kind varchar(50) [not null, note: 'SOLO | INSTITUTION']
+  owner_user_id int [not null]
+  owner_membership_id int [note: 'circular FK with memberships']
+  join_code varchar(20) [unique]
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | PENDING_APPROVAL | REJECTED | SUSPENDED | ARCHIVED']
+  subject_assignment_mode varchar(30)
+  is_verified_by_superadmin boolean [not null, default: false]
+  rejection_reason text
+  suspended_at timestamptz
+  suspension_reason text
+  logo_url varchar(512)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Tenant root. SOLO = personal teacher space; INSTITUTION = org with admins/teachers/students.'
+}
+
+Table memberships {
+  id int [pk, increment]
+  user_id int [not null]
+  workspace_id int [not null]
+  role varchar(30) [not null, note: 'ADMIN | TEACHER | STUDENT — no separate roles table']
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | SUSPENDED | REMOVED']
+  created_at timestamptz [not null]
+  joined_at timestamptz [not null]
+
+  indexes {
+    (user_id, workspace_id) [unique, name: 'unique_user_workspace']
+  }
+
+  Note: 'M2M users↔workspaces + workspace-level role. Primary identity inside a tenant.'
+}
+
+Table workspace_invites {
+  id int [pk, increment]
+  workspace_id int [not null]
+  email varchar(255) [not null]
+  assigned_role varchar(30) [not null, note: 'ADMIN | TEACHER | STUDENT']
+  token_hash varchar(255) [unique, not null]
+  invited_by_membership_id int
+  status varchar(30) [not null, default: 'PENDING', note: 'PENDING | ACCEPTED | REJECTED | EXPIRED']
+  expires_at timestamptz [not null]
+  accepted_at timestamptz
+  rejected_at timestamptz
+  revoked_at timestamptz
+  created_at timestamptz [not null]
+
+  Note: 'Email invites to join a workspace with a pre-assigned role.'
+}
+
+Table workspace_profiles {
+  id int [pk, increment]
+  workspace_id int [unique, not null]
+  description text
+  country varchar(120)
+  city varchar(120)
+  logo varchar(255)
+  website_url varchar(255)
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: '1:1 optional profile / branding for a workspace.'
+}
+
+// =============================================================================
+// 3) SUBJECTS / TOPICS / GROUPS
+// =============================================================================
+
+Table subjects {
+  id int [pk, increment]
+  name varchar(255) [not null]
+  workspace_id int [not null]
+  description text
+  created_by_membership_id int
+  is_archived boolean [not null, default: false]
+  deleted_at timestamptz [note: 'soft delete']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Course/subject within a workspace.'
+}
+
+Table subject_memberships {
+  id int [pk, increment]
+  subject_id int [not null]
+  membership_id int [not null]
+  subject_role varchar(30) [not null, note: 'TEACHER | STUDENT — distinct from workspace role']
+  assigned_by_membership_id int
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | REMOVED']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  deleted_at timestamptz [note: 'soft delete']
+
+  indexes {
+    (membership_id, subject_id) [unique, name: 'unique_membership_subject']
+  }
+
+  Note: 'M2M junction: memberships ↔ subjects with subject_role.'
+}
+
+Table topics {
+  id int [pk, increment]
+  name varchar(255) [not null]
+  description text
+  workspace_id int [not null]
+  subject_id int [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Topics under a subject; used to tag questions.'
+}
+
+Table student_groups {
+  id int [pk, increment]
+  workspace_id int [not null]
+  subject_id int [not null]
+  name varchar(255) [not null]
+  description text
+  created_by_membership_id int
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (subject_id, name) [unique, name: 'uq_student_groups_subject_name']
+  }
+
+  Note: 'Named student cohorts within a subject.'
+}
+
+Table student_group_members {
+  id int [pk, increment]
+  group_id int [not null]
+  student_membership_id int [not null]
+  created_at timestamptz [not null]
+
+  indexes {
+    (group_id, student_membership_id) [unique, name: 'uq_student_group_member']
+  }
+
+  Note: 'M2M junction: student_groups ↔ memberships.'
+}
+
+// =============================================================================
+// 4) QUESTION BANKS / QUESTIONS / CHOICES
+// =============================================================================
+
+Table question_types {
+  id int [pk, increment]
+  name varchar(50) [unique, not null]
+  code varchar(50) [unique, note: 'SINGLE_CHOICE | MULTIPLE_CHOICE | TRUE_FALSE | SHORT_TEXT | ESSAY']
+  description text
+
+  Note: 'Lookup table for question type codes.'
+}
+
+Table question_banks {
+  id int [pk, increment]
+  title varchar(255) [not null]
+  description text
+  workspace_id int [not null]
+  subject_id int [not null]
+  created_by_membership_id int
+  visibility varchar(30) [not null, default: 'WORKSPACE', note: 'PRIVATE | WORKSPACE | COMMUNITY']
+  is_archived boolean [not null, default: false]
+  deleted_at timestamptz [note: 'soft delete']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Reusable question pools scoped to workspace + subject.'
+}
+
+Table questions {
+  id int [pk, increment]
+  bank_id int
+  question_text text [not null]
+  image_path varchar(512)
+  explanation text
+  question_type_id int [not null]
+  owner_user_id int [not null]
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | DRAFT | ARCHIVED']
+  topic_id int
+  points numeric(6,2)
+  difficulty varchar(30) [note: 'EASY | MEDIUM | HARD']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Canonical bank questions. bank_id nullable for orphan/manual cases.'
+}
+
+Table question_choices {
+  id int [pk, increment]
+  question_id int [not null]
+  body text [not null]
+  is_correct boolean [not null, default: false]
+  order_index int
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Answer choices for MCQ / true-false style bank questions.'
+}
+
+// =============================================================================
+// 5) TESTS / ASSIGNMENTS / ATTEMPTS / ANSWERS / GRADING
+// =============================================================================
+
+Table tests {
+  id int [pk, increment]
+  name varchar(255) [not null]
+  slug varchar(255) [unique, not null]
+  description text
+  subject_id int
+  total_score numeric(8,2)
+  target_total_score numeric(8,2)
+  passing_score numeric(8,2)
+  auto_distribute_scores boolean [not null, default: false]
+  settings_config text [note: 'JSON-as-text (incl. proctoring settings)']
+  created_by_membership_id int
+  status varchar(30) [not null, default: 'DRAFT', note: 'DRAFT | SCHEDULED | PUBLISHED | CLOSED | ARCHIVED']
+  availability_time_mode varchar(30) [note: 'SCHEDULED | FLEXIBLE | SURVEY']
+  starts_at timestamptz
+  duration_minutes int
+  entry_window_minutes int
+  published_at timestamptz
+  scheduled_publish_at timestamptz
+  closed_at timestamptz
+  archived_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Exam definition (scheduling, scoring, settings).'
+}
+
+Table test_questions {
+  id int [pk, increment]
+  test_id int [not null]
+  question_id int [note: 'nullable for snapshot-only (AI/manual) items']
+  kind varchar(50) [not null, note: 'mirrors source_type']
+  source_type varchar(30) [not null, default: 'QUESTION_BANK', note: 'AI | QUESTION_BANK | RANDOM_FROM_BANK | MANUAL | IMPORT']
+  source_bank_id int [note: 'NO FK — intentional snapshot hint']
+  points numeric(6,2) [not null]
+  snapshot_question_text text [not null]
+  snapshot_image_path varchar(512)
+  snapshot_explanation text
+  snapshot_type_code varchar(50) [not null]
+  snapshot_topic_id int [note: 'NO FK — intentional']
+  snapshot_topic_name varchar(255)
+  snapshot_difficulty varchar(30)
+  snapshot_points numeric(6,2)
+  snapshot_choices_json text [note: 'JSON-as-text choices snapshot']
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | DRAFT | ARCHIVED']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (test_id, question_id) [unique, name: 'unique_test_question']
+  }
+
+  Note: 'M2M-ish tests↔questions with immutable snapshots for grading stability.'
+}
+
+Table test_student_assignments {
+  id int [pk, increment]
+  test_id int [not null]
+  student_membership_id int [not null]
+  assigned_by_membership_id int
+  invite_status varchar(30) [not null, default: 'PENDING', note: 'PENDING | SENT | FAILED']
+  invite_sent_at timestamptz
+  invite_error text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (test_id, student_membership_id) [unique, name: 'uq_test_student_assignment']
+  }
+
+  Note: 'M2M junction: tests ↔ student memberships (whitelist + invite tracking).'
+}
+
+Table test_attempts {
+  id int [pk, increment]
+  student_membership_id int [not null]
+  test_id int [not null]
+  user_id int [not null]
+  status varchar(30) [not null, default: 'IN_PROGRESS', note: 'IN_PROGRESS | SUBMITTED | GRADED']
+  started_at timestamptz [not null]
+  submitted_at timestamptz
+  expires_at timestamptz
+  last_activity_at timestamptz
+  submission_source varchar(30) [note: 'STUDENT | TIMEOUT | FORCE | PROCTORING_AUTO']
+  termination_reason varchar(80) [note: 'e.g. PROCTORING_THRESHOLD_EXCEEDED']
+  raw_score float
+  final_score float
+  percentage float
+  graded_at timestamptz
+  grading_notification_sent_at timestamptz
+
+  Note: 'One student sitting of a test. Scores + submission/termination metadata.'
+}
+
+Table attempt_answers {
+  id int [pk, increment]
+  attempt_id int [not null]
+  test_question_id int [not null]
+  answer_text text
+  selected_choice_indices text [note: 'JSON array-as-text']
+  teacher_feedback text
+  is_correct boolean
+  earned_score numeric(6,2)
+  grading_status varchar(30) [note: 'AUTO_GRADED | PENDING_REVIEW | MANUALLY_GRADED']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (attempt_id, test_question_id) [unique, name: 'unique_attempt_test_question']
+  }
+
+  Note: 'Student answer per snapshot test_question (+ grading fields).'
+}
+
+Table attempt_grading_audit_logs {
+  id int [pk, increment]
+  attempt_id int [not null]
+  action varchar(50) [not null, note: 'ATTEMPT_SUBMITTED | AUTO_GRADING_COMPLETED | MANUAL_GRADING_* | PROCTORING_RISK_CALCULATED | FINAL_SCORE_APPROVED | ...']
+  actor_membership_id int
+  actor_user_id int
+  details text
+  created_at timestamptz [not null]
+
+  Note: 'Immutable audit trail for grading / attempt lifecycle.'
+}
+
+// =============================================================================
+// 6) AI GENERATION
+// =============================================================================
+
+Table ai_generation_requests {
+  id int [pk, increment]
+  test_id int [not null]
+  created_by_membership_id int [not null]
+  topic_ids_json text [not null, note: 'JSON-as-text']
+  learning_objectives_json text [note: 'JSON-as-text']
+  count int [not null]
+  difficulty varchar(30)
+  type_code varchar(50) [not null]
+  additional_instructions text
+  status varchar(30) [not null, default: 'PENDING', note: 'PENDING | COMPLETED | FAILED']
+  error_message text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Request to generate exam questions via AI for a test.'
+}
+
+Table ai_generated_questions {
+  id int [pk, increment]
+  generation_request_id int [not null]
+  question_text text [not null]
+  type_code varchar(50) [not null]
+  options_json text
+  correct_answer_json text
+  explanation text
+  difficulty varchar(30)
+  topic_id int [not null, note: 'NO FK — snapshot of topic at generation time']
+  topic_name varchar(255) [not null]
+  points numeric(6,2) [not null, default: 1]
+  status varchar(30) [not null, default: 'PENDING_REVIEW', note: 'PENDING_REVIEW | IMPORTED']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Draft AI questions awaiting teacher review / import into test_questions.'
+}
+
+// =============================================================================
+// 7) PROCTORING SYSTEM
+// =============================================================================
+
+Table proctoring_sessions {
+  id int [pk, increment]
+  test_attempt_id int [unique, not null]
+  workspace_id int [not null]
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | TERMINATED | COMPLETED']
+  started_at timestamptz [not null]
+  ended_at timestamptz
+  violation_score int [not null, default: 0]
+  tab_switch_count int [not null, default: 0]
+  settings_snapshot jsonb
+  device_metadata jsonb
+  browser_metadata jsonb
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: '1:1 with test_attempt. Runtime proctoring state + score aggregates.'
+}
+
+Table proctoring_events {
+  id int [pk, increment]
+  session_id int [not null]
+  event_type varchar(50) [not null, note: 'FACE_* | TAB_SWITCH | COPY_PASTE | FULLSCREEN_EXIT | VIOLATION_TRIGGERED | SESSION_TERMINATED | ...']
+  payload jsonb
+  occurred_at timestamptz [not null]
+  source varchar(20) [not null, default: 'REST']
+  created_at timestamptz [not null]
+
+  Note: 'Low-level event stream ingested from client / WS / REST.'
+}
+
+Table proctoring_violations {
+  id int [pk, increment]
+  session_id int [not null]
+  violation_type varchar(50) [not null, note: 'TAB_SWITCH | FACE_NOT_DETECTED | MULTIPLE_FACES | AUDIO_ANOMALY | ...']
+  severity varchar(20) [not null, note: 'LOW | MEDIUM | HIGH']
+  score_contribution int [not null, default: 0]
+  description text
+  status varchar(30) [not null, default: 'OPEN', note: 'OPEN | REVIEWED | DISMISSED | CONFIRMED']
+  reviewed_by_membership_id int
+  reviewed_at timestamptz
+  review_notes text
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Scored violations derived from events; teacher-reviewable.'
+}
+
+Table proctoring_evidence_packages {
+  id int [pk, increment]
+  violation_id int [unique, not null]
+  timeline_before jsonb
+  timeline_after jsonb
+  screenshots jsonb
+  video_clip_ref varchar(512)
+  device_metadata jsonb
+  browser_metadata jsonb
+  network_metadata jsonb
+  event_logs jsonb
+  created_at timestamptz [not null]
+
+  Note: '1:1 evidence bundle attached to a violation.'
+}
+
+Table proctoring_audit_logs {
+  id int [pk, increment]
+  session_id int
+  violation_id int
+  action varchar(50) [not null, note: 'SESSION_STARTED | SESSION_TERMINATED | EVENT_INGESTED | VIOLATION_CREATED | EVIDENCE_GENERATED | VIOLATION_REVIEWED | INTEGRITY_REPORT_CREATED | ...']
+  actor_membership_id int
+  actor_user_id int
+  details jsonb
+  created_at timestamptz [not null]
+
+  Note: 'Immutable proctoring action audit log.'
+}
+
+Table proctoring_integrity_reports {
+  id int [pk, increment]
+  attempt_id int [unique, not null]
+  test_id int [not null]
+  subject_id int
+  workspace_id int [not null]
+  teacher_membership_id int
+  student_membership_id int [not null]
+  proctoring_session_id int
+
+  student_name varchar(255) [not null, note: 'immutable snapshot']
+  teacher_name varchar(255)
+  subject_name varchar(255)
+  test_name varchar(255) [not null]
+  workspace_name varchar(255) [not null]
+
+  risk_percentage float [not null, default: 0]
+  effective_violation_score int [not null, default: 0]
+  violations_count int [not null, default: 0]
+  high_severity_count int [not null, default: 0]
+  medium_severity_count int [not null, default: 0]
+  low_severity_count int [not null, default: 0]
+
+  final_score float
+  raw_score float
+  maximum_score float
+  percentage float
+  started_at timestamptz
+  submitted_at timestamptz
+  terminated_at timestamptz
+
+  submission_source varchar(30) [not null]
+  termination_reason varchar(80)
+  recommendation varchar(40) [not null, note: 'SAFE | NEEDS_REVIEW | SUSPICIOUS']
+  recommendation_reason text
+
+  status varchar(30) [not null, default: 'PENDING', note: 'PENDING | CONFIRMED | DISMISSED']
+  reviewed_by_membership_id int
+  reviewed_at timestamptz
+  review_note text
+
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Persisted academic-integrity report on PROCTORING_AUTO finalize. Independent from Support reports.'
+}
+
+// =============================================================================
+// 8) SUPPORT REPORTS (!= integrity)
+// =============================================================================
+
+Table reports {
+  id int [pk, increment]
+  created_by_user_id int [not null]
+  workspace_id int
+  title varchar(255) [not null]
+  description text [not null]
+  category varchar(30) [not null, default: 'OTHER', note: 'TECHNICAL | ACCOUNT | CONTENT | CHEATING | OTHER']
+  status varchar(30) [not null, default: 'UNREAD', note: 'UNREAD | IN_REVIEW | REVIEWED | REJECTED']
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'User-submitted Support tickets for platform admins — NOT academic integrity.'
+}
+
+// =============================================================================
+// 9) BILLING
+// =============================================================================
+
+Table plans {
+  id int [pk, increment]
+  name varchar(100) [not null]
+  slug varchar(255) [unique, not null]
+  description text
+  price numeric(10,2) [not null]
+  billing_cycle varchar(20) [not null, note: 'MONTHLY | YEARLY']
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null]
+
+  Note: 'Subscription plan catalog.'
+}
+
+Table features {
+  id int [pk, increment]
+  key varchar(150) [unique, not null]
+  name varchar(150) [not null]
+  description text
+  created_at timestamptz [not null]
+
+  Note: 'Feature flags / entitlements catalog.'
+}
+
+Table plan_features {
+  id int [pk, increment]
+  plan_id int [not null]
+  feature_id int [not null]
+  enabled boolean [not null, default: true]
+  limit_value int
+  created_at timestamptz [not null]
+
+  indexes {
+    (plan_id, feature_id) [unique, name: 'unique_plan_feature']
+  }
+
+  Note: 'M2M junction: plans ↔ features (+ optional limit).'
+}
+
+Table workspace_subscriptions {
+  id int [pk, increment]
+  workspace_id int [not null]
+  plan_id int [not null]
+  status varchar(30) [not null, note: 'ACTIVE | EXPIRED | CANCELED | TRIAL']
+  started_at timestamptz [not null]
+  expires_at timestamptz
+  auto_renew boolean [not null, default: false]
+  created_at timestamptz [not null]
+
+  Note: 'Primary workspace↔plan subscription path (payments attach here).'
+}
+
+Table subscriptions {
+  id int [pk, increment]
+  workspace_id int [not null]
+  plan_id int [not null]
+  status varchar(30) [not null, default: 'ACTIVE', note: 'ACTIVE | PAST_DUE | CANCELED']
+  started_at timestamptz [not null]
+  expires_at timestamptz
+  auto_renew boolean [not null, default: false]
+  created_at timestamptz [not null]
+
+  Note: 'Parallel/legacy subscription table coexisting with workspace_subscriptions.'
+}
+
+Table payments {
+  id int [pk, increment]
+  workspace_subscription_id int [not null]
+  provider varchar(50)
+  transaction_id varchar(255)
+  amount numeric(12,2) [not null]
+  currency varchar(10) [not null, default: 'USD']
+  status varchar(30) [not null, default: 'PENDING', note: 'PENDING | SUCCEEDED | FAILED']
+  request_payload jsonb
+  response_payload jsonb
+  paid_at timestamptz
+  created_at timestamptz [not null]
+
+  Note: 'Payment records for workspace_subscriptions.'
+}
+
+// =============================================================================
+// RELATIONSHIPS — standalone Ref: only
+// >  = many-to-one
+// -  = one-to-one (unique FK)
+// =============================================================================
+
+// Auth
+Ref: password_reset_codes.user_id > users.id [delete: cascade]
+Ref: email_otps.user_id > users.id [delete: cascade]
+Ref: registration_intents.user_id > users.id [delete: cascade]
+Ref: user_sessions.user_id > users.id [delete: cascade]
+
+// Workspace tenancy (memberships = M2M users↔workspaces)
+Ref: workspaces.owner_user_id > users.id [delete: restrict]
+Ref: workspaces.owner_membership_id > memberships.id [delete: set null]
+Ref: memberships.user_id > users.id [delete: cascade]
+Ref: memberships.workspace_id > workspaces.id [delete: cascade]
+Ref: workspace_invites.workspace_id > workspaces.id [delete: cascade]
+Ref: workspace_invites.invited_by_membership_id > memberships.id [delete: set null]
+Ref: workspace_profiles.workspace_id - workspaces.id [delete: cascade]
+
+// Subjects / topics / groups
+Ref: subjects.workspace_id > workspaces.id [delete: cascade]
+Ref: subjects.created_by_membership_id > memberships.id [delete: set null]
+Ref: subject_memberships.subject_id > subjects.id [delete: cascade]
+Ref: subject_memberships.membership_id > memberships.id [delete: cascade]
+Ref: subject_memberships.assigned_by_membership_id > memberships.id [delete: set null]
+Ref: topics.workspace_id > workspaces.id [delete: cascade]
+Ref: topics.subject_id > subjects.id [delete: cascade]
+Ref: student_groups.workspace_id > workspaces.id [delete: cascade]
+Ref: student_groups.subject_id > subjects.id [delete: cascade]
+Ref: student_groups.created_by_membership_id > memberships.id [delete: set null]
+Ref: student_group_members.group_id > student_groups.id [delete: cascade]
+Ref: student_group_members.student_membership_id > memberships.id [delete: cascade]
+
+// Questions
+Ref: question_banks.workspace_id > workspaces.id [delete: cascade]
+Ref: question_banks.subject_id > subjects.id [delete: cascade]
+Ref: question_banks.created_by_membership_id > memberships.id [delete: set null]
+Ref: questions.bank_id > question_banks.id [delete: cascade]
+Ref: questions.question_type_id > question_types.id [delete: restrict]
+Ref: questions.owner_user_id > users.id [delete: restrict]
+Ref: questions.topic_id > topics.id [delete: set null]
+Ref: question_choices.question_id > questions.id [delete: cascade]
+
+// Tests / attempts / grading
+Ref: tests.subject_id > subjects.id [delete: cascade]
+Ref: tests.created_by_membership_id > memberships.id [delete: set null]
+Ref: test_questions.test_id > tests.id [delete: cascade]
+Ref: test_questions.question_id > questions.id [delete: restrict]
+Ref: test_student_assignments.test_id > tests.id [delete: cascade]
+Ref: test_student_assignments.student_membership_id > memberships.id [delete: cascade]
+Ref: test_student_assignments.assigned_by_membership_id > memberships.id [delete: set null]
+Ref: test_attempts.student_membership_id > memberships.id [delete: cascade]
+Ref: test_attempts.test_id > tests.id [delete: cascade]
+Ref: test_attempts.user_id > users.id [delete: cascade]
+Ref: attempt_answers.attempt_id > test_attempts.id [delete: cascade]
+Ref: attempt_answers.test_question_id > test_questions.id [delete: cascade]
+Ref: attempt_grading_audit_logs.attempt_id > test_attempts.id [delete: cascade]
+Ref: attempt_grading_audit_logs.actor_membership_id > memberships.id [delete: set null]
+Ref: attempt_grading_audit_logs.actor_user_id > users.id [delete: set null]
+
+// AI
+Ref: ai_generation_requests.test_id > tests.id [delete: cascade]
+Ref: ai_generation_requests.created_by_membership_id > memberships.id [delete: cascade]
+Ref: ai_generated_questions.generation_request_id > ai_generation_requests.id [delete: cascade]
+
+// Proctoring
+Ref: proctoring_sessions.test_attempt_id - test_attempts.id [delete: cascade]
+Ref: proctoring_sessions.workspace_id > workspaces.id [delete: cascade]
+Ref: proctoring_events.session_id > proctoring_sessions.id [delete: cascade]
+Ref: proctoring_violations.session_id > proctoring_sessions.id [delete: cascade]
+Ref: proctoring_violations.reviewed_by_membership_id > memberships.id [delete: set null]
+Ref: proctoring_evidence_packages.violation_id - proctoring_violations.id [delete: cascade]
+Ref: proctoring_audit_logs.session_id > proctoring_sessions.id [delete: cascade]
+Ref: proctoring_audit_logs.violation_id > proctoring_violations.id [delete: set null]
+Ref: proctoring_audit_logs.actor_membership_id > memberships.id [delete: set null]
+Ref: proctoring_audit_logs.actor_user_id > users.id [delete: set null]
+
+// Integrity reports
+Ref: proctoring_integrity_reports.attempt_id - test_attempts.id [delete: cascade]
+Ref: proctoring_integrity_reports.test_id > tests.id [delete: cascade]
+Ref: proctoring_integrity_reports.subject_id > subjects.id [delete: set null]
+Ref: proctoring_integrity_reports.workspace_id > workspaces.id [delete: cascade]
+Ref: proctoring_integrity_reports.teacher_membership_id > memberships.id [delete: set null]
+Ref: proctoring_integrity_reports.student_membership_id > memberships.id [delete: set null]
+Ref: proctoring_integrity_reports.proctoring_session_id > proctoring_sessions.id [delete: set null]
+Ref: proctoring_integrity_reports.reviewed_by_membership_id > memberships.id [delete: set null]
+
+// Support
+Ref: reports.created_by_user_id > users.id [delete: cascade]
+Ref: reports.workspace_id > workspaces.id [delete: set null]
+
+// Billing
+Ref: plan_features.plan_id > plans.id [delete: cascade]
+Ref: plan_features.feature_id > features.id [delete: cascade]
+Ref: workspace_subscriptions.workspace_id > workspaces.id [delete: cascade]
+Ref: workspace_subscriptions.plan_id > plans.id [delete: restrict]
+Ref: subscriptions.workspace_id > workspaces.id [delete: cascade]
+Ref: subscriptions.plan_id > plans.id [delete: restrict]
+Ref: payments.workspace_subscription_id > workspace_subscriptions.id [delete: cascade]

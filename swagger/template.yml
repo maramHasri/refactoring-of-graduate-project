@@ -5048,10 +5048,20 @@ paths:
       summary: Global platform dashboard for super admins
       description: |
         Returns platform-wide aggregated statistics across all organizations.
-        Access: Super Admin only.
+        Access: Super Admin only. No query filters.
 
-        Reports section is mapped from current proctoring violation statuses:
-        OPEN -> pending, REVIEWED -> under_review, CONFIRMED -> resolved, DISMISSED -> rejected.
+        Notes:
+        - users.total excludes soft-deleted users (`deleted_at IS NULL`).
+        - users.active_* uses `User.last_login_at`.
+        - organizations.most_active is ranked on the last 30 days only
+          (active logins, tests created, attempts started).
+        - tests.average_score = AVG(`TestAttempt.percentage`) for GRADED attempts
+          (reuses the persisted percentage from ExamGradingService).
+        - support_reports uses Support `Report` statuses
+          (UNREAD / IN_REVIEW / REVIEWED→resolved / REJECTED).
+        - integrity_reports uses `ProctoringIntegrityReport` statuses
+          (PENDING / CONFIRMED / DISMISSED) — not ProctoringViolation.
+        - activity_series: monthly attempt counts for LAST_12_MONTHS by `started_at`.
       security: [{ Bearer: [] }]
       responses:
         200:
@@ -5093,6 +5103,7 @@ paths:
                 properties:
                   subjects: { type: integer, example: 220 }
                   topics: { type: integer, example: 1450 }
+                  question_banks: { type: integer, example: 890 }
                   questions: { type: integer, example: 31200 }
                   tests: { type: integer, example: 5800 }
               tests:
@@ -5103,15 +5114,34 @@ paths:
                   attempts_today: { type: integer, example: 1400 }
                   attempts_week: { type: integer, example: 9300 }
                   attempts_month: { type: integer, example: 37600 }
-                  average_score: { type: number, example: 74.3 }
-              reports:
+                  average_score: { type: number, example: 74.3, description: "AVG(percentage) for GRADED attempts" }
+              support_reports:
                 type: object
                 properties:
                   total: { type: integer, example: 980 }
-                  pending: { type: integer, example: 120 }
-                  under_review: { type: integer, example: 210 }
+                  unread: { type: integer, example: 120 }
+                  in_review: { type: integer, example: 210 }
                   resolved: { type: integer, example: 520 }
                   rejected: { type: integer, example: 130 }
+              integrity_reports:
+                type: object
+                properties:
+                  total: { type: integer, example: 85 }
+                  pending: { type: integer, example: 22 }
+                  confirmed: { type: integer, example: 40 }
+                  dismissed: { type: integer, example: 23 }
+              activity_series:
+                type: object
+                properties:
+                  period: { type: string, example: LAST_12_MONTHS }
+                  granularity: { type: string, example: MONTH }
+                  attempts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        month: { type: string, example: "2026-01" }
+                        count: { type: integer, example: 120 }
         403:
           description: Super admin access required
         401:
