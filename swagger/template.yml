@@ -692,6 +692,199 @@ paths:
           description: Forbidden (not workspace owner/admin, or unsupported workspace kind)
         404:
           description: Workspace not found
+  /workspaces/analytics:
+    get:
+      tags: [Workspaces]
+      summary: Institution Analytics Dashboard
+      description: |
+        Full Institution Analytics Dashboard for the workspace selected via
+        `X-Workspace-Id`.
+
+        **Authorization:** INSTITUTION workspaces only. Caller must be the
+        workspace owner (`owner_membership_id`). Teachers, students, non-owner
+        admins, and Super Admin (without owner membership) receive 403.
+
+        **Scope:** All metrics are confined to the current workspace. Academic
+        attempt metrics filter on `TestAttempt.graded_at` (GRADED attempts,
+        mean of `percentage`).
+
+        **Filters (all optional):**
+        - `date_from` / `date_to` — default last 30 days when omitted
+        - `subject_id` — limit to one subject in this workspace
+        - `teacher_membership_id` — limit to tests created by that teacher
+
+        Overview cards include `change_percentage` vs the immediately preceding
+        equal-length window.
+
+        **Most Engaged Subjects** activity score =
+        `0.6 * students_count + 0.2 * teachers_count + 0.2 * tests_count`.
+
+        **Problematic exams** composite rank uses average proctoring risk %
+        (same formula as `ProctoringRiskService`) + violations count +
+        `integrity_reports_count` where integrity reports are attempts with
+        `submission_source=PROCTORING_AUTO` (there is no separate persisted
+        Proctoring Report table; Support `Report` rows are not used).
+      security: [{ Bearer: [], WorkspaceId: [] }]
+      parameters:
+        - name: date_from
+          in: query
+          type: string
+          format: date-time
+          required: false
+          description: Start of graded_at window (local naive ISO). Default now-30d.
+        - name: date_to
+          in: query
+          type: string
+          format: date-time
+          required: false
+          description: End of graded_at window (local naive ISO). Default now.
+        - name: subject_id
+          in: query
+          type: integer
+          required: false
+        - name: teacher_membership_id
+          in: query
+          type: integer
+          required: false
+      responses:
+        200:
+          description: Institution analytics payload
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+              filters:
+                type: object
+                properties:
+                  date_from: { type: string }
+                  date_to: { type: string }
+                  subject_id: { type: integer, x-nullable: true }
+                  teacher_membership_id: { type: integer, x-nullable: true }
+              overview:
+                type: object
+                properties:
+                  total_students:
+                    type: object
+                    properties:
+                      value: { type: integer }
+                      change_percentage: { type: number }
+                  total_teachers:
+                    type: object
+                    properties:
+                      value: { type: integer }
+                      change_percentage: { type: number }
+                  total_tests:
+                    type: object
+                    properties:
+                      value: { type: integer }
+                      change_percentage: { type: number }
+                  total_attempts:
+                    type: object
+                    properties:
+                      value: { type: integer }
+                      change_percentage: { type: number }
+                  institution_average_score:
+                    type: object
+                    properties:
+                      value: { type: number }
+                      change_percentage: { type: number }
+                  active_students:
+                    type: object
+                    properties:
+                      value: { type: integer }
+                      change_percentage: { type: number }
+              pass_fail:
+                type: object
+                properties:
+                  pass_rate: { type: number }
+                  fail_rate: { type: number }
+                  passed_attempts: { type: integer }
+                  failed_attempts: { type: integer }
+              monthly_average_scores:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    period: { type: string, example: "2026-01" }
+                    average_score: { type: number }
+              most_engaged_subjects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    students_count: { type: integer }
+                    teachers_count: { type: integer }
+                    tests_count: { type: integer }
+                    average_score: { type: number, x-nullable: true }
+                    activity_score: { type: number }
+              best_subjects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    average_score: { type: number }
+                    attempt_count: { type: integer }
+              weakest_subjects:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    subject_id: { type: integer }
+                    subject_name: { type: string }
+                    average_score: { type: number }
+                    attempt_count: { type: integer }
+              teacher_activity:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    teacher_membership_id: { type: integer }
+                    teacher_name: { type: string }
+                    tests_created: { type: integer }
+                    targeted_students: { type: integer }
+                    average_student_score: { type: number, x-nullable: true }
+                    completion_rate: { type: number }
+              top_students:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    student_membership_id: { type: integer }
+                    student_name: { type: string }
+                    average_score: { type: number }
+                    completed_tests: { type: integer }
+                    profile_image: { type: string, x-nullable: true }
+              inactive_students:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    student_membership_id: { type: integer }
+                    student_name: { type: string }
+                    days_inactive: { type: integer }
+                    last_activity_at: { type: string, x-nullable: true }
+              problematic_exams:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    test_id: { type: integer }
+                    test_name: { type: string }
+                    subject_name: { type: string, x-nullable: true }
+                    risk_percentage: { type: number }
+                    violations_count: { type: integer }
+                    integrity_reports_count: { type: integer }
+                    average_score: { type: number, x-nullable: true }
+        403:
+          description: Forbidden (not institution workspace owner)
+        404:
+          description: Workspace not found
+        422:
+          description: Invalid filters (date range, subject, or teacher)
   /workspaces/teacher-dashboard:
     get:
       tags: [Workspaces]

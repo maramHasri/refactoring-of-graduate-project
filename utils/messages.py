@@ -104,6 +104,9 @@ class Messages:
     MEMBERSHIP_ALREADY_HAS_A_DIFFERENT_SUBJECT_ROLE_ON_THIS_SUBJECT = "Membership already has a different subject role on this subject"
     MEMBERSHIP_IS_NOT_ACTIVE = "Membership is not active"
     MEMBERSHIP_IS_NOT_A_WORKSPACE_ROLE = "Membership is not a workspace {role}"
+    DATE_FROM_MUST_BE_BEFORE_OR_EQUAL_TO_DATE_TO = (
+        "date_from must be before or equal to date_to"
+    )
     MEMBERSHIP_NOT_FOUND_IN_THIS_WORKSPACE = "Membership not found in this workspace"
     MEMBERSHIP_ROLE_MUST_BE_STUDENT = "Membership role must be STUDENT"
     MEMBER_DETAILS_ARE_ONLY_AVAILABLE_FOR_STUDENTS_AND_TEACHERS = "Member details are only available for students and teachers"
@@ -132,6 +135,9 @@ class Messages:
     ONLY_THE_INSTITUTION_OWNER_OR_WORKSPACE_ADMIN_CAN_LIST_WORKSPACE_MEMBERS = "Only the institution owner or workspace admin can list workspace members"
     ONLY_THE_WORKSPACE_OWNER_CAN_DELETE_THIS_WORKSPACE = "Only the workspace owner can delete this workspace"
     ONLY_THE_WORKSPACE_OWNER_CAN_LIST_INSTITUTION_TESTS = "Only the workspace owner can list institution tests"
+    ONLY_THE_WORKSPACE_OWNER_CAN_VIEW_INSTITUTION_ANALYTICS = (
+        "Only the workspace owner can view institution analytics"
+    )
     ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_LIST_STUDENTS = "Only the workspace owner or admin can list students"
     ONLY_THE_WORKSPACE_OWNER_OR_ADMIN_CAN_MANAGE_WORKSPACE_MEMBERS = "Only the workspace owner or admin can manage workspace members"
     ONLY_WORKSPACE_OWNER_OR_ADMIN_CAN_ARCHIVE_SUBJECTS = "Only workspace owner or admin can archive subjects"

@@ -6,6 +6,7 @@ from schemas.workspace_schema import (
     CreateWorkspaceSchema,
     UpdateWorkspaceMemberSchema,
     UpdateWorkspaceSchema,
+    WorkspaceAnalyticsQuerySchema,
     WorkspaceDashboardQuerySchema,
     WorkspaceMemberRemoveQuerySchema,
     WorkspaceMembersListQuerySchema,
@@ -14,6 +15,7 @@ from schemas.workspace_schema import (
 )
 from service.student_group_service import StudentGroupService
 from service.teacher_dashboard_service import TeacherDashboardService
+from service.institution_analytics_service import InstitutionAnalyticsService
 from service.workspace_dashboard_service import WorkspaceDashboardService
 from service.workspace_service import WorkspaceService
 
@@ -157,6 +159,25 @@ def get_institution_workspace_dashboard():
         g.membership,
         recent_limit=query["recent_limit"],
         upcoming_limit=query["upcoming_limit"],
+    ), 200
+
+
+@workspace_bp.route("/analytics", methods=["GET"])
+@require_workspace_membership
+@handle_service_errors
+def get_institution_workspace_analytics():
+    """
+    GET /workspaces/analytics — Institution Analytics Dashboard.
+    Requires X-Workspace-Id. Institution workspace owner only.
+    """
+    query = WorkspaceAnalyticsQuerySchema().load(request.args.to_dict())
+    return InstitutionAnalyticsService().get_analytics(
+        g.workspace_id,
+        g.membership,
+        date_from=query.get("date_from"),
+        date_to=query.get("date_to"),
+        subject_id=query.get("subject_id"),
+        teacher_membership_id=query.get("teacher_membership_id"),
     ), 200
 
 

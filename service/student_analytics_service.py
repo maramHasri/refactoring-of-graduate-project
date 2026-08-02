@@ -269,12 +269,35 @@ class StudentAnalyticsService:
         }
 
     @staticmethod
-    def _attempt_is_passed(attempt: TestAttempt, test: Test) -> bool:
+    def attempt_is_passed_scores(final_score, passing_score) -> bool:
         """Pass/fail uses the exam's configured passing_score (absolute points)."""
-        if test.passing_score is not None and attempt.final_score is not None:
-            return float(attempt.final_score) >= float(test.passing_score)
+        if passing_score is not None and final_score is not None:
+            return float(final_score) >= float(passing_score)
         # No passing threshold configured — treat as passed (cannot fail without a bar).
         return True
+
+    @staticmethod
+    def _attempt_is_passed(attempt: TestAttempt, test: Test) -> bool:
+        return StudentAnalyticsService.attempt_is_passed_scores(
+            attempt.final_score, test.passing_score
+        )
+
+    @staticmethod
+    def pass_sql_expression(final_score_col, passing_score_col):
+        """SQL CASE equivalent of ``attempt_is_passed_scores`` (1=pass, 0=fail)."""
+        from sqlalchemy import and_, case
+
+        return case(
+            (
+                and_(
+                    passing_score_col.is_not(None),
+                    final_score_col.is_not(None),
+                    final_score_col < passing_score_col,
+                ),
+                0,
+            ),
+            else_=1,
+        )
 
     def _build_subject_extremes(
         self, graded_attempts: list[TestAttempt]

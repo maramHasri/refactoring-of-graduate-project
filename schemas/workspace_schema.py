@@ -1,5 +1,6 @@
 from marshmallow import Schema, fields, validate
 
+from schemas.app_timezone_fields import LocalDateTime
 from utils.enums import (
     InviteStatus,
     MembershipRole,
@@ -72,6 +73,15 @@ class WorkspaceDashboardQuerySchema(Schema):
 
     recent_limit = fields.Int(load_default=5, validate=validate.Range(min=1, max=20))
     upcoming_limit = fields.Int(load_default=10, validate=validate.Range(min=1, max=50))
+
+
+class WorkspaceAnalyticsQuerySchema(Schema):
+    """GET /workspaces/analytics — optional date and scope filters."""
+
+    date_from = LocalDateTime(allow_none=True, load_default=None)
+    date_to = LocalDateTime(allow_none=True, load_default=None)
+    subject_id = fields.Int(allow_none=True, load_default=None)
+    teacher_membership_id = fields.Int(allow_none=True, load_default=None)
 
 
 class WorkspaceMemberRemoveQuerySchema(Schema):
