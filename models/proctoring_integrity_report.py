@@ -79,6 +79,7 @@ class ProctoringIntegrityReport(db.Model, TimestampMixin):
     final_score = db.Column(Float, nullable=True)
     raw_score = db.Column(Float, nullable=True)
     maximum_score = db.Column(Float, nullable=True)
+    percentage = db.Column(Float, nullable=True)
     started_at = db.Column(db.DateTime(timezone=True), nullable=True)
     submitted_at = db.Column(db.DateTime(timezone=True), nullable=True)
     terminated_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -123,15 +124,21 @@ class ProctoringIntegrityReport(db.Model, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("attempt_id", name="uq_proctoring_integrity_reports_attempt"),
-        Index(
-            "ix_pir_workspace_status_created",
-            "workspace_id",
-            "status",
-            "created_at",
-        ),
-        Index("ix_pir_workspace_test", "workspace_id", "test_id"),
-        Index("ix_pir_workspace_subject", "workspace_id", "subject_id"),
-    )
+            Index(
+                "ix_pir_workspace_status_created",
+                "workspace_id",
+                "status",
+                "created_at",
+            ),
+            Index("ix_pir_workspace_test", "workspace_id", "test_id"),
+            Index("ix_pir_workspace_subject", "workspace_id", "subject_id"),
+            Index(
+                "ix_pir_workspace_teacher_created",
+                "workspace_id",
+                "teacher_membership_id",
+                "created_at",
+            ),
+        )
 
     def __repr__(self):
         return (

@@ -150,6 +150,7 @@ def test_create_builds_snapshot_and_audit():
         student_membership=None,
         final_score=None,
         raw_score=80.0,
+        percentage=80.0,
         started_at=None,
         submitted_at=None,
     )
@@ -173,6 +174,7 @@ def test_create_builds_snapshot_and_audit():
     assert report.subject_name == "Math"
     assert report.workspace_name == "Uni"
     assert report.risk_percentage == 42.5
+    assert report.percentage == 80.0
     assert report.recommendation == "SUSPICIOUS"
     assert report.status == "PENDING"
     audit = next(
@@ -259,6 +261,7 @@ def test_review_updates_status_not_attempt():
         final_score=None,
         raw_score=10.0,
         maximum_score=100.0,
+        percentage=10.0,
         started_at=None,
         submission_source="PROCTORING_AUTO",
         recommendation_reason="x",
@@ -291,35 +294,126 @@ def test_review_updates_status_not_attempt():
     assert not hasattr(svc, "attempts") or True
 
 
-def test_finalize_for_proctoring_auto_triggers_integrity_report():
+def test_finalize_proctoring_auto_creates_report_in_same_commit():
+    """PROCTORING_AUTO: terminate(commit=False) + create(commit=False) + one commit."""
     from service.attempt_service import AttemptService
 
     svc = AttemptService()
-    svc.tests = MagicMock()
-    attempt = SimpleNamespace(id=9, status="IN_PROGRESS", test_id=1, test=None)
+    attempt = SimpleNamespace(
+        id=9,
+        status="IN_PROGRESS",
+        test_id=1,
+        test=None,
+        student_membership_id=1,
+        user_id=2,
+        termination_reason=None,
+        submission_source=None,
+        submitted_at=None,
+        last_activity_at=None,
+        raw_score=None,
+    )
     test = SimpleNamespace(id=1)
-    svc.tests.get_by_id.return_value = test
-    svc.attempts = MagicMock()
-    svc.attempts.get_by_id.return_value = attempt
 
-    with patch("utils.db.db.session") as mock_session:
-        mock_session.execute.return_value.scalar_one_or_none.return_value = attempt
-        with patch.object(
-            AttemptService,
-            "_finalize_attempt",
-            return_value={"attempt": {"id": 9}},
-        ) as finalize:
-            with patch(
-                "service.proctoring_integrity_report_service.ProctoringIntegrityReportService"
-            ) as ReportSvc:
-                instance = ReportSvc.return_value
-                result = svc.finalize_for_proctoring_auto(attempt_id=9)
-                assert result == {"attempt": {"id": 9}}
-                finalize.assert_called_once()
-                assert (
-                    finalize.call_args.kwargs["submission_source"] == "PROCTORING_AUTO"
-                )
-                instance.create_for_proctoring_auto.assert_called_once()
+    svc.grading = MagicMock()
+    svc.grading.process_submission_grading.return_value = False
+    svc.attempts = MagicMock()
+    svc.serialize_attempt = MagicMock(return_value={"id": 9})
+
+    with patch.object(svc, "_maybe_terminate_proctoring") as terminate:
+        with patch(
+            "service.proctoring_integrity_report_service.ProctoringIntegrityReportService"
+        ) as ReportSvc:
+            instance = ReportSvc.return_value
+            instance.create_for_proctoring_auto.return_value = SimpleNamespace(id=1)
+            with patch("utils.db.db.session") as mock_session:
+                mock_session.commit = MagicMock()
+                with patch.object(svc, "_notify_teacher_monitoring"):
+                    result = svc._finalize_attempt(
+                        attempt,
+                        test,
+                        submission_source="PROCTORING_AUTO",
+                        termination_reason="PROCTORING_THRESHOLD_EXCEEDED",
+                        proctoring_completed=False,
+                    )
+            terminate.assert_called_once()
+            assert terminate.call_args.kwargs.get("commit") is False
+            instance.create_for_proctoring_auto.assert_called_once()
+            assert instance.create_for_proctoring_auto.call_args.kwargs["commit"] is False
+            mock_session.commit.assert_called_once()
+            assert result["attempt"]["id"] == 9
+
+
+def test_finalize_student_submit_does_not_create_integrity_report():
+    from service.attempt_service import AttemptService
+
+    svc = AttemptService()
+    attempt = SimpleNamespace(
+        id=9,
+        status="IN_PROGRESS",
+        test_id=1,
+        student_membership_id=1,
+        user_id=2,
+        termination_reason=None,
+        submission_source=None,
+        submitted_at=None,
+        last_activity_at=None,
+        raw_score=None,
+    )
+    test = SimpleNamespace(id=1)
+    svc.grading = MagicMock()
+    svc.grading.process_submission_grading.return_value = False
+    svc.serialize_attempt = MagicMock(return_value={"id": 9})
+
+    with patch.object(svc, "_maybe_terminate_proctoring") as terminate:
+        with patch(
+            "service.proctoring_integrity_report_service.ProctoringIntegrityReportService"
+        ) as ReportSvc:
+            with patch("utils.db.db.session") as mock_session:
+                mock_session.commit = MagicMock()
+                with patch.object(svc, "_notify_teacher_monitoring"):
+                    svc._finalize_attempt(
+                        attempt,
+                        test,
+                        submission_source="STUDENT",
+                    )
+            terminate.assert_called_once()
+            assert "commit" not in terminate.call_args.kwargs or terminate.call_args.kwargs.get(
+                "commit", True
+            ) is True
+            ReportSvc.assert_not_called()
+
+
+def test_review_rejects_when_not_pending():
+    from service.exceptions import ConflictError
+    from service.proctoring_integrity_report_service import (
+        ProctoringIntegrityReportService,
+    )
+    from utils.messages import Messages
+
+    svc = ProctoringIntegrityReportService()
+    report = SimpleNamespace(
+        id=1,
+        workspace_id=1,
+        teacher_membership_id=10,
+        status="CONFIRMED",
+    )
+    svc.reports = MagicMock()
+    svc.reports.get_by_id.return_value = report
+    svc.workspaces = MagicMock()
+    svc.workspaces.get_by_id.return_value = SimpleNamespace(
+        id=1, kind="INSTITUTION", owner_membership_id=10
+    )
+    actor = SimpleNamespace(id=10, role="ADMIN")
+    try:
+        svc.review_report(
+            report_id=1,
+            workspace_id=1,
+            actor_membership=actor,
+            status="DISMISSED",
+        )
+        assert False, "expected ConflictError"
+    except ConflictError as exc:
+        assert Messages.INTEGRITY_REPORT_ALREADY_REVIEWED in str(exc)
 
 
 def test_routes_registered():

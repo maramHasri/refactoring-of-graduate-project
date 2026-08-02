@@ -21,7 +21,7 @@ from repositories.proctoring_repository import (
 from repositories.test_repository import TestQuestionRepository, TestRepository
 from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exam_grading_service import ExamGradingService
-from service.exceptions import ForbiddenError, NotFoundError, ValidationError
+from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from service.proctoring_risk_service import ProctoringRiskService
 from utils.app_timezone import format_local_datetime, local_timezone_now
 from utils.db import db
@@ -80,10 +80,10 @@ class ProctoringIntegrityReportService:
         workspace = self._resolve_workspace(attempt, test, session)
         if workspace is None:
             logger.error(
-                "Skipping integrity report — workspace unresolved attempt_id=%s",
+                "Cannot create integrity report — workspace unresolved attempt_id=%s",
                 attempt.id,
             )
-            return None
+            raise ConflictError(Messages.INTEGRITY_REPORT_COULD_NOT_BE_CREATED)
 
         violations = (
             self.violations.list_for_session(session.id) if session is not None else []
@@ -139,6 +139,11 @@ class ProctoringIntegrityReportService:
             final_score=attempt.final_score,
             raw_score=attempt.raw_score,
             maximum_score=self.grading.maximum_score(test),
+            # Snapshot of attempt.percentage already set by ExamGradingService
+            # (recompute_attempt_scores / _set_percentage_from_score) during finalize.
+            percentage=(
+                float(attempt.percentage) if attempt.percentage is not None else None
+            ),
             started_at=attempt.started_at,
             submitted_at=attempt.submitted_at,
             terminated_at=terminated_at,
@@ -243,6 +248,9 @@ class ProctoringIntegrityReportService:
         report = self._get_accessible_report(
             report_id, workspace_id, actor_membership
         )
+        if report.status != ProctoringIntegrityReportStatus.PENDING.value:
+            raise ConflictError(Messages.INTEGRITY_REPORT_ALREADY_REVIEWED)
+
         report.status = status
         report.reviewed_by_membership_id = actor_membership.id
         report.reviewed_at = local_timezone_now()
@@ -363,6 +371,7 @@ class ProctoringIntegrityReportService:
             "final_score": report.final_score,
             "raw_score": report.raw_score,
             "maximum_score": report.maximum_score,
+            "percentage": report.percentage,
             "started_at": format_local_datetime(report.started_at),
             "submission_source": report.submission_source,
             "recommendation_reason": report.recommendation_reason,

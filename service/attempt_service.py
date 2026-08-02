@@ -829,9 +829,31 @@ class AttemptService:
             became_graded_first_time=became_graded,
         )
 
-        self._maybe_terminate_proctoring(
-            attempt=attempt, completed=proctoring_completed
+        is_proctoring_auto = (
+            submission_source == AttemptSubmissionSource.PROCTORING_AUTO.value
         )
+        if is_proctoring_auto:
+            # Same unit of work: session terminate + integrity report + one commit.
+            self._maybe_terminate_proctoring(
+                attempt=attempt,
+                completed=proctoring_completed,
+                commit=False,
+            )
+            from service.proctoring_integrity_report_service import (
+                ProctoringIntegrityReportService,
+            )
+
+            report = ProctoringIntegrityReportService().create_for_proctoring_auto(
+                attempt=attempt,
+                test=test,
+                commit=False,
+            )
+            if report is None:
+                raise ConflictError(Messages.INTEGRITY_REPORT_COULD_NOT_BE_CREATED)
+        else:
+            self._maybe_terminate_proctoring(
+                attempt=attempt, completed=proctoring_completed
+            )
 
         db.session.commit()
         self._notify_teacher_monitoring(test=test, attempt=attempt)
@@ -858,6 +880,9 @@ class AttemptService:
 
         Uses row lock + IN_PROGRESS check to avoid double finalization.
         Returns None if the attempt is no longer in progress.
+
+        Integrity report is created inside ``_finalize_attempt`` in the same
+        transaction as attempt finalization (single commit).
         """
         reason = (
             termination_reason
@@ -877,7 +902,7 @@ class AttemptService:
         if not test:
             return None
 
-        result = self._finalize_attempt(
+        return self._finalize_attempt(
             attempt,
             test,
             submission_source=AttemptSubmissionSource.PROCTORING_AUTO.value,
@@ -885,25 +910,6 @@ class AttemptService:
             # Automatic proctoring end → session TERMINATED (not normal COMPLETED).
             proctoring_completed=False,
         )
-        try:
-            from service.proctoring_integrity_report_service import (
-                ProctoringIntegrityReportService,
-            )
-
-            # Attempt is already committed by _finalize_attempt; create snapshot
-            # idempotently without altering finalize/grading/session behavior.
-            refreshed = self.attempts.get_by_id(attempt_id) or attempt
-            ProctoringIntegrityReportService().create_for_proctoring_auto(
-                attempt=refreshed,
-                test=test,
-                commit=True,
-            )
-        except Exception:
-            logger.exception(
-                "Failed to create proctoring integrity report for attempt_id=%s",
-                attempt_id,
-            )
-        return result
 
     def _upsert_answers(
         self,
@@ -1988,7 +1994,13 @@ class AttemptService:
                 "Failed to auto-start proctoring for attempt id=%s", attempt.id
             )
 
-    def _maybe_terminate_proctoring(self, *, attempt: TestAttempt, completed: bool) -> None:
+    def _maybe_terminate_proctoring(
+        self,
+        *,
+        attempt: TestAttempt,
+        completed: bool,
+        commit: bool = True,
+    ) -> None:
         from service.proctoring_service import ProctoringService
 
         try:
@@ -1996,6 +2008,7 @@ class AttemptService:
                 test_attempt_id=attempt.id,
                 completed=completed,
                 actor_user_id=attempt.user_id,
+                commit=commit,
             )
         except Exception:
             logger.exception(

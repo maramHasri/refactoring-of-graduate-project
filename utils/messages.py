@@ -383,6 +383,8 @@ class Messages:
 
     EVIDENCE_PACKAGE_NOT_FOUND = "Evidence package not found"
     EVIDENCE_PACKAGE_NOT_GENERATED_FOR_LOW_SEVERITY = "Evidence package not generated for LOW severity"
+    INTEGRITY_REPORT_ALREADY_REVIEWED = "Integrity report has already been reviewed"
+    INTEGRITY_REPORT_COULD_NOT_BE_CREATED = "Integrity report could not be created"
     INTEGRITY_REPORT_NOT_FOUND = "Integrity report not found"
     INTEGRITY_REPORT_STATUS_UPDATED_SUCCESSFULLY = (
         "Integrity report status updated successfully"

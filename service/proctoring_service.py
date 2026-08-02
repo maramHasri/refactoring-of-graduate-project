@@ -1196,6 +1196,7 @@ class ProctoringService:
         test_attempt_id: int,
         completed: bool = True,
         actor_user_id: int | None = None,
+        commit: bool = True,
     ) -> ProctoringSession | None:
         session = self.sessions.get_by_attempt_id(test_attempt_id)
         if not session:
@@ -1224,13 +1225,21 @@ class ProctoringService:
             actor_user_id=actor_user_id,
             details={"completed": completed},
         )
-        db.session.commit()
-        logger.info(
-            "Proctoring session id=%s terminated completed=%s",
-            session.id,
-            completed,
-        )
-        self._broadcast_session_monitoring_update(session)
+        if commit:
+            db.session.commit()
+            logger.info(
+                "Proctoring session id=%s terminated completed=%s",
+                session.id,
+                completed,
+            )
+            self._broadcast_session_monitoring_update(session)
+        else:
+            db.session.flush()
+            logger.info(
+                "Proctoring session id=%s terminated completed=%s (deferred commit)",
+                session.id,
+                completed,
+            )
         return session
 
     def _broadcast_session_monitoring_update(
