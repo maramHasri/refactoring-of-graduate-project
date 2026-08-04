@@ -293,6 +293,42 @@ def test_comparison_percentage_in_overview():
     assert payload["pass_fail"]["fail_rate"] == 20.0
 
 
+def test_top_students_uses_distinct_membership_aliases():
+    """PostgreSQL rejects joining memberships twice without aliases."""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock, patch
+
+    from sqlalchemy.dialects import postgresql
+
+    from repositories.institution_analytics_repository import (
+        AnalyticsScope,
+        InstitutionAnalyticsRepository,
+    )
+
+    repo = InstitutionAnalyticsRepository()
+    scope = AnalyticsScope(
+        workspace_id=1,
+        date_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        date_to=datetime(2026, 8, 1, tzinfo=timezone.utc),
+    )
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    with patch("repositories.institution_analytics_repository.db") as mock_db:
+        mock_db.session.execute.return_value = mock_result
+        assert repo.top_students(scope) == []
+        stmt = mock_db.session.execute.call_args[0][0]
+        sql = str(
+            stmt.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": False},
+            )
+        ).lower()
+
+    assert "memberships as memberships_" in sql
+    assert sql.count("join memberships as") == 2
+
+
 def test_ranking_helpers_top_students_and_subjects():
     """Document expected ranking contracts used by the repository layer."""
     students = [

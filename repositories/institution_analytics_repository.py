@@ -11,6 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy.orm import aliased
 
 from models import (
     Membership,
@@ -53,9 +54,16 @@ class InstitutionAnalyticsRepository(BaseRepository):
 
     # --- shared filters -------------------------------------------------
 
-    def _test_scope_filters(self, scope: AnalyticsScope) -> list:
+    def _test_scope_filters(self, scope: AnalyticsScope, *, creator=None) -> list:
+        """Filter tests by workspace via the test-creator membership join.
+
+        ``creator`` must match the Membership entity (or alias) already joined
+        on ``Test.created_by_membership_id``. Pass an ``aliased(Membership)``
+        when the same query also joins Membership for students.
+        """
+        creator_m = creator if creator is not None else Membership
         filters = [
-            Membership.workspace_id == scope.workspace_id,
+            creator_m.workspace_id == scope.workspace_id,
             Test.archived_at.is_(None),
         ]
         if scope.subject_id is not None:
@@ -66,9 +74,9 @@ class InstitutionAnalyticsRepository(BaseRepository):
             )
         return filters
 
-    def _graded_in_range_filters(self, scope: AnalyticsScope) -> list:
+    def _graded_in_range_filters(self, scope: AnalyticsScope, *, creator=None) -> list:
         return [
-            *self._test_scope_filters(scope),
+            *self._test_scope_filters(scope, creator=creator),
             TestAttempt.status == TestAttemptStatus.GRADED.value,
             TestAttempt.percentage.is_not(None),
             TestAttempt.graded_at.is_not(None),
@@ -567,7 +575,9 @@ class InstitutionAnalyticsRepository(BaseRepository):
     # --- students -------------------------------------------------------
 
     def top_students(self, scope: AnalyticsScope, *, limit: int = 10) -> list[dict]:
-        student_m = Membership
+        # Two Membership joins require distinct aliases on PostgreSQL.
+        creator = aliased(Membership)
+        student_m = aliased(Membership)
         rows = db.session.execute(
             select(
                 student_m.id.label("student_membership_id"),
@@ -578,11 +588,11 @@ class InstitutionAnalyticsRepository(BaseRepository):
             )
             .select_from(TestAttempt)
             .join(Test, Test.id == TestAttempt.test_id)
-            .join(Membership, Membership.id == Test.created_by_membership_id)
+            .join(creator, creator.id == Test.created_by_membership_id)
             .join(student_m, student_m.id == TestAttempt.student_membership_id)
             .join(User, User.id == student_m.user_id)
             .where(
-                *self._graded_in_range_filters(scope),
+                *self._graded_in_range_filters(scope, creator=creator),
                 student_m.workspace_id == scope.workspace_id,
                 student_m.status == MembershipStatus.ACTIVE.value,
                 student_m.role == MembershipRole.STUDENT.value,
