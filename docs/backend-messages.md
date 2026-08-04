@@ -93,6 +93,12 @@ Do not change these strings casually — they are part of the API contract.
 | USER_NOT_FOUND | User not found | Returned when the requested resource does not exist. |
 | USER_RESTORED_SUCCESSFULLY | User restored successfully | Returned after a successful operation. |
 | USER_SUSPENDED_SUCCESSFULLY | User suspended successfully | Returned after a successful operation. |
+| USER_UPDATED_SUCCESSFULLY | User updated successfully | Returned after Super Admin updates a user profile. |
+| USER_PERMANENTLY_DELETED_SUCCESSFULLY | User permanently deleted successfully | Returned after Super Admin hard-deletes a user. |
+| SUPER_ADMINS_CANNOT_DELETE_THEIR_OWN_ACCOUNT | Super admins cannot permanently delete their own account | Forbidden self hard-delete. |
+| SUPER_ADMINS_CANNOT_PERMANENTLY_DELETE_OTHER_SUPER_ADMINS | Super admins cannot permanently delete other super admin accounts | Forbidden hard-delete of another super admin. |
+| CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_ORGANIZATIONS | Cannot permanently delete a user who owns one or more organizations. Delete or reassign those organizations first. | Hard-delete blocked by workspace ownership FK. |
+| CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_QUESTIONS | Cannot permanently delete a user who still owns questions. Reassign or remove those questions first. | Hard-delete blocked by question ownership FK. |
 
 ## Workspaces
 

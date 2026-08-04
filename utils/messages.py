@@ -86,8 +86,24 @@ class Messages:
     USER_IS_ALREADY_SUSPENDED = "User is already suspended"
     USER_IS_NOT_SUSPENDED = "User is not suspended"
     USER_NOT_FOUND = "User not found"
+    USER_PERMANENTLY_DELETED_SUCCESSFULLY = "User permanently deleted successfully"
     USER_RESTORED_SUCCESSFULLY = "User restored successfully"
     USER_SUSPENDED_SUCCESSFULLY = "User suspended successfully"
+    USER_UPDATED_SUCCESSFULLY = "User updated successfully"
+    SUPER_ADMINS_CANNOT_DELETE_THEIR_OWN_ACCOUNT = (
+        "Super admins cannot permanently delete their own account"
+    )
+    SUPER_ADMINS_CANNOT_PERMANENTLY_DELETE_OTHER_SUPER_ADMINS = (
+        "Super admins cannot permanently delete other super admin accounts"
+    )
+    CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_ORGANIZATIONS = (
+        "Cannot permanently delete a user who owns one or more organizations. "
+        "Delete or reassign those organizations first."
+    )
+    CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_QUESTIONS = (
+        "Cannot permanently delete a user who still owns questions. "
+        "Reassign or remove those questions first."
+    )
 
     # Workspaces
 

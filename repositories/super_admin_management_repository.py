@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from models import Membership, Test, TestAttempt, User, Workspace
+from models import Membership, Question, Test, TestAttempt, User, Workspace
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import MembershipRole, TestAttemptStatus, WorkspaceKind
@@ -10,6 +10,22 @@ from utils.enums import MembershipRole, TestAttemptStatus, WorkspaceKind
 class SuperAdminManagementRepository(BaseRepository):
     def get_workspace_by_id(self, workspace_id: int) -> Workspace | None:
         return db.session.get(Workspace, workspace_id)
+
+    def count_owned_workspaces(self, user_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(Workspace.id)).where(Workspace.owner_user_id == user_id)
+            ).scalar_one()
+            or 0
+        )
+
+    def count_owned_questions(self, user_id: int) -> int:
+        return (
+            db.session.execute(
+                select(func.count(Question.id)).where(Question.owner_user_id == user_id)
+            ).scalar_one()
+            or 0
+        )
 
     def get_institution_member_counts(self, workspace_id: int) -> dict[str, int]:
         rows = db.session.execute(

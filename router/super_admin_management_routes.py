@@ -1,14 +1,15 @@
-from flask import Blueprint, g, request
-
-from router.decorators import handle_service_errors, require_superadmin
 from schemas.report_schema import ReportsListQuerySchema, UpdateReportStatusSchema
 from schemas.super_admin_management_schema import (
     SuperAdminUsersListQuerySchema,
     SuspendOrganizationSchema,
     SuspendUserSchema,
 )
+from schemas.user_schema import UpdateUserProfileSchema
 from service.report_service import ReportService
 from service.super_admin_management_service import SuperAdminManagementService
+from flask import Blueprint, g, request
+
+from router.decorators import handle_service_errors, require_superadmin
 
 super_admin_management_bp = Blueprint("super_admin_management", __name__)
 _svc = lambda: SuperAdminManagementService()
@@ -108,6 +109,26 @@ def restore_user(user_id):
 @handle_service_errors
 def get_user_details(user_id):
     return _svc().get_user_details(user_id), 200
+
+
+@super_admin_management_bp.route("/users/<int:user_id>", methods=["PATCH"])
+@require_superadmin
+@handle_service_errors
+def update_user(user_id):
+    """PATCH /api/super-admin/users/{user_id} — update full_name and/or phone_number."""
+    data = UpdateUserProfileSchema(only=("full_name", "phone_number")).load(
+        request.get_json() or {},
+        partial=True,
+    )
+    return _svc().update_user(user_id, data, actor_user=g.current_user), 200
+
+
+@super_admin_management_bp.route("/users/<int:user_id>", methods=["DELETE"])
+@require_superadmin
+@handle_service_errors
+def hard_delete_user(user_id):
+    """DELETE /api/super-admin/users/{user_id} — permanent delete (not soft-delete)."""
+    return _svc().hard_delete_user(user_id, actor_user=g.current_user), 200
 
 
 @super_admin_management_bp.route("/users", methods=["GET"])

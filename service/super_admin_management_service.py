@@ -1,13 +1,9 @@
-from utils.messages import Messages
-from datetime import datetime, timezone
-
-from flask import current_app
-
 from models import Membership, User, Workspace
 from repositories.session_repository import SessionRepository
 from repositories.super_admin_management_repository import SuperAdminManagementRepository
 from repositories.user_repository import UserRepository
 from service.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from service.user_service import UserService
 from utils.account_lifecycle import (
     account_restore_deadline,
     is_within_account_restore_window,
@@ -15,6 +11,10 @@ from utils.account_lifecycle import (
 from utils.db import db
 from utils.enums import UserStatus, WorkspaceStatus
 from utils.pagination import build_pagination_meta, normalize_pagination
+from utils.messages import Messages
+from datetime import datetime, timezone
+
+from flask import current_app
 
 
 class SuperAdminManagementService:
@@ -22,6 +22,7 @@ class SuperAdminManagementService:
         self.repo = SuperAdminManagementRepository()
         self.users = UserRepository()
         self.sessions = SessionRepository()
+        self.user_profiles = UserService()
 
     def suspend_organization(
         self,
@@ -199,6 +200,77 @@ class SuperAdminManagementService:
 
         memberships = self.repo.load_memberships_for_users([user.id]).get(user.id, [])
         return self._serialize_user_detail(user, memberships)
+
+    def update_user(self, user_id: int, data: dict, *, actor_user: User) -> dict:
+        """Update profile fields for a managed user (reuses UserService profile rules)."""
+        user = self.users.get_by_id(user_id)
+        if not user:
+            raise NotFoundError(Messages.USER_NOT_FOUND)
+
+        if user.deleted_at is not None:
+            raise ConflictError(Messages.ACCOUNT_IS_DELETED)
+
+        # Reuse self-service profile update logic (validation + field application + commit)
+        updated = self.user_profiles.update_profile(user, data)
+        memberships = self.repo.load_memberships_for_users([updated.id]).get(
+            updated.id, []
+        )
+        current_app.logger.info(
+            "event=user_updated_by_super_admin actor_user_id=%s target_user_id=%s fields=%s",
+            actor_user.id,
+            updated.id,
+            sorted(data.keys()),
+        )
+        return {
+            "message": Messages.USER_UPDATED_SUCCESSFULLY,
+            "user": self._serialize_managed_user(updated, memberships),
+        }
+
+    def hard_delete_user(self, user_id: int, *, actor_user: User) -> dict:
+        """
+        Permanently delete a user row.
+
+        Blocked when the user owns workspaces or questions (FK RESTRICT).
+        Cascaded relations (memberships, sessions, attempts, …) follow DB rules.
+        """
+        user = self.users.get_by_id(user_id)
+        if not user:
+            raise NotFoundError(Messages.USER_NOT_FOUND)
+
+        if user.id == actor_user.id:
+            raise ForbiddenError(Messages.SUPER_ADMINS_CANNOT_DELETE_THEIR_OWN_ACCOUNT)
+
+        if user.is_superadmin:
+            raise ForbiddenError(
+                Messages.SUPER_ADMINS_CANNOT_PERMANENTLY_DELETE_OTHER_SUPER_ADMINS
+            )
+
+        owned_workspaces = self.repo.count_owned_workspaces(user.id)
+        if owned_workspaces > 0:
+            raise ConflictError(
+                Messages.CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_ORGANIZATIONS
+            )
+
+        owned_questions = self.repo.count_owned_questions(user.id)
+        if owned_questions > 0:
+            raise ConflictError(
+                Messages.CANNOT_PERMANENTLY_DELETE_USER_WHO_OWNS_QUESTIONS
+            )
+
+        self.sessions.deactivate_all_for_user(user.id)
+        deleted_user_id = user.id
+        db.session.delete(user)
+        db.session.commit()
+
+        current_app.logger.info(
+            "event=user_permanently_deleted actor_user_id=%s target_user_id=%s",
+            actor_user.id,
+            deleted_user_id,
+        )
+        return {
+            "message": Messages.USER_PERMANENTLY_DELETED_SUCCESSFULLY,
+            "user_id": deleted_user_id,
+        }
 
     def list_users(
         self,
@@ -380,6 +452,7 @@ class SuperAdminManagementService:
             "id": user.id,
             "name": user.full_name,
             "email": user.email,
+            "phone_number": user.phone_number,
             "status": user.user_status,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "suspended_at": user.suspended_at.isoformat() if user.suspended_at else None,

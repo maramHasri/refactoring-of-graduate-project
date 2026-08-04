@@ -5554,6 +5554,7 @@ paths:
               id: { type: integer, example: 15 }
               name: { type: string, example: "Ahmed Ali" }
               email: { type: string, example: "user@example.com" }
+              phone_number: { type: string, example: "+9639xxxxxxx", x-nullable: true }
               status: { type: string, example: ACTIVE }
               created_at: { type: string, format: date-time }
               updated_at: { type: string, format: date-time }
@@ -5591,6 +5592,107 @@ paths:
           description: User not found
         403:
           description: Super admin access required
+    patch:
+      tags: [Super Admin Management]
+      summary: Update user profile fields
+      description: |
+        Super Admin updates a user's `full_name` and/or `phone_number`.
+        Reuses the same profile-field validation rules as `PATCH /users/me`.
+        Soft-deleted accounts cannot be edited (`ACCOUNT_IS_DELETED`).
+        At least one field is required.
+      security: [{ Bearer: [] }]
+      consumes:
+        - application/json
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              full_name: { type: string, example: "Ahmed Ali" }
+              phone_number: { type: string, example: "+963900000000", x-nullable: true }
+      responses:
+        200:
+          description: User updated
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: User updated successfully }
+              user:
+                type: object
+                properties:
+                  id: { type: integer, example: 15 }
+                  name: { type: string, example: "Ahmed Ali" }
+                  email: { type: string, example: "user@example.com" }
+                  phone_number: { type: string, example: "+963900000000", x-nullable: true }
+                  status: { type: string, example: ACTIVE }
+                  created_at: { type: string, format: date-time }
+                  suspended_at: { type: string, format: date-time, x-nullable: true }
+                  suspension_reason: { type: string, x-nullable: true }
+                  deleted_at: { type: string, format: date-time, x-nullable: true }
+                  roles:
+                    type: array
+                    items: { type: string }
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        organization_type: { type: string }
+                        status: { type: string }
+        401:
+          description: Missing or invalid token
+        403:
+          description: Super admin access required
+        404:
+          description: User not found
+        409:
+          description: Account is soft-deleted
+        422:
+          description: Validation error (no fields / empty full_name)
+    delete:
+      tags: [Super Admin Management]
+      summary: Permanently delete a user
+      description: |
+        Hard-deletes the user row from the database (not soft-delete).
+
+        Guards:
+        - Cannot delete own Super Admin account
+        - Cannot delete other Super Admin accounts
+        - Cannot delete a user who still owns organizations (`workspaces.owner_user_id`)
+        - Cannot delete a user who still owns questions (`questions.owner_user_id`)
+
+        Related cascaded rows follow database FK rules (memberships, sessions, attempts, …).
+        Prefer suspending or soft-delete restore flows when permanent removal is not required.
+      security: [{ Bearer: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          type: integer
+          required: true
+      responses:
+        200:
+          description: User permanently deleted
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: User permanently deleted successfully }
+              user_id: { type: integer, example: 15 }
+        401:
+          description: Missing or invalid token
+        403:
+          description: Forbidden (own account / other super admin)
+        404:
+          description: User not found
+        409:
+          description: User owns organizations or questions (RESTRICT FKs)
   /api/super-admin/users:
     get:
       tags: [Super Admin Management]
