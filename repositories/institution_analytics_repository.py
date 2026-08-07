@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.orm import aliased
 
 from models import (
@@ -37,6 +37,7 @@ from utils.enums import (
     SubjectMembershipStatus,
     SubjectRole,
     TestAttemptStatus,
+    TestStatus,
 )
 
 
@@ -422,93 +423,191 @@ class InstitutionAnalyticsRepository(BaseRepository):
 
     # --- teachers -------------------------------------------------------
 
-    def teacher_activity(self, scope: AnalyticsScope) -> list[dict]:
-        creator = Membership
-        teacher_user = User
+    def _teacher_base_test_filters(self, scope: AnalyticsScope, *, creator) -> list:
+        """Non-draft educational tests in workspace (no created_at window)."""
+        filters = [
+            creator.workspace_id == scope.workspace_id,
+            Test.archived_at.is_(None),
+            Test.status != TestStatus.DRAFT.value,
+        ]
+        if scope.subject_id is not None:
+            filters.append(Test.subject_id == scope.subject_id)
+        if scope.teacher_membership_id is not None:
+            filters.append(
+                Test.created_by_membership_id == scope.teacher_membership_id
+            )
+        return filters
 
-        tests_created = (
+    def _teacher_has_assignment_exists(self):
+        return exists(select(1).where(TestStudentAssignment.test_id == Test.id))
+
+    def _teacher_has_graded_in_period_exists(self, scope: AnalyticsScope):
+        """Period activity signal for performance metrics: ≥1 GRADED in range."""
+        return exists(
+            select(1).where(
+                TestAttempt.test_id == Test.id,
+                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                TestAttempt.percentage.is_not(None),
+                TestAttempt.graded_at.is_not(None),
+                TestAttempt.graded_at >= scope.date_from,
+                TestAttempt.graded_at <= scope.date_to,
+            )
+        )
+
+    def _teacher_tests_created_subquery(self, scope: AnalyticsScope):
+        """tests_created only: assigned non-draft tests with created_at in period."""
+        creator = aliased(Membership)
+        return (
             select(
                 Test.created_by_membership_id.label("teacher_membership_id"),
                 func.count(Test.id).label("tests_created"),
             )
-            .join(Membership, Membership.id == Test.created_by_membership_id)
-            .where(*self._test_scope_filters(scope))
+            .select_from(Test)
+            .join(creator, creator.id == Test.created_by_membership_id)
+            .where(
+                *self._teacher_base_test_filters(scope, creator=creator),
+                self._teacher_has_assignment_exists(),
+                Test.created_at >= scope.date_from,
+                Test.created_at <= scope.date_to,
+            )
             .group_by(Test.created_by_membership_id)
             .subquery()
         )
+
+    def _teacher_performance_active_tests_subquery(self, scope: AnalyticsScope):
+        """Tests with assignments AND ≥1 GRADED attempt inside Analytics Period.
+
+        created_at is intentionally NOT a filter — June tests with July grades
+        participate in July performance metrics.
+        """
+        creator = aliased(Membership)
+        return (
+            select(
+                Test.id.label("test_id"),
+                Test.created_by_membership_id.label("teacher_membership_id"),
+            )
+            .select_from(Test)
+            .join(creator, creator.id == Test.created_by_membership_id)
+            .where(
+                *self._teacher_base_test_filters(scope, creator=creator),
+                self._teacher_has_assignment_exists(),
+                self._teacher_has_graded_in_period_exists(scope),
+            )
+            .subquery()
+        )
+
+    def _latest_graded_student_test_scores_subquery(self, scope: AnalyticsScope):
+        """One final GRADED percentage per (student, test) inside Analytics Period.
+
+        Filter by graded_at period FIRST, then pick latest (graded_at DESC, id DESC).
+        Analytics-only; does not change AttemptService policy.
+        """
+        active_tests = self._teacher_performance_active_tests_subquery(scope)
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=(
+                    TestAttempt.student_membership_id,
+                    TestAttempt.test_id,
+                ),
+                order_by=(
+                    TestAttempt.graded_at.desc(),
+                    TestAttempt.id.desc(),
+                ),
+            )
+            .label("rn")
+        )
+        ranked = (
+            select(
+                TestAttempt.student_membership_id.label("student_membership_id"),
+                TestAttempt.test_id.label("test_id"),
+                active_tests.c.teacher_membership_id.label("teacher_membership_id"),
+                TestAttempt.percentage.label("percentage"),
+                rn,
+            )
+            .select_from(TestAttempt)
+            .join(active_tests, active_tests.c.test_id == TestAttempt.test_id)
+            .where(
+                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                TestAttempt.percentage.is_not(None),
+                TestAttempt.graded_at.is_not(None),
+                TestAttempt.graded_at >= scope.date_from,
+                TestAttempt.graded_at <= scope.date_to,
+            )
+            .subquery()
+        )
+        return (
+            select(
+                ranked.c.student_membership_id,
+                ranked.c.test_id,
+                ranked.c.teacher_membership_id,
+                ranked.c.percentage,
+            )
+            .where(ranked.c.rn == 1)
+            .subquery()
+        )
+
+    @staticmethod
+    def teacher_completion_rate(
+        completed_students: int, targeted_students: int
+    ) -> float:
+        """unique graded students / unique targeted students × 100."""
+        if targeted_students <= 0:
+            return 0.0
+        return round(
+            min(100.0, (completed_students * 100.0) / targeted_students),
+            2,
+        )
+
+    def teacher_activity(self, scope: AnalyticsScope) -> list[dict]:
+        """Teacher Analytics: period activity (grades), not test creation date."""
+        creator = aliased(Membership)
+        teacher_user = aliased(User)
+        tests_created = self._teacher_tests_created_subquery(scope)
+        active_tests = self._teacher_performance_active_tests_subquery(scope)
+        final_scores = self._latest_graded_student_test_scores_subquery(scope)
 
         targeted = (
             select(
-                Test.created_by_membership_id.label("teacher_membership_id"),
-                func.count(func.distinct(TestStudentAssignment.student_membership_id)).label(
-                    "targeted_students"
-                ),
+                active_tests.c.teacher_membership_id.label("teacher_membership_id"),
+                func.count(
+                    func.distinct(TestStudentAssignment.student_membership_id)
+                ).label("targeted_students"),
             )
             .select_from(TestStudentAssignment)
-            .join(Test, Test.id == TestStudentAssignment.test_id)
-            .join(Membership, Membership.id == Test.created_by_membership_id)
-            .where(*self._test_scope_filters(scope))
-            .group_by(Test.created_by_membership_id)
+            .join(active_tests, active_tests.c.test_id == TestStudentAssignment.test_id)
+            .group_by(active_tests.c.teacher_membership_id)
             .subquery()
         )
 
-        assignment_rows = (
+        completed_students = (
             select(
-                Test.created_by_membership_id.label("teacher_membership_id"),
-                func.count(TestStudentAssignment.id).label("assignment_count"),
+                final_scores.c.teacher_membership_id.label("teacher_membership_id"),
+                func.count(
+                    func.distinct(final_scores.c.student_membership_id)
+                ).label("completed_students"),
             )
-            .select_from(TestStudentAssignment)
-            .join(Test, Test.id == TestStudentAssignment.test_id)
-            .join(Membership, Membership.id == Test.created_by_membership_id)
-            .where(*self._test_scope_filters(scope))
-            .group_by(Test.created_by_membership_id)
-            .subquery()
-        )
-
-        completed = (
-            select(
-                Test.created_by_membership_id.label("teacher_membership_id"),
-                func.count(TestAttempt.id).label("completed_attempts"),
-            )
-            .select_from(TestAttempt)
-            .join(Test, Test.id == TestAttempt.test_id)
-            .join(Membership, Membership.id == Test.created_by_membership_id)
-            .where(
-                *self._test_scope_filters(scope),
-                TestAttempt.status.in_(
-                    [
-                        TestAttemptStatus.SUBMITTED.value,
-                        TestAttemptStatus.GRADED.value,
-                    ]
-                ),
-                or_(
-                    and_(
-                        TestAttempt.graded_at.is_not(None),
-                        TestAttempt.graded_at >= scope.date_from,
-                        TestAttempt.graded_at <= scope.date_to,
-                    ),
-                    and_(
-                        TestAttempt.submitted_at.is_not(None),
-                        TestAttempt.submitted_at >= scope.date_from,
-                        TestAttempt.submitted_at <= scope.date_to,
-                    ),
-                ),
-            )
-            .group_by(Test.created_by_membership_id)
+            .group_by(final_scores.c.teacher_membership_id)
             .subquery()
         )
 
         avg_scores = (
             select(
-                Test.created_by_membership_id.label("teacher_membership_id"),
-                func.avg(TestAttempt.percentage).label("average_student_score"),
+                final_scores.c.teacher_membership_id.label("teacher_membership_id"),
+                func.avg(final_scores.c.percentage).label("average_student_score"),
             )
-            .select_from(TestAttempt)
-            .join(Test, Test.id == TestAttempt.test_id)
-            .join(Membership, Membership.id == Test.created_by_membership_id)
-            .where(*self._graded_in_range_filters(scope))
-            .group_by(Test.created_by_membership_id)
+            .group_by(final_scores.c.teacher_membership_id)
             .subquery()
+        )
+
+        targeted_count = func.coalesce(targeted.c.targeted_students, 0)
+        completed_count = func.coalesce(completed_students.c.completed_students, 0)
+        completion_rate = case(
+            (targeted_count <= 0, 0.0),
+            else_=func.least(
+                100.0,
+                (completed_count * 100.0) / targeted_count,
+            ),
         )
 
         teacher_filters = [
@@ -520,22 +619,12 @@ class InstitutionAnalyticsRepository(BaseRepository):
         if scope.teacher_membership_id is not None:
             teacher_filters.append(creator.id == scope.teacher_membership_id)
 
-        assignment_count = func.coalesce(assignment_rows.c.assignment_count, 0)
-        completed_count = func.coalesce(completed.c.completed_attempts, 0)
-        completion_rate = case(
-            (assignment_count <= 0, 0.0),
-            else_=func.least(
-                100.0,
-                (completed_count * 100.0) / assignment_count,
-            ),
-        )
-
         rows = db.session.execute(
             select(
                 creator.id.label("teacher_membership_id"),
                 teacher_user.full_name.label("teacher_name"),
                 func.coalesce(tests_created.c.tests_created, 0).label("tests_created"),
-                func.coalesce(targeted.c.targeted_students, 0).label("targeted_students"),
+                targeted_count.label("targeted_students"),
                 avg_scores.c.average_student_score,
                 completion_rate.label("completion_rate"),
             )
@@ -546,9 +635,9 @@ class InstitutionAnalyticsRepository(BaseRepository):
             )
             .outerjoin(targeted, targeted.c.teacher_membership_id == creator.id)
             .outerjoin(
-                assignment_rows, assignment_rows.c.teacher_membership_id == creator.id
+                completed_students,
+                completed_students.c.teacher_membership_id == creator.id,
             )
-            .outerjoin(completed, completed.c.teacher_membership_id == creator.id)
             .outerjoin(avg_scores, avg_scores.c.teacher_membership_id == creator.id)
             .where(*teacher_filters)
             .order_by(

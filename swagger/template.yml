@@ -761,6 +761,20 @@ paths:
         `integrity_reports_count` where integrity reports are attempts with
         `submission_source=PROCTORING_AUTO` (there is no separate persisted
         Proctoring Report table; Support `Report` rows are not used).
+
+        **Teacher activity** (Analytics Period = educational activity time):
+        - `tests_created` only uses `Test.created_at` in range (non-DRAFT,
+          not archived, ≥1 assignment). Creation date is NOT a gate for
+          performance metrics.
+        - Performance-active tests = non-DRAFT, not archived, ≥1 assignment,
+          and ≥1 GRADED attempt with `graded_at` in range (June-created tests
+          with July grades count in July).
+        - `targeted_students` = DISTINCT assignees on performance-active tests.
+        - `completion_rate` = DISTINCT students with GRADED in period /
+          targeted_students × 100 (0 if no targets).
+        - `average_student_score` = AVG of latest GRADED % per (student, test)
+          **inside the period first**, then `graded_at DESC`, `id DESC`;
+          null if none.
       security: [{ Bearer: [], WorkspaceId: [] }]
       parameters:
         - name: date_from
