@@ -104,6 +104,7 @@ class SubjectService:
         self._ensure_can_view_subject(subject, actor_membership)
         topics_map = self.topics.map_by_subject_ids(workspace_id, [subject.id])
         teachers_map = self.subject_memberships.map_teachers_by_subject_ids([subject.id])
+        students_map = self.subject_memberships.map_students_by_subject_ids([subject.id])
         banks_count_map = self.question_banks.count_by_subject_ids(
             [subject.id], workspace_id
         )
@@ -112,6 +113,7 @@ class SubjectService:
             subject,
             topics_map=topics_map,
             teachers_map=teachers_map,
+            students_map=students_map,
             banks_count_map=banks_count_map,
             tests_count_map=tests_count_map,
         )
@@ -547,6 +549,7 @@ class SubjectService:
         workspace_id: int | None = None,
         topics_map: dict | None = None,
         teachers_map: dict | None = None,
+        students_map: dict | None = None,
         banks_count_map: dict | None = None,
         tests_count_map: dict | None = None,
     ) -> dict:
@@ -561,6 +564,11 @@ class SubjectService:
             teacher_links = teachers_map.get(subject.id, [])
         else:
             teacher_links = self.subject_memberships.list_teachers_for_subject(subject.id)
+
+        if students_map is not None:
+            student_links = students_map.get(subject.id, [])
+        else:
+            student_links = []
 
         if banks_count_map is not None:
             question_banks_count = banks_count_map.get(subject.id, 0)
@@ -593,6 +601,8 @@ class SubjectService:
             "topics": [self._serialize_topic_summary(t) for t in topic_rows],
             "teachers": [self._serialize_assignment(link) for link in teacher_links],
             "teachers_count": len(teacher_links),
+            "students": [self._serialize_assignment(link) for link in student_links],
+            "students_count": len(student_links),
             "question_banks_count": question_banks_count,
             "tests_count": tests_count,
         }

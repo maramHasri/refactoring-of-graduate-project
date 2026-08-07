@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import case, distinct, func
+from sqlalchemy import case, distinct, func, select
 from sqlalchemy.orm import joinedload
 
 from models import (
@@ -19,6 +19,115 @@ from utils.enums import QuestionStatus, TestAttemptStatus, TestStatus
 
 
 class TestAttemptRepository(BaseRepository):
+    """Attempt persistence + the canonical Official Attempt selector.
+
+    Official Attempt = latest attempt per (student_membership_id, test_id)
+    ordered by ``started_at DESC, id DESC``. Older attempts remain in the DB
+    for history/proctoring but must not feed official scores or analytics.
+    """
+
+    # --- Official Attempt (canonical) ------------------------------------
+
+    @staticmethod
+    def official_attempt_ids_subquery():
+        """Subquery of attempt ids that are the official (latest) sitting."""
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=(
+                    TestAttempt.student_membership_id,
+                    TestAttempt.test_id,
+                ),
+                order_by=(
+                    TestAttempt.started_at.desc(),
+                    TestAttempt.id.desc(),
+                ),
+            )
+            .label("rn")
+        )
+        ranked = select(TestAttempt.id.label("attempt_id"), rn).subquery()
+        return (
+            select(ranked.c.attempt_id.label("attempt_id"))
+            .where(ranked.c.rn == 1)
+            .subquery()
+        )
+
+    @staticmethod
+    def official_attempts_subquery():
+        """Official attempts with key columns (rn = 1 per student+test)."""
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=(
+                    TestAttempt.student_membership_id,
+                    TestAttempt.test_id,
+                ),
+                order_by=(
+                    TestAttempt.started_at.desc(),
+                    TestAttempt.id.desc(),
+                ),
+            )
+            .label("rn")
+        )
+        ranked = (
+            select(
+                TestAttempt.id.label("attempt_id"),
+                TestAttempt.student_membership_id.label("student_membership_id"),
+                TestAttempt.test_id.label("test_id"),
+                TestAttempt.status.label("status"),
+                TestAttempt.percentage.label("percentage"),
+                TestAttempt.final_score.label("final_score"),
+                TestAttempt.raw_score.label("raw_score"),
+                TestAttempt.graded_at.label("graded_at"),
+                TestAttempt.started_at.label("started_at"),
+                rn,
+            )
+        ).subquery()
+        return (
+            select(
+                ranked.c.attempt_id,
+                ranked.c.student_membership_id,
+                ranked.c.test_id,
+                ranked.c.status,
+                ranked.c.percentage,
+                ranked.c.final_score,
+                ranked.c.raw_score,
+                ranked.c.graded_at,
+                ranked.c.started_at,
+            )
+            .where(ranked.c.rn == 1)
+            .subquery()
+        )
+
+    def get_official_attempt(
+        self, test_id: int, student_membership_id: int
+    ) -> TestAttempt | None:
+        """Return the single Official Attempt for a student on a test."""
+        return db.session.execute(
+            select(TestAttempt)
+            .where(
+                TestAttempt.test_id == test_id,
+                TestAttempt.student_membership_id == student_membership_id,
+            )
+            .order_by(TestAttempt.started_at.desc(), TestAttempt.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    def count_official_graded_for_test(self, test_id: int) -> int:
+        """Students whose Official Attempt on this test is GRADED."""
+        official = self.official_attempts_subquery()
+        return int(
+            db.session.execute(
+                select(func.count())
+                .select_from(official)
+                .where(
+                    official.c.test_id == test_id,
+                    official.c.status == TestAttemptStatus.GRADED.value,
+                )
+            ).scalar_one()
+            or 0
+        )
+
     def get_by_id(self, attempt_id: int) -> TestAttempt | None:
         return db.session.get(TestAttempt, attempt_id)
 
@@ -97,10 +206,10 @@ class TestAttemptRepository(BaseRepository):
         """
         Batch exam-card stats per test_id.
 
-        - participants_count: distinct students with IN_PROGRESS|SUBMITTED|GRADED
-        - graded_attempts_count: attempts with status GRADED
-        - submitted_attempts_count: attempts with status SUBMITTED
-        - average_score: mean of (final_score if set else raw_score) for GRADED only
+        Official-attempt aware:
+        - graded_attempts_count / average_score use Official Attempt only
+        - participants_count: distinct students with any sitting
+        - submitted_attempts_count: Official Attempt status == SUBMITTED
         """
         empty = {
             "participants_count": 0,
@@ -116,67 +225,70 @@ class TestAttemptRepository(BaseRepository):
             TestAttemptStatus.SUBMITTED.value,
             TestAttemptStatus.GRADED.value,
         )
-        score_expr = case(
-            (TestAttempt.final_score.is_not(None), TestAttempt.final_score),
-            else_=TestAttempt.raw_score,
-        )
-        rows = db.session.execute(
-            db.select(
+        participant_rows = db.session.execute(
+            select(
                 TestAttempt.test_id,
-                func.count(
-                    distinct(
-                        case(
-                            (
-                                TestAttempt.status.in_(participant_statuses),
-                                TestAttempt.student_membership_id,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("participants_count"),
+                func.count(distinct(TestAttempt.student_membership_id)).label(
+                    "participants_count"
+                ),
+            )
+            .where(
+                TestAttempt.test_id.in_(test_ids),
+                TestAttempt.status.in_(participant_statuses),
+            )
+            .group_by(TestAttempt.test_id)
+        ).all()
+
+        official = self.official_attempts_subquery()
+        score_expr = case(
+            (official.c.final_score.is_not(None), official.c.final_score),
+            else_=official.c.raw_score,
+        )
+        official_rows = db.session.execute(
+            select(
+                official.c.test_id,
                 func.sum(
                     case(
-                        (TestAttempt.status == TestAttemptStatus.GRADED.value, 1),
+                        (official.c.status == TestAttemptStatus.GRADED.value, 1),
                         else_=0,
                     )
                 ).label("graded_attempts_count"),
                 func.sum(
                     case(
-                        (TestAttempt.status == TestAttemptStatus.SUBMITTED.value, 1),
+                        (official.c.status == TestAttemptStatus.SUBMITTED.value, 1),
                         else_=0,
                     )
                 ).label("submitted_attempts_count"),
                 func.avg(
                     case(
                         (
-                            TestAttempt.status == TestAttemptStatus.GRADED.value,
+                            official.c.status == TestAttemptStatus.GRADED.value,
                             score_expr,
                         ),
                         else_=None,
                     )
                 ).label("average_score"),
             )
-            .where(TestAttempt.test_id.in_(test_ids))
-            .group_by(TestAttempt.test_id)
+            .where(official.c.test_id.in_(test_ids))
+            .group_by(official.c.test_id)
         ).all()
 
         result: dict[int, dict] = {int(tid): dict(empty) for tid in test_ids}
+        for test_id, participants_count in participant_rows:
+            result[int(test_id)]["participants_count"] = int(participants_count or 0)
         for (
             test_id,
-            participants_count,
             graded_attempts_count,
             submitted_attempts_count,
             average_score,
-        ) in rows:
+        ) in official_rows:
             avg_value = None
             if average_score is not None:
                 avg_value = round(float(average_score), 2)
-            result[int(test_id)] = {
-                "participants_count": int(participants_count or 0),
-                "average_score": avg_value,
-                "graded_attempts_count": int(graded_attempts_count or 0),
-                "submitted_attempts_count": int(submitted_attempts_count or 0),
-            }
+            entry = result[int(test_id)]
+            entry["average_score"] = avg_value
+            entry["graded_attempts_count"] = int(graded_attempts_count or 0)
+            entry["submitted_attempts_count"] = int(submitted_attempts_count or 0)
         return result
 
     def exam_card_stats_for_test(self, test_id: int) -> dict:
@@ -193,25 +305,21 @@ class TestAttemptRepository(BaseRepository):
     def average_percentage_by_test_ids(
         self, test_ids: list[int]
     ) -> dict[int, float | None]:
-        """
-        Mean of GRADED attempt ``percentage`` values per test.
-
-        Kept for dashboard-style percentage averages; exam cards use
-        ``exam_card_stats_by_test_ids`` (final_score / raw_score) instead.
-        """
+        """Mean percentage of Official GRADED attempts per test."""
         if not test_ids:
             return {}
+        official = self.official_attempts_subquery()
         rows = db.session.execute(
-            db.select(
-                TestAttempt.test_id,
-                func.avg(TestAttempt.percentage),
+            select(
+                official.c.test_id,
+                func.avg(official.c.percentage),
             )
             .where(
-                TestAttempt.test_id.in_(test_ids),
-                TestAttempt.status == TestAttemptStatus.GRADED.value,
-                TestAttempt.percentage.is_not(None),
+                official.c.test_id.in_(test_ids),
+                official.c.status == TestAttemptStatus.GRADED.value,
+                official.c.percentage.is_not(None),
             )
-            .group_by(TestAttempt.test_id)
+            .group_by(official.c.test_id)
         ).all()
         result: dict[int, float | None] = {int(tid): None for tid in test_ids}
         for test_id, avg_value in rows:
@@ -226,34 +334,20 @@ class TestAttemptRepository(BaseRepository):
     def map_relevant_attempts_for_monitoring(
         self, test_id: int
     ) -> dict[int, TestAttempt]:
-        """
-        One attempt per student for teacher monitoring:
-        prefer IN_PROGRESS; otherwise the most recently started attempt.
-        """
-        rows = self.list_for_test(test_id)
-        by_student: dict[int, list[TestAttempt]] = {}
-        for attempt in rows:
-            by_student.setdefault(int(attempt.student_membership_id), []).append(attempt)
-
-        result: dict[int, TestAttempt] = {}
-        for membership_id, attempts in by_student.items():
-            in_progress = [
-                a
-                for a in attempts
-                if a.status == TestAttemptStatus.IN_PROGRESS.value
-            ]
-            if in_progress:
-                result[membership_id] = max(
-                    in_progress,
-                    key=lambda a: (a.started_at, a.id),
-                )
-                continue
-            result[membership_id] = max(
-                attempts,
-                key=lambda a: (a.started_at, a.id),
+        """One Official Attempt per student for teacher monitoring."""
+        official = self.official_attempt_ids_subquery()
+        rows = (
+            db.session.execute(
+                select(TestAttempt)
+                .join(official, official.c.attempt_id == TestAttempt.id)
+                .options(joinedload(TestAttempt.user))
+                .where(TestAttempt.test_id == test_id)
             )
-        return result
-
+            .scalars()
+            .unique()
+            .all()
+        )
+        return {int(a.student_membership_id): a for a in rows}
     def list_published_for_subjects(
         self, subject_ids: list[int], workspace_id: int, student_membership_id: int
     ) -> list[Test]:
@@ -355,9 +449,12 @@ class TestAttemptRepository(BaseRepository):
         student_membership_id: int,
         student_user_id: int,
     ) -> list[TestAttempt]:
+        """Official Attempts that are GRADED (one per test) for student analytics."""
+        official = self.official_attempt_ids_subquery()
         return list(
             db.session.execute(
-                db.select(TestAttempt)
+                select(TestAttempt)
+                .join(official, official.c.attempt_id == TestAttempt.id)
                 .join(Test, Test.id == TestAttempt.test_id)
                 .options(
                     joinedload(TestAttempt.test).joinedload(Test.subject),
@@ -384,6 +481,53 @@ class TestAttemptRepository(BaseRepository):
             .all()
         )
 
+    def list_official_results_for_student(
+        self,
+        *,
+        workspace_id: int,
+        student_membership_id: int,
+        student_user_id: int,
+    ) -> list[TestAttempt]:
+        """Official Attempts in SUBMITTED or GRADED for the Results tab.
+
+        IN_PROGRESS official sittings are omitted (no result yet). Older GRADED
+        sittings superseded by a newer attempt are excluded automatically.
+        """
+        official = self.official_attempt_ids_subquery()
+        return list(
+            db.session.execute(
+                select(TestAttempt)
+                .join(official, official.c.attempt_id == TestAttempt.id)
+                .join(Test, Test.id == TestAttempt.test_id)
+                .options(
+                    joinedload(TestAttempt.test).joinedload(Test.subject),
+                    joinedload(TestAttempt.test)
+                    .joinedload(Test.created_by)
+                    .joinedload(Membership.user),
+                )
+                .where(
+                    TestAttempt.student_membership_id == student_membership_id,
+                    TestAttempt.user_id == student_user_id,
+                    TestAttempt.status.in_(
+                        [
+                            TestAttemptStatus.SUBMITTED.value,
+                            TestAttemptStatus.GRADED.value,
+                        ]
+                    ),
+                    Test.status == TestStatus.PUBLISHED.value,
+                    Test.archived_at.is_(None),
+                    Test.created_by.has(workspace_id=workspace_id),
+                )
+                .order_by(
+                    TestAttempt.submitted_at.desc().nullslast(),
+                    TestAttempt.graded_at.desc().nullslast(),
+                    TestAttempt.id.desc(),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
     def list_recent_for_student(
         self,
         *,
@@ -484,19 +628,27 @@ class TestAttemptRepository(BaseRepository):
         student_user_id: int,
         test_id: int,
     ) -> TestAttempt | None:
-        return db.session.execute(
-            db.select(TestAttempt)
-            .join(Test, Test.id == TestAttempt.test_id)
-            .options(joinedload(TestAttempt.test).joinedload(Test.subject))
+        """Official Attempt for the test if it is GRADED; else None."""
+        attempt = self.get_official_attempt(test_id, student_membership_id)
+        if (
+            attempt is None
+            or attempt.user_id != student_user_id
+            or attempt.status != TestAttemptStatus.GRADED.value
+        ):
+            return None
+        # Ensure workspace scope via test creator
+        test = db.session.execute(
+            select(Test)
+            .options(joinedload(Test.subject))
             .where(
-                TestAttempt.test_id == test_id,
-                TestAttempt.student_membership_id == student_membership_id,
-                TestAttempt.user_id == student_user_id,
-                TestAttempt.status == TestAttemptStatus.GRADED.value,
+                Test.id == test_id,
                 Test.created_by.has(workspace_id=workspace_id),
             )
-            .order_by(TestAttempt.graded_at.desc().nullslast(), TestAttempt.id.desc())
-        ).scalars().first()
+        ).scalar_one_or_none()
+        if test is None:
+            return None
+        attempt.test = test
+        return attempt
 
     def list_topic_weighted_rows_for_subject(
         self,
@@ -511,6 +663,7 @@ class TestAttemptRepository(BaseRepository):
             (TestQuestion.snapshot_difficulty == "MEDIUM", 1.5),
             else_=1.0,
         )
+        official = self.official_attempt_ids_subquery()
         rows = db.session.execute(
             db.select(
                 TestQuestion.snapshot_topic_id.label("topic_id"),
@@ -529,6 +682,7 @@ class TestAttemptRepository(BaseRepository):
             )
             .select_from(AttemptAnswer)
             .join(TestAttempt, TestAttempt.id == AttemptAnswer.attempt_id)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(TestQuestion, TestQuestion.id == AttemptAnswer.test_question_id)
             .outerjoin(Topic, Topic.id == TestQuestion.snapshot_topic_id)

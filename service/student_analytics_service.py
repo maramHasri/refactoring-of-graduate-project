@@ -35,7 +35,8 @@ class StudentAnalyticsService:
         """
         High-level Student Dashboard performance summary.
 
-        Includes every graded attempt (`status=GRADED`). Review settings do not
+        Includes every Official Attempt that is graded (`status=GRADED`).
+        Older superseded sittings are excluded. Review settings do not
         affect score visibility or analytics inclusion.
         """
         self._ensure_student_scope(actor_membership)

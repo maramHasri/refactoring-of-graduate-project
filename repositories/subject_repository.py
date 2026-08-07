@@ -120,6 +120,35 @@ class SubjectMembershipRepository(BaseRepository):
             result.setdefault(link.subject_id, []).append(link)
         return result
 
+    def map_students_by_subject_ids(
+        self, subject_ids: list[int]
+    ) -> dict[int, list[SubjectMembership]]:
+        """Active STUDENT subject memberships grouped by subject_id (batched)."""
+        if not subject_ids:
+            return {}
+        rows = list(
+            db.session.execute(
+                db.select(SubjectMembership)
+                .options(
+                    joinedload(SubjectMembership.membership).joinedload(Membership.user),
+                )
+                .where(
+                    SubjectMembership.subject_id.in_(subject_ids),
+                    SubjectMembership.subject_role == SubjectRole.STUDENT.value,
+                    SubjectMembership.deleted_at.is_(None),
+                    SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                )
+                .order_by(SubjectMembership.subject_id, SubjectMembership.id)
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        result: dict[int, list[SubjectMembership]] = {sid: [] for sid in subject_ids}
+        for link in rows:
+            result.setdefault(link.subject_id, []).append(link)
+        return result
+
     def list_students_for_subject(self, subject_id: int) -> list[SubjectMembership]:
         return list(
             db.session.execute(

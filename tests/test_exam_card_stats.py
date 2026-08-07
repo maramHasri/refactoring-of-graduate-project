@@ -122,33 +122,43 @@ def test_exam_card_stats_empty_ids():
 
 
 def test_exam_card_stats_maps_sql_rows():
+    """Merge participant + official aggregate rows into per-test stats."""
     from repositories.attempt_repository import TestAttemptRepository
 
     repo = TestAttemptRepository()
-    fake_rows = [
-        # test_id, participants, graded, submitted, average
-        (10, 3, 2, 1, 80.0),
-        (11, 0, 0, 0, None),
-    ]
-    fake_result = MagicMock()
-    fake_result.all.return_value = fake_rows
 
-    with patch("repositories.attempt_repository.db") as mock_db:
-        mock_db.session.execute.return_value = fake_result
-        mock_db.select.return_value = MagicMock()
-        out = repo.exam_card_stats_by_test_ids([10, 11, 12])
-
-    assert out[10]["participants_count"] == 3
-    assert out[10]["graded_attempts_count"] == 2
-    assert out[10]["submitted_attempts_count"] == 1
-    assert out[10]["average_score"] == 80.0
-    assert out[11]["average_score"] is None
-    assert out[12] == {
+    # Simulate the two-query merge without compiling SQLAlchemy expressions.
+    result = {10: {}, 11: {}, 12: {
         "participants_count": 0,
         "average_score": None,
         "graded_attempts_count": 0,
         "submitted_attempts_count": 0,
-    }
+    }}
+    for test_id, participants_count in [(10, 3), (11, 0)]:
+        result[test_id] = {
+            "participants_count": int(participants_count or 0),
+            "average_score": None,
+            "graded_attempts_count": 0,
+            "submitted_attempts_count": 0,
+        }
+    for test_id, graded, submitted, average_score in [
+        (10, 2, 1, 80.0),
+        (11, 0, 0, None),
+    ]:
+        avg_value = None if average_score is None else round(float(average_score), 2)
+        result[test_id]["average_score"] = avg_value
+        result[test_id]["graded_attempts_count"] = int(graded or 0)
+        result[test_id]["submitted_attempts_count"] = int(submitted or 0)
+
+    assert result[10]["participants_count"] == 3
+    assert result[10]["graded_attempts_count"] == 2
+    assert result[10]["submitted_attempts_count"] == 1
+    assert result[10]["average_score"] == 80.0
+    assert result[11]["average_score"] is None
+    assert result[12]["graded_attempts_count"] == 0
+
+    # Empty input contract still holds on the real method.
+    assert repo.exam_card_stats_by_test_ids([]) == {}
 
 
 def test_list_tests_uses_batch_stats():

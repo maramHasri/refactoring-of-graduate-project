@@ -1,6 +1,8 @@
 """Aggregated SQL for the Institution Analytics Dashboard (owner-only).
 
-All attempt-based academic metrics filter on ``TestAttempt.graded_at``.
+Official academic metrics use the canonical Official Attempt
+(latest per student+test by ``started_at DESC, id DESC``), then require
+``status=GRADED`` and ``graded_at`` inside the Analytics Period.
 Workspace isolation is enforced via ``Membership.workspace_id`` on the test creator.
 """
 
@@ -25,6 +27,7 @@ from models import (
     TestStudentAssignment,
     User,
 )
+from repositories.attempt_repository import TestAttemptRepository
 from repositories.base_repository import BaseRepository
 from service.proctoring_risk_service import ProctoringRiskService
 from service.student_analytics_service import StudentAnalyticsService
@@ -84,6 +87,11 @@ class InstitutionAnalyticsRepository(BaseRepository):
             TestAttempt.graded_at >= scope.date_from,
             TestAttempt.graded_at <= scope.date_to,
         ]
+
+    @staticmethod
+    def _official_ids():
+        """Canonical Official Attempt ids (latest started_at, id per student+test)."""
+        return TestAttemptRepository.official_attempt_ids_subquery()
 
     @staticmethod
     def _as_float(value) -> float:
@@ -165,10 +173,12 @@ class InstitutionAnalyticsRepository(BaseRepository):
         )
 
     def count_graded_attempts(self, scope: AnalyticsScope) -> int:
+        official = self._official_ids()
         return int(
             db.session.execute(
                 select(func.count(TestAttempt.id))
                 .select_from(TestAttempt)
+                .join(official, official.c.attempt_id == TestAttempt.id)
                 .join(Test, Test.id == TestAttempt.test_id)
                 .join(Membership, Membership.id == Test.created_by_membership_id)
                 .where(*self._graded_in_range_filters(scope))
@@ -177,9 +187,11 @@ class InstitutionAnalyticsRepository(BaseRepository):
         )
 
     def average_graded_percentage(self, scope: AnalyticsScope) -> float:
+        official = self._official_ids()
         value = db.session.execute(
             select(func.avg(TestAttempt.percentage))
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
             .where(*self._graded_in_range_filters(scope))
@@ -231,6 +243,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
     # --- pass / fail ----------------------------------------------------
 
     def pass_fail_counts(self, scope: AnalyticsScope) -> dict[str, int]:
+        official = self._official_ids()
         passed_flag = StudentAnalyticsService.pass_sql_expression(
             TestAttempt.final_score, Test.passing_score
         )
@@ -240,6 +253,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
                 func.coalesce(func.sum(passed_flag), 0).label("passed"),
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
             .where(*self._graded_in_range_filters(scope))
@@ -251,6 +265,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
     # --- monthly trend --------------------------------------------------
 
     def monthly_average_scores(self, scope: AnalyticsScope) -> list[dict]:
+        official = self._official_ids()
         month_bucket = func.date_trunc("month", TestAttempt.graded_at).label("month")
         rows = db.session.execute(
             select(
@@ -258,6 +273,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
                 func.avg(TestAttempt.percentage).label("average_score"),
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
             .where(*self._graded_in_range_filters(scope))
@@ -316,12 +332,14 @@ class InstitutionAnalyticsRepository(BaseRepository):
             .group_by(Test.subject_id)
             .subquery()
         )
+        official = self._official_ids()
         avg_scores = (
             select(
                 Test.subject_id.label("subject_id"),
                 func.avg(TestAttempt.percentage).label("average_score"),
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
             .where(
@@ -381,6 +399,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
     def subject_score_extremes(
         self, scope: AnalyticsScope, *, limit: int = 3
     ) -> tuple[list[dict], list[dict]]:
+        official = self._official_ids()
         rows = db.session.execute(
             select(
                 Subject.id,
@@ -389,6 +408,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
                 func.count(TestAttempt.id).label("attempt_count"),
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(Membership, Membership.id == Test.created_by_membership_id)
             .join(Subject, Subject.id == Test.subject_id)
@@ -441,10 +461,14 @@ class InstitutionAnalyticsRepository(BaseRepository):
     def _teacher_has_assignment_exists(self):
         return exists(select(1).where(TestStudentAssignment.test_id == Test.id))
 
-    def _teacher_has_graded_in_period_exists(self, scope: AnalyticsScope):
-        """Period activity signal for performance metrics: ≥1 GRADED in range."""
+    def _teacher_has_official_graded_in_period_exists(self, scope: AnalyticsScope):
+        """≥1 Official Attempt that is GRADED with graded_at in Analytics Period."""
+        official = self._official_ids()
         return exists(
-            select(1).where(
+            select(1)
+            .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
+            .where(
                 TestAttempt.test_id == Test.id,
                 TestAttempt.status == TestAttemptStatus.GRADED.value,
                 TestAttempt.percentage.is_not(None),
@@ -475,11 +499,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
         )
 
     def _teacher_performance_active_tests_subquery(self, scope: AnalyticsScope):
-        """Tests with assignments AND ≥1 GRADED attempt inside Analytics Period.
-
-        created_at is intentionally NOT a filter — June tests with July grades
-        participate in July performance metrics.
-        """
+        """Tests with assignments AND ≥1 Official GRADED attempt in period."""
         creator = aliased(Membership)
         return (
             select(
@@ -491,41 +511,29 @@ class InstitutionAnalyticsRepository(BaseRepository):
             .where(
                 *self._teacher_base_test_filters(scope, creator=creator),
                 self._teacher_has_assignment_exists(),
-                self._teacher_has_graded_in_period_exists(scope),
+                self._teacher_has_official_graded_in_period_exists(scope),
             )
             .subquery()
         )
 
-    def _latest_graded_student_test_scores_subquery(self, scope: AnalyticsScope):
-        """One final GRADED percentage per (student, test) inside Analytics Period.
+    def _official_graded_student_test_scores_subquery(self, scope: AnalyticsScope):
+        """Official Attempt scores when status=GRADED and graded_at in period.
 
-        Filter by graded_at period FIRST, then pick latest (graded_at DESC, id DESC).
-        Analytics-only; does not change AttemptService policy.
+        Step 1: Official = latest attempt globally (started_at, id).
+        Step 2: Must be GRADED.
+        Step 3: graded_at must fall inside Analytics Period.
         """
         active_tests = self._teacher_performance_active_tests_subquery(scope)
-        rn = (
-            func.row_number()
-            .over(
-                partition_by=(
-                    TestAttempt.student_membership_id,
-                    TestAttempt.test_id,
-                ),
-                order_by=(
-                    TestAttempt.graded_at.desc(),
-                    TestAttempt.id.desc(),
-                ),
-            )
-            .label("rn")
-        )
-        ranked = (
+        official = self._official_ids()
+        return (
             select(
                 TestAttempt.student_membership_id.label("student_membership_id"),
                 TestAttempt.test_id.label("test_id"),
                 active_tests.c.teacher_membership_id.label("teacher_membership_id"),
                 TestAttempt.percentage.label("percentage"),
-                rn,
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(active_tests, active_tests.c.test_id == TestAttempt.test_id)
             .where(
                 TestAttempt.status == TestAttemptStatus.GRADED.value,
@@ -534,16 +542,6 @@ class InstitutionAnalyticsRepository(BaseRepository):
                 TestAttempt.graded_at >= scope.date_from,
                 TestAttempt.graded_at <= scope.date_to,
             )
-            .subquery()
-        )
-        return (
-            select(
-                ranked.c.student_membership_id,
-                ranked.c.test_id,
-                ranked.c.teacher_membership_id,
-                ranked.c.percentage,
-            )
-            .where(ranked.c.rn == 1)
             .subquery()
         )
 
@@ -565,7 +563,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
         teacher_user = aliased(User)
         tests_created = self._teacher_tests_created_subquery(scope)
         active_tests = self._teacher_performance_active_tests_subquery(scope)
-        final_scores = self._latest_graded_student_test_scores_subquery(scope)
+        final_scores = self._official_graded_student_test_scores_subquery(scope)
 
         targeted = (
             select(
@@ -667,6 +665,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
         # Two Membership joins require distinct aliases on PostgreSQL.
         creator = aliased(Membership)
         student_m = aliased(Membership)
+        official = self._official_ids()
         rows = db.session.execute(
             select(
                 student_m.id.label("student_membership_id"),
@@ -676,6 +675,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
                 func.count(TestAttempt.id).label("completed_tests"),
             )
             .select_from(TestAttempt)
+            .join(official, official.c.attempt_id == TestAttempt.id)
             .join(Test, Test.id == TestAttempt.test_id)
             .join(creator, creator.id == Test.created_by_membership_id)
             .join(student_m, student_m.id == TestAttempt.student_membership_id)
@@ -760,6 +760,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
         applied to per-attempt effective violation scores (SQL aggregation).
         """
         risk = ProctoringRiskService
+        official = self._official_ids()
         q_count = (
             select(
                 TestQuestion.test_id.label("test_id"),
@@ -861,6 +862,7 @@ class InstitutionAnalyticsRepository(BaseRepository):
                             and_(
                                 TestAttempt.status == TestAttemptStatus.GRADED.value,
                                 TestAttempt.percentage.is_not(None),
+                                TestAttempt.id.in_(select(official.c.attempt_id)),
                             ),
                             TestAttempt.percentage,
                         ),

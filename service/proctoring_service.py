@@ -519,6 +519,7 @@ class ProctoringService:
             "proctoring_auto_terminated": 0,
             "terminated": 0,
             "completed": 0,
+            "graded_attempts": 0,
         }
         for row in students:
             state = row.get("monitoring_state")
@@ -538,6 +539,8 @@ class ProctoringService:
                 counts["terminated"] += 1
             elif state == _MONITORING_COMPLETED:
                 counts["completed"] += 1
+            if row.get("attempt_status") == TestAttemptStatus.GRADED.value:
+                counts["graded_attempts"] += 1
         return counts
 
     def ingest_event(

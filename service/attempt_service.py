@@ -160,7 +160,7 @@ class AttemptService:
         actor_membership,
         actor_user_id: int,
     ) -> list[dict]:
-        attempts = self.attempts.list_graded_for_student(
+        attempts = self.attempts.list_official_results_for_student(
             workspace_id=workspace_id,
             student_membership_id=actor_membership.id,
             student_user_id=actor_user_id,
@@ -180,7 +180,11 @@ class AttemptService:
         page: int | None = None,
         per_page: int | None = None,
     ) -> dict:
-        """Recent submitted/graded attempts for the student dashboard table."""
+        """Recent submitted/graded attempts for the student dashboard table.
+
+        History may include multiple sittings per test. ``is_official`` marks
+        the Official Attempt (latest by started_at, id).
+        """
         page, per_page, offset = normalize_pagination(page, per_page)
         attempts, total = self.attempts.list_recent_for_student(
             workspace_id=workspace_id,
@@ -189,8 +193,17 @@ class AttemptService:
             offset=offset,
             limit=per_page,
         )
+        official_ids: set[int] = set()
+        for test_id in {a.test_id for a in attempts if a.test is not None}:
+            official = self.attempts.get_official_attempt(
+                test_id, actor_membership.id
+            )
+            if official is not None:
+                official_ids.add(official.id)
         items = [
-            self._serialize_recent_exam(attempt)
+            self._serialize_recent_exam(
+                attempt, is_official=attempt.id in official_ids
+            )
             for attempt in attempts
             if attempt.test is not None
         ]
@@ -1393,12 +1406,14 @@ class AttemptService:
         if test.created_by and test.created_by.user:
             teacher_name = test.created_by.user.full_name
 
-        score = attempt.final_score
-        if score is not None:
-            score = float(score)
-        percentage = attempt.percentage
-        if percentage is not None:
-            percentage = float(percentage)
+        is_graded = attempt.status == TestAttemptStatus.GRADED.value
+        score = None
+        percentage = None
+        if is_graded:
+            if attempt.final_score is not None:
+                score = float(attempt.final_score)
+            if attempt.percentage is not None:
+                percentage = float(attempt.percentage)
 
         return {
             "test_id": test.id,
@@ -1411,10 +1426,13 @@ class AttemptService:
             "max_score": max_score,
             "percentage": percentage,
             "status": attempt.status,
-            "graded_at": format_local_datetime(attempt.graded_at),
+            "graded_at": format_local_datetime(attempt.graded_at) if is_graded else None,
+            "is_official": True,
         }
 
-    def _serialize_recent_exam(self, attempt: TestAttempt) -> dict:
+    def _serialize_recent_exam(
+        self, attempt: TestAttempt, *, is_official: bool = False
+    ) -> dict:
         test = attempt.test
         subject = test.subject if test else None
         grading_completed = attempt.status == TestAttemptStatus.GRADED.value
@@ -1464,6 +1482,7 @@ class AttemptService:
             "review_allowed": self._allow_student_review_after_grading(test, attempt)
             if grading_completed
             else False,
+            "is_official": bool(is_official),
         }
 
     def _attempt_lifecycle_status(self, attempt: TestAttempt) -> str:

@@ -248,7 +248,7 @@ def test_13_june_created_july_graded_included_in_performance_not_tests_created_s
     assert "created_at" in created_sql
 
 
-def test_latest_graded_sql_period_then_row_number():
+def test_official_graded_sql_uses_started_at_then_period():
     from sqlalchemy import select
     from sqlalchemy.dialects import postgresql
 
@@ -257,7 +257,7 @@ def test_latest_graded_sql_period_then_row_number():
     )
 
     repo = InstitutionAnalyticsRepository()
-    sq = repo._latest_graded_student_test_scores_subquery(_scope())
+    sq = repo._official_graded_student_test_scores_subquery(_scope())
     sql = str(
         select(sq).compile(
             dialect=postgresql.dialect(),
@@ -265,8 +265,8 @@ def test_latest_graded_sql_period_then_row_number():
         )
     ).lower()
     assert "row_number" in sql
+    assert "started_at" in sql
     assert "graded_at" in sql
-    assert "rn" in sql or "row_number" in sql
 
 
 def test_average_uses_student_test_pairs():

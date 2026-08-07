@@ -4245,6 +4245,11 @@ paths:
                   proctoring_auto_terminated: { type: integer }
                   terminated: { type: integer }
                   completed: { type: integer }
+                  graded_attempts:
+                    type: integer
+                    description: >
+                      Students whose Official Attempt (latest by started_at, id)
+                      has status GRADED — not a raw count of all GRADED rows.
               students:
                 type: array
                 items:
@@ -5995,6 +6000,7 @@ definitions:
       created_at: { type: string, format: date-time }
       updated_at: { type: string, format: date-time }
       teachers_count: { type: integer, example: 2 }
+      students_count: { type: integer, example: 25 }
       question_banks_count:
         type: integer
         example: 4
@@ -6015,6 +6021,19 @@ definitions:
             subject_role: { type: string, example: TEACHER }
             membership_role: { type: string, example: TEACHER }
             full_name: { type: string, example: "Sara Ahmad" }
+            assigned_at: { type: string, format: date-time }
+      students:
+        type: array
+        description: Active students enrolled in this subject (included on GET /subjects/{id})
+        items:
+          type: object
+          properties:
+            assignment_id: { type: integer }
+            membership_id: { type: integer, example: 15 }
+            subject_id: { type: integer }
+            subject_role: { type: string, example: STUDENT }
+            membership_role: { type: string, example: STUDENT }
+            full_name: { type: string, example: "Omar Hassan" }
             assigned_at: { type: string, format: date-time }
       topics:
         type: array

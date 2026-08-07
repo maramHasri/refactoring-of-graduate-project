@@ -253,23 +253,43 @@ def test_teacher_monitor_broadcast_registry():
     assert len(ws.messages) == 1
 
 
-def test_map_relevant_attempts_prefers_in_progress():
+def test_map_relevant_attempts_uses_official_latest_by_started_at():
+    """Official Attempt = max(started_at, id); monitoring uses that selector."""
     from repositories.attempt_repository import TestAttemptRepository
 
-    repo = object.__new__(TestAttemptRepository)
-    older = SimpleNamespace(
-        id=1, student_membership_id=10, status="SUBMITTED", started_at="2026-01-01"
+    older = {"id": 1, "started_at": "2026-01-01", "status": "SUBMITTED"}
+    newer = {"id": 2, "started_at": "2026-01-02", "status": "IN_PROGRESS"}
+    official = max([older, newer], key=lambda a: (a["started_at"], a["id"]))
+    assert official["id"] == 2
+
+    # SQL contract still exposes the canonical subquery
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    sq = TestAttemptRepository.official_attempt_ids_subquery()
+    sql = str(
+        select(sq).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": False},
+        )
+    ).lower()
+    assert "started_at" in sql
+    assert "row_number" in sql
+
+
+def test_monitoring_summary_includes_graded_attempts():
+    from service.proctoring_service import ProctoringService
+
+    summary = ProctoringService._monitoring_summary(
+        [
+            {"attempt_status": "GRADED", "monitoring_state": "COMPLETED"},
+            {"attempt_status": "SUBMITTED", "monitoring_state": "SUBMITTED"},
+            {"attempt_status": None, "monitoring_state": "NOT_STARTED"},
+        ]
     )
-    active = SimpleNamespace(
-        id=2, student_membership_id=10, status="IN_PROGRESS", started_at="2026-01-02"
-    )
-    other = SimpleNamespace(
-        id=3, student_membership_id=11, status="GRADED", started_at="2026-01-03"
-    )
-    repo.list_for_test = MagicMock(return_value=[older, active, other])
-    mapped = repo.map_relevant_attempts_for_monitoring(5)
-    assert mapped[10].id == 2
-    assert mapped[11].id == 3
+    assert summary["graded_attempts"] == 1
+    assert summary["completed"] == 1
+    assert summary["total_assigned_students"] == 3
 
 
 def test_review_violation_broadcasts_student_row_updated_after_commit():
@@ -328,6 +348,7 @@ if __name__ == "__main__":
     test_get_test_monitoring_includes_not_started_and_forbids_unauthorized()
     test_list_events_requires_proctor_access()
     test_teacher_monitor_broadcast_registry()
-    test_map_relevant_attempts_prefers_in_progress()
+    test_map_relevant_attempts_uses_official_latest_by_started_at()
+    test_monitoring_summary_includes_graded_attempts()
     test_review_violation_broadcasts_student_row_updated_after_commit()
     print("all teacher monitoring checks passed")
