@@ -681,6 +681,13 @@ paths:
                     updated_at: { type: string }
                     activity_source: { type: string, example: UPDATED }
                     question_count: { type: integer, example: 42 }
+                    usage_count:
+                      type: integer
+                      example: 27
+                      description: |
+                        Historical count of successful operations that used this
+                        question bank to add at least one question to a test.
+                        Not question volume; does not decrease on deletes.
               upcoming_tests:
                 type: array
                 items:
@@ -2280,6 +2287,14 @@ paths:
                     visibility: { type: string }
                     is_archived: { type: boolean }
                     created_by_membership_id: { type: integer }
+                    usage_count:
+                      type: integer
+                      example: 27
+                      description: |
+                        Historical count of successful operations that used this
+                        question bank to add at least one question to a test.
+                        Not the number of questions used. Does not decrease when
+                        tests or test questions are deleted.
                     created_at: { type: string, format: date-time }
                     updated_at: { type: string, format: date-time }
   /question-banks/workspace:
@@ -2520,6 +2535,8 @@ paths:
       responses:
         200:
           description: Question bank metadata
+          schema:
+            $ref: "#/definitions/QuestionBank"
         403:
           description: Forbidden
         404:
@@ -5785,6 +5802,29 @@ paths:
           description: Super admin access required
 
 definitions:
+  QuestionBank:
+    type: object
+    properties:
+      id: { type: integer, example: 12 }
+      title: { type: string, example: "Cybersecurity Midterm Bank" }
+      description: { type: string, x-nullable: true }
+      workspace_id: { type: integer, example: 1 }
+      subject_id: { type: integer, example: 3 }
+      subject_name: { type: string, example: "Cyber Security" }
+      visibility: { type: string, enum: [PRIVATE, WORKSPACE, COMMUNITY] }
+      is_archived: { type: boolean, example: false }
+      created_by_membership_id: { type: integer, example: 4 }
+      usage_count:
+        type: integer
+        example: 27
+        description: |
+          Number of successful operations that used this question bank
+          to add at least one question to a test.
+          Historical usage count — not the number of questions used,
+          and not the number of current tests containing bank questions.
+          Does not decrease when tests or test questions are deleted.
+      created_at: { type: string, format: date-time }
+      updated_at: { type: string, format: date-time }
   TopicSummary:
     type: object
     properties:

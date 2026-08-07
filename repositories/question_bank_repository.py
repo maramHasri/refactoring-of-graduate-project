@@ -184,3 +184,18 @@ class QuestionBankRepository(BaseRepository):
                 .limit(limit)
             ).scalars().all()
         )
+
+    def increment_usage_counts(self, bank_ids: set[int] | list[int] | None) -> None:
+        """Atomically increment usage_count once per bank_id in the current transaction.
+
+        Call only for banks that contributed ≥1 newly created TestQuestion in this
+        request. Does not commit — shares the caller transaction/rollback.
+        """
+        ids = {int(bank_id) for bank_id in (bank_ids or []) if bank_id is not None}
+        if not ids:
+            return
+        db.session.execute(
+            db.update(QuestionBank)
+            .where(QuestionBank.id.in_(ids))
+            .values(usage_count=QuestionBank.usage_count + 1)
+        )

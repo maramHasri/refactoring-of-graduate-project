@@ -27,6 +27,11 @@ class QuestionBankService:
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
         self.workspaces = WorkspaceRepository()
+
+    def increment_usage_for_banks(self, bank_ids: set[int] | list[int] | None) -> None:
+        """Record one successful usage per bank_id in the current DB transaction."""
+        self.banks.increment_usage_counts(bank_ids)
+
     def create_question_bank(
         self,
         *,
@@ -336,6 +341,7 @@ class QuestionBankService:
             "visibility": bank.visibility,
             "is_archived": bank.is_archived,
             "created_by_membership_id": bank.created_by_membership_id,
+            "usage_count": int(bank.usage_count or 0),
             "created_at": bank.created_at.isoformat() if bank.created_at else None,
             "updated_at": bank.updated_at.isoformat() if bank.updated_at else None,
         }

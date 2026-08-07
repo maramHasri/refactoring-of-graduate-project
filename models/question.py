@@ -79,6 +79,12 @@ class QuestionBank(db.Model, TimestampMixin):
     visibility = db.Column(String(30), nullable=False, default="WORKSPACE")
     is_archived = db.Column(Boolean, nullable=False, default=False)
     deleted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    usage_count = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
 
     subject = relationship("Subject", back_populates="question_banks")
     created_by = relationship(

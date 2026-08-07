@@ -620,6 +620,13 @@ class TestService:
             self.test_questions.add(row)
             created.append(row)
 
+        used_bank_ids = {
+            int(row.source_bank_id)
+            for row in created
+            if row.source_bank_id is not None
+        }
+        self.bank_service.increment_usage_for_banks(used_bank_ids)
+
         self._refresh_test_scoring(test)
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
@@ -764,6 +771,9 @@ class TestService:
             self.test_questions.add(row)
             created.append(row)
 
+        if created:
+            self.bank_service.increment_usage_for_banks({int(bank.id)})
+
         self._refresh_test_scoring(test)
         db.session.commit()
         return [self.serialize_test_question(row) for row in created]
@@ -807,6 +817,13 @@ class TestService:
             )
             self.test_questions.add(row)
             created.append(row)
+
+        used_bank_ids = {
+            int(row.source_bank_id)
+            for row in created
+            if row.source_bank_id is not None
+        }
+        self.bank_service.increment_usage_for_banks(used_bank_ids)
 
         self._refresh_test_scoring(test)
         db.session.commit()

@@ -270,6 +270,7 @@ Table question_banks {
   visibility varchar(30) [not null, default: 'WORKSPACE', note: 'PRIVATE | WORKSPACE | COMMUNITY']
   is_archived boolean [not null, default: false]
   deleted_at timestamptz [note: 'soft delete']
+  usage_count int [not null, default: 0, note: 'Historical successful bank→test usage operations; not question volume; never decremented']
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
 
