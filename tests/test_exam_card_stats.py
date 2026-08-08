@@ -180,12 +180,13 @@ def test_list_tests_uses_batch_stats():
     }
     svc.test_questions.count_by_test_ids.return_value = {7: 25}
 
-    with patch.object(
-        TestService,
-        "_serialize_test_list_item",
-        return_value={"test_id": 7, "participants_count": 5},
-    ) as ser:
-        payload = TestService.list_tests(svc, SimpleNamespace(id=1))
+    with patch.object(TestService, "_sync_published_tests_past_window"):
+        with patch.object(
+            TestService,
+            "_serialize_test_list_item",
+            return_value={"test_id": 7, "participants_count": 5},
+        ) as ser:
+            payload = TestService.list_tests(svc, SimpleNamespace(id=1))
 
     svc.tests.list_for_creator_paginated.assert_called_once_with(
         1,
@@ -214,12 +215,13 @@ def test_list_tests_includes_questions_count():
     svc.attempts.exam_card_stats_by_test_ids.return_value = {7: {}}
     svc.test_questions.count_by_test_ids.return_value = {7: 25}
 
-    with patch.object(
-        TestService,
-        "_serialize_test_list_item",
-        return_value={"test_id": 7},
-    ) as ser:
-        TestService.list_tests(svc, SimpleNamespace(id=1))
+    with patch.object(TestService, "_sync_published_tests_past_window"):
+        with patch.object(
+            TestService,
+            "_serialize_test_list_item",
+            return_value={"test_id": 7},
+        ) as ser:
+            TestService.list_tests(svc, SimpleNamespace(id=1))
 
     svc.test_questions.count_by_test_ids.assert_called_once_with([7])
     assert ser.call_args.kwargs["questions_count"] == 25

@@ -619,6 +619,10 @@ class SubjectService:
             "subject_role": link.subject_role,
             "membership_role": membership.role if membership else None,
             "full_name": user.full_name if user else None,
+            "email": user.email if user else None,
+            "phone_number": user.phone_number if user else None,
+            "user_status": user.user_status if user else None,
+            "avatar_url": user.profile_image_url if user else None,
             "assigned_at": link.created_at.isoformat() if link.created_at else None,
         }
 

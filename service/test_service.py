@@ -319,6 +319,7 @@ class TestService:
             offset=offset,
             limit=per_page,
         )
+        self._sync_published_tests_past_window(rows)
         test_ids = [row.id for row in rows]
         stats_by_test = self.attempts.exam_card_stats_by_test_ids(test_ids)
         questions_counts = self.test_questions.count_by_test_ids(test_ids)
@@ -353,10 +354,12 @@ class TestService:
 
     def get_test(self, *, test_id: int, workspace_id: int, actor_membership) -> dict:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)
+        self._sync_published_tests_past_window([test])
         questions = self.test_questions.list_for_test(test.id)
         payload = self.serialize_test(
             test,
             exam_stats=self.attempts.exam_card_stats_for_test(test.id),
+            questions_count=len(questions),
         )
         payload["questions"] = [self.serialize_test_question(row) for row in questions]
         return payload
@@ -1328,6 +1331,37 @@ class TestService:
         if test.closed_at is None:
             test.closed_at = now
         return True
+
+    def _sync_published_tests_past_window(self, tests: list[Test]) -> None:
+        """On-read: close PUBLISHED tests whose availability window has already ended.
+
+        Complements the background auto-close job so list/detail responses show
+        CLOSED immediately without waiting for the next worker tick.
+        Does not close tests before their scheduled/flexible end.
+        """
+        from service.attempt_service import AttemptService
+
+        attempt_svc = AttemptService()
+        now = local_timezone_now()
+        changed = False
+        for test in tests:
+            if test.status != TestStatus.PUBLISHED.value:
+                continue
+            mode = (
+                test.availability_time_mode or AvailabilityTimeMode.SCHEDULED.value
+            ).upper()
+            due = False
+            if mode == AvailabilityTimeMode.SCHEDULED.value:
+                global_end = attempt_svc._scheduled_global_end_time(test)
+                due = bool(global_end and now >= global_end)
+            elif mode == AvailabilityTimeMode.FLEXIBLE.value:
+                due = bool(
+                    test.closed_at and now >= ensure_local_aware(test.closed_at)
+                )
+            if due and self._apply_test_close(test):
+                changed = True
+        if changed:
+            db.session.commit()
 
     def archive_test(self, *, test_id: int, workspace_id: int, actor_membership) -> Test:
         test = self._resolve_test_access(test_id, workspace_id, actor_membership)

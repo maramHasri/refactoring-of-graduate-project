@@ -681,6 +681,10 @@ paths:
                     updated_at: { type: string }
                     activity_source: { type: string, example: UPDATED }
                     question_count: { type: integer, example: 42 }
+                    questions_count:
+                      type: integer
+                      example: 42
+                      description: Alias of question_count (ACTIVE questions in bank)
                     usage_count:
                       type: integer
                       example: 27
@@ -1752,6 +1756,8 @@ paths:
                     subject_role: { type: string, example: "TEACHER" }
                     membership_role: { type: string, example: "TEACHER" }
                     full_name: { type: string, example: "Ahmed Ali" }
+                    phone_number: { type: string, example: "+9639xxxxxxx", x-nullable: true }
+                    user_status: { type: string, example: "ACTIVE" }
                     assigned_at: { type: string, format: date-time }
     post:
       tags: [Subjects]
@@ -1803,7 +1809,9 @@ paths:
           required: true
       responses:
         200:
-          description: Student enrollments
+          description: |
+            Student enrollments. Each item includes full_name, phone_number,
+            and user_status (account status).
     post:
       tags: [Subjects]
       summary: Enroll students in subject (bulk)
@@ -2287,6 +2295,14 @@ paths:
                     visibility: { type: string }
                     is_archived: { type: boolean }
                     created_by_membership_id: { type: integer }
+                    created_by_name: { type: string, example: "Sara Ahmad", x-nullable: true }
+                    author_name: { type: string, example: "Sara Ahmad", x-nullable: true }
+                    created_by_avatar_url: { type: string, x-nullable: true }
+                    author_avatar_url: { type: string, x-nullable: true }
+                    questions_count:
+                      type: integer
+                      example: 30
+                      description: Number of ACTIVE questions currently in this bank
                     usage_count:
                       type: integer
                       example: 27
@@ -5814,6 +5830,29 @@ definitions:
       visibility: { type: string, enum: [PRIVATE, WORKSPACE, COMMUNITY] }
       is_archived: { type: boolean, example: false }
       created_by_membership_id: { type: integer, example: 4 }
+      created_by_name:
+        type: string
+        example: "Sara Ahmad"
+        x-nullable: true
+        description: Full name of the membership user who created the bank
+      author_name:
+        type: string
+        example: "Sara Ahmad"
+        x-nullable: true
+        description: Alias of created_by_name
+      created_by_avatar_url:
+        type: string
+        example: "https://cdn.example.com/avatars/4.png"
+        x-nullable: true
+      author_avatar_url:
+        type: string
+        example: "https://cdn.example.com/avatars/4.png"
+        x-nullable: true
+        description: Alias of created_by_avatar_url
+      questions_count:
+        type: integer
+        example: 30
+        description: Number of ACTIVE questions currently in this bank
       usage_count:
         type: integer
         example: 27
@@ -5995,13 +6034,14 @@ definitions:
       membership_role: { type: string, example: "TEACHER" }
       assigned_subjects_count: { type: integer, example: 4 }
       created_at: { type: string, format: date-time }
-  WorkspaceStudentMember:
+      WorkspaceStudentMember:
     type: object
     properties:
       user_id: { type: integer, example: 21 }
       membership_id: { type: integer, example: 84 }
       full_name: { type: string, example: "Sara Mohamed" }
       email: { type: string, example: "sara@example.com" }
+      phone_number: { type: string, example: "+9639xxxxxxx", x-nullable: true }
       avatar_url: { type: string }
       user_status: { type: string, example: "ACTIVE" }
       workspace_role: { type: string, example: "STUDENT" }
@@ -6061,6 +6101,12 @@ definitions:
             subject_role: { type: string, example: TEACHER }
             membership_role: { type: string, example: TEACHER }
             full_name: { type: string, example: "Sara Ahmad" }
+            phone_number: { type: string, example: "+9639xxxxxxx", x-nullable: true }
+            user_status:
+              type: string
+              example: ACTIVE
+              description: Account status (User.user_status)
+              enum: [PENDING_VERIFICATION, PENDING_APPROVAL, REGISTRATION_REJECTED, ACTIVE, SUSPENDED, DISABLED]
             assigned_at: { type: string, format: date-time }
       students:
         type: array
@@ -6074,6 +6120,14 @@ definitions:
             subject_role: { type: string, example: STUDENT }
             membership_role: { type: string, example: STUDENT }
             full_name: { type: string, example: "Omar Hassan" }
+            phone_number: { type: string, example: "+9639xxxxxxx", x-nullable: true }
+            email: { type: string, example: "omar@example.com", x-nullable: true }
+            user_status:
+              type: string
+              example: ACTIVE
+              description: Account status (User.user_status)
+              enum: [PENDING_VERIFICATION, PENDING_APPROVAL, REGISTRATION_REJECTED, ACTIVE, SUSPENDED, DISABLED]
+            avatar_url: { type: string, x-nullable: true }
             assigned_at: { type: string, format: date-time }
       topics:
         type: array

@@ -1168,13 +1168,16 @@ class AttemptService:
             remaining_seconds = max(0, int((deadline - now).total_seconds()))
 
         student_name = self._student_display_name(attempt)
+        student_avatar_url = self._student_avatar_url(attempt)
         payload = {
             "id": attempt.id,
+            "attempt_id": attempt.id,
             "test_id": attempt.test_id,
             "student_membership_id": attempt.student_membership_id,
             "user_id": attempt.user_id,
             "student_name": student_name,
             "user_name": student_name,
+            "student_avatar_url": student_avatar_url,
             "status": attempt.status,
             "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
             "submitted_at": attempt.submitted_at.isoformat()
@@ -1286,6 +1289,16 @@ class AttemptService:
         membership = attempt.student_membership
         if membership is not None and membership.user is not None:
             return membership.user.full_name
+        return None
+
+    @staticmethod
+    def _student_avatar_url(attempt: TestAttempt) -> str | None:
+        user = attempt.user
+        if user is not None and getattr(user, "profile_image_url", None):
+            return user.profile_image_url
+        membership = attempt.student_membership
+        if membership is not None and membership.user is not None:
+            return membership.user.profile_image_url
         return None
 
     def _build_start_or_resume_response(

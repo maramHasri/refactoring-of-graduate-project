@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import joinedload
 
-from models import Membership, Subject, SubjectMembership
+from models import Membership, Subject, SubjectMembership, User
 from repositories.base_repository import BaseRepository
 from utils.db import db
 from utils.enums import MembershipStatus, SubjectMembershipStatus, SubjectRole
@@ -123,12 +123,17 @@ class SubjectMembershipRepository(BaseRepository):
     def map_students_by_subject_ids(
         self, subject_ids: list[int]
     ) -> dict[int, list[SubjectMembership]]:
-        """Active STUDENT subject memberships grouped by subject_id (batched)."""
+        """Active STUDENT subject memberships grouped by subject_id (batched).
+
+        Excludes soft-deleted users and non-ACTIVE workspace memberships.
+        """
         if not subject_ids:
             return {}
         rows = list(
             db.session.execute(
                 db.select(SubjectMembership)
+                .join(Membership, Membership.id == SubjectMembership.membership_id)
+                .join(User, User.id == Membership.user_id)
                 .options(
                     joinedload(SubjectMembership.membership).joinedload(Membership.user),
                 )
@@ -137,6 +142,8 @@ class SubjectMembershipRepository(BaseRepository):
                     SubjectMembership.subject_role == SubjectRole.STUDENT.value,
                     SubjectMembership.deleted_at.is_(None),
                     SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                    Membership.status == MembershipStatus.ACTIVE.value,
+                    User.deleted_at.is_(None),
                 )
                 .order_by(SubjectMembership.subject_id, SubjectMembership.id)
             )
@@ -150,9 +157,12 @@ class SubjectMembershipRepository(BaseRepository):
         return result
 
     def list_students_for_subject(self, subject_id: int) -> list[SubjectMembership]:
+        """Active subject enrollments with valid (non-deleted, ACTIVE) workspace memberships."""
         return list(
             db.session.execute(
                 db.select(SubjectMembership)
+                .join(Membership, Membership.id == SubjectMembership.membership_id)
+                .join(User, User.id == Membership.user_id)
                 .options(
                     joinedload(SubjectMembership.membership).joinedload(Membership.user),
                 )
@@ -161,6 +171,8 @@ class SubjectMembershipRepository(BaseRepository):
                     SubjectMembership.subject_role == SubjectRole.STUDENT.value,
                     SubjectMembership.deleted_at.is_(None),
                     SubjectMembership.status == SubjectMembershipStatus.ACTIVE.value,
+                    Membership.status == MembershipStatus.ACTIVE.value,
+                    User.deleted_at.is_(None),
                 )
                 .order_by(SubjectMembership.id)
             )

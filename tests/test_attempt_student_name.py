@@ -28,7 +28,7 @@ def test_serialize_attempt_includes_student_name():
         test_id=5,
         student_membership_id=9,
         user_id=3,
-        user=SimpleNamespace(full_name="Ahmad Ali"),
+        user=SimpleNamespace(full_name="Ahmad Ali", profile_image_url="https://cdn/a.png"),
         student_membership=None,
         test=None,
         status="SUBMITTED",
@@ -61,6 +61,9 @@ def test_serialize_attempt_includes_student_name():
 
     assert payload["student_name"] == "Ahmad Ali"
     assert payload["user_name"] == "Ahmad Ali"
+    assert payload["attempt_id"] == 11
+    assert payload["id"] == 11
+    assert payload["student_avatar_url"] == "https://cdn/a.png"
 
 
 def test_student_display_name_falls_back_to_membership_user():

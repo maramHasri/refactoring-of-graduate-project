@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 
 from models import QuestionBank
 from repositories.question_bank_repository import QuestionBankRepository
+from repositories.question_repository import QuestionRepository
 from repositories.subject_repository import SubjectMembershipRepository, SubjectRepository
-from repositories.workspace_repository import WorkspaceRepository
+from repositories.workspace_repository import MembershipRepository, WorkspaceRepository
 from service.exceptions import ForbiddenError, NotFoundError, ValidationError
 from utils.academic_rbac import (
     can_manage_subjects,
@@ -24,9 +25,11 @@ from utils.pagination import build_pagination_meta, normalize_pagination
 class QuestionBankService:
     def __init__(self):
         self.banks = QuestionBankRepository()
+        self.questions = QuestionRepository()
         self.subjects = SubjectRepository()
         self.subject_memberships = SubjectMembershipRepository()
         self.workspaces = WorkspaceRepository()
+        self.memberships = MembershipRepository()
 
     def increment_usage_for_banks(self, bank_ids: set[int] | list[int] | None) -> None:
         """Record one successful usage per bank_id in the current DB transaction."""
@@ -71,7 +74,7 @@ class QuestionBankService:
         self, workspace_id: int, actor_membership
     ) -> list[dict]:
         rows = self.banks.list_by_creator(actor_membership.id, workspace_id)
-        return [self._serialize_bank(b) for b in rows]
+        return self._serialize_banks(rows)
 
     def list_workspace_question_banks(
         self,
@@ -109,7 +112,7 @@ class QuestionBankService:
             limit=per_page,
         )
         return {
-            "question_banks": [self._serialize_bank(bank) for bank in rows],
+            "question_banks": self._serialize_banks(rows),
             "count": len(rows),
             **build_pagination_meta(total=total, page=page, per_page=per_page),
         }
@@ -125,7 +128,7 @@ class QuestionBankService:
         total = self.banks.count_community()
         rows = self.banks.list_community(offset=offset, limit=per_page)
         return {
-            "question_banks": [self._serialize_bank(bank) for bank in rows],
+            "question_banks": self._serialize_banks(rows),
             "count": len(rows),
             **build_pagination_meta(total=total, page=page, per_page=per_page),
         }
@@ -163,7 +166,7 @@ class QuestionBankService:
             raise ForbiddenError(Messages.YOU_DO_NOT_HAVE_ACCESS_TO_THIS_SUBJECT)
 
         rows = self.banks.list_by_subject(subject_id, workspace_id)
-        result = []
+        visible = []
         for bank in rows:
             if can_view_question_bank(
                 bank.visibility,
@@ -172,8 +175,8 @@ class QuestionBankService:
                 actor_subject_link=actor_link,
                 is_bank_creator=bank.created_by_membership_id == actor_membership.id,
             ):
-                result.append(self._serialize_bank(bank))
-        return result
+                visible.append(bank)
+        return self._serialize_banks(visible)
 
     def update_question_bank(
         self,
@@ -327,10 +330,38 @@ class QuestionBankService:
             return
         raise ForbiddenError(Messages.YOU_MUST_BE_ASSIGNED_TO_THIS_SUBJECT_AS_TEACHER_TO_MANAGE_QUESTION_BANKS)
 
-    def _serialize_bank(self, bank: QuestionBank) -> dict:
+    def _serialize_banks(self, banks: list[QuestionBank]) -> list[dict]:
+        counts = self.questions.count_active_by_bank_ids([bank.id for bank in banks])
+        return [
+            self._serialize_bank(bank, questions_count=counts.get(bank.id, 0))
+            for bank in banks
+        ]
+
+    def _serialize_bank(
+        self,
+        bank: QuestionBank,
+        *,
+        questions_count: int | None = None,
+    ) -> dict:
         subject = bank.subject
         if subject is None and bank.subject_id:
             subject = self.subjects.get_by_id(bank.subject_id)
+
+        creator = getattr(bank, "created_by", None)
+        user = creator.user if creator is not None else None
+        if user is None and bank.created_by_membership_id:
+            pair = self.memberships.get_with_user(bank.created_by_membership_id)
+            if pair:
+                _membership, user = pair
+
+        created_by_name = user.full_name if user else None
+        created_by_avatar_url = user.profile_image_url if user else None
+
+        if questions_count is None:
+            questions_count = self.questions.count_active_by_bank_ids([bank.id]).get(
+                bank.id, 0
+            )
+
         return {
             "id": bank.id,
             "title": bank.title,
@@ -341,6 +372,11 @@ class QuestionBankService:
             "visibility": bank.visibility,
             "is_archived": bank.is_archived,
             "created_by_membership_id": bank.created_by_membership_id,
+            "created_by_name": created_by_name,
+            "author_name": created_by_name,
+            "created_by_avatar_url": created_by_avatar_url,
+            "author_avatar_url": created_by_avatar_url,
+            "questions_count": int(questions_count or 0),
             "usage_count": int(bank.usage_count or 0),
             "created_at": bank.created_at.isoformat() if bank.created_at else None,
             "updated_at": bank.updated_at.isoformat() if bank.updated_at else None,

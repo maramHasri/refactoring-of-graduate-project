@@ -30,7 +30,8 @@ def _draft_test(*, test_id=1, subject_id=10, workspace_id=1):
     )
 
 
-def _bank(*, bank_id=100, subject_id=10, workspace_id=1, usage_count=0):
+def _bank(*, bank_id=100, subject_id=10, workspace_id=1, usage_count=0, created_by=None):
+    membership_id = getattr(created_by, "id", None) if created_by is not None else 1
     return SimpleNamespace(
         id=bank_id,
         title="Bank A",
@@ -40,7 +41,8 @@ def _bank(*, bank_id=100, subject_id=10, workspace_id=1, usage_count=0):
         subject=SimpleNamespace(name="Math"),
         visibility="WORKSPACE",
         is_archived=False,
-        created_by_membership_id=1,
+        created_by_membership_id=membership_id,
+        created_by=created_by,
         usage_count=usage_count,
         created_at=None,
         updated_at=None,
@@ -384,9 +386,15 @@ def test_11_serialize_bank_includes_usage_count():
 
     svc = QuestionBankService()
     svc.subjects = MagicMock()
+    svc.memberships = MagicMock()
+    svc.memberships.get_with_user.return_value = None
+    svc.questions = MagicMock()
+    svc.questions.count_active_by_bank_ids.return_value = {12: 5}
     bank = _bank(bank_id=12, usage_count=27)
+    bank.created_by_membership_id = None
     payload = svc._serialize_bank(bank)
     assert payload["usage_count"] == 27
+    assert payload["questions_count"] == 5
     assert payload["id"] == 12
 
 
@@ -395,8 +403,35 @@ def test_11b_serialize_bank_defaults_null_usage_to_zero():
 
     svc = QuestionBankService()
     svc.subjects = MagicMock()
+    svc.memberships = MagicMock()
+    svc.memberships.get_with_user.return_value = None
     bank = _bank(usage_count=None)
-    assert svc._serialize_bank(bank)["usage_count"] == 0
+    bank.created_by_membership_id = None
+    assert svc._serialize_bank(bank, questions_count=0)["usage_count"] == 0
+
+
+def test_11c_serialize_bank_includes_creator_name_and_avatar():
+    from service.question_bank_service import QuestionBankService
+
+    svc = QuestionBankService()
+    svc.subjects = MagicMock()
+    svc.memberships = MagicMock()
+    creator = SimpleNamespace(
+        id=4,
+        user=SimpleNamespace(
+            full_name="Sara Ahmad",
+            profile_image_url="https://cdn.example.com/a.png",
+        ),
+    )
+    bank = _bank(bank_id=12, created_by=creator)
+    payload = svc._serialize_bank(bank, questions_count=30)
+    assert payload["created_by_membership_id"] == 4
+    assert payload["created_by_name"] == "Sara Ahmad"
+    assert payload["author_name"] == "Sara Ahmad"
+    assert payload["created_by_avatar_url"] == "https://cdn.example.com/a.png"
+    assert payload["author_avatar_url"] == "https://cdn.example.com/a.png"
+    assert payload["questions_count"] == 30
+    svc.memberships.get_with_user.assert_not_called()
 
 
 # ── 12: workspace dashboard recent_question_banks ────────────────────────────
@@ -534,6 +569,7 @@ if __name__ == "__main__":
         test_10c_concurrent_style_two_calls_two_sql_updates,
         test_11_serialize_bank_includes_usage_count,
         test_11b_serialize_bank_defaults_null_usage_to_zero,
+        test_11c_serialize_bank_includes_creator_name_and_avatar,
         test_12_dashboard_recent_banks_include_usage_count,
         test_add_questions_from_bank_path_increments_once_per_bank,
         test_from_bank_empty_created_skips_increment,

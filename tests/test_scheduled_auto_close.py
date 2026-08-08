@@ -216,6 +216,45 @@ def test_job_loop_order_publish_submit_close():
     assert calls == ["publish", "submit", "close"]
 
 
+def test_sync_published_tests_past_window_closes_due_scheduled():
+    from service.test_service import TestService
+    from utils.enums import TestStatus
+
+    svc = object.__new__(TestService)
+    past = datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc)
+    due = SimpleNamespace(
+        id=1,
+        status=TestStatus.PUBLISHED.value,
+        availability_time_mode="SCHEDULED",
+        closed_at=None,
+    )
+    future = SimpleNamespace(
+        id=2,
+        status=TestStatus.PUBLISHED.value,
+        availability_time_mode="SCHEDULED",
+        closed_at=None,
+    )
+    draft = SimpleNamespace(
+        id=3,
+        status=TestStatus.DRAFT.value,
+        availability_time_mode="SCHEDULED",
+        closed_at=None,
+    )
+
+    with patch("service.test_service.local_timezone_now", return_value=past + timedelta(hours=3)):
+        with patch("service.test_service.db") as mock_db:
+            with patch(
+                "service.attempt_service.AttemptService._scheduled_global_end_time",
+                side_effect=lambda t: past if t.id == 1 else past + timedelta(days=1),
+            ):
+                TestService._sync_published_tests_past_window(svc, [due, future, draft])
+
+    assert due.status == TestStatus.CLOSED.value
+    assert future.status == TestStatus.PUBLISHED.value
+    assert draft.status == TestStatus.DRAFT.value
+    mock_db.session.commit.assert_called_once()
+
+
 if __name__ == "__main__":
     tests = [name for name, obj in list(globals().items()) if name.startswith("test_")]
     failed = 0

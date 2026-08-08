@@ -496,6 +496,9 @@ class WorkspaceService:
             limit=per_page,
         )
         test_ids = [test.id for test in rows]
+        from service.test_service import TestService
+
+        TestService()._sync_published_tests_past_window(rows)
         stats_by_test = self.test_attempts.exam_card_stats_by_test_ids(test_ids)
         questions_counts = self.test_questions.count_by_test_ids(test_ids)
         items = [
@@ -883,6 +886,7 @@ class WorkspaceService:
             "membership_id": membership.id,
             "full_name": user.full_name,
             "email": user.email,
+            "phone_number": user.phone_number,
             "avatar_url": user.profile_image_url,
             "user_status": user.user_status,
             "workspace_role": membership.role,

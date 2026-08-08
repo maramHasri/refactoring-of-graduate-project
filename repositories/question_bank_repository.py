@@ -1,30 +1,46 @@
-from models import QuestionBank, Subject, SubjectMembership
+from models import Membership, QuestionBank
 from repositories.base_repository import BaseRepository
 from utils.db import db
-from utils.enums import QuestionBankVisibility, SubjectMembershipStatus, SubjectRole
+from utils.enums import QuestionBankVisibility
+from sqlalchemy.orm import joinedload
 
 
 class QuestionBankRepository(BaseRepository):
+    @staticmethod
+    def _with_creator_and_subject():
+        return (
+            joinedload(QuestionBank.created_by).joinedload(Membership.user),
+            joinedload(QuestionBank.subject),
+        )
+
     def get_by_id(self, bank_id: int) -> QuestionBank | None:
-        return db.session.get(QuestionBank, bank_id)
+        return db.session.execute(
+            db.select(QuestionBank)
+            .where(QuestionBank.id == bank_id)
+            .options(*self._with_creator_and_subject())
+        ).scalar_one_or_none()
 
     def get_active_by_id(self, bank_id: int, workspace_id: int) -> QuestionBank | None:
         return db.session.execute(
-            db.select(QuestionBank).where(
+            db.select(QuestionBank)
+            .where(
                 QuestionBank.id == bank_id,
                 QuestionBank.workspace_id == workspace_id,
                 QuestionBank.deleted_at.is_(None),
             )
+            .options(*self._with_creator_and_subject())
         ).scalar_one_or_none()
 
     def get_active_community_by_id(self, bank_id: int) -> QuestionBank | None:
         """Cross-workspace lookup for platform COMMUNITY banks."""
         return db.session.execute(
-            db.select(QuestionBank).where(
+            db.select(QuestionBank)
+            .where(
                 QuestionBank.id == bank_id,
                 QuestionBank.visibility == QuestionBankVisibility.COMMUNITY.value,
                 *self._active_bank_filters(),
             )
+            .options(*self._with_creator_and_subject())
         ).scalar_one_or_none()
 
     def list_by_subject(self, subject_id: int, workspace_id: int) -> list[QuestionBank]:
@@ -36,8 +52,9 @@ class QuestionBankRepository(BaseRepository):
                     QuestionBank.workspace_id == workspace_id,
                     QuestionBank.deleted_at.is_(None),
                 )
+                .options(*self._with_creator_and_subject())
                 .order_by(QuestionBank.title)
-            ).scalars().all()
+            ).scalars().unique().all()
         )
 
     def count_by_subject_ids(
@@ -84,8 +101,9 @@ class QuestionBankRepository(BaseRepository):
                     QuestionBank.workspace_id == workspace_id,
                     QuestionBank.deleted_at.is_(None),
                 )
+                .options(*self._with_creator_and_subject())
                 .order_by(QuestionBank.updated_at.desc())
-            ).scalars().all()
+            ).scalars().unique().all()
         )
 
     def _active_bank_filters(self):
@@ -141,10 +159,11 @@ class QuestionBankRepository(BaseRepository):
                     QuestionBank.visibility == QuestionBankVisibility.WORKSPACE.value,
                     *self._active_bank_filters(),
                 )
+                .options(*self._with_creator_and_subject())
                 .order_by(QuestionBank.updated_at.desc(), QuestionBank.id.desc())
                 .offset(offset)
                 .limit(limit)
-            ).scalars().all()
+            ).scalars().unique().all()
         )
 
     def count_not_deleted(self) -> int:
@@ -179,10 +198,11 @@ class QuestionBankRepository(BaseRepository):
                     QuestionBank.visibility == QuestionBankVisibility.COMMUNITY.value,
                     *self._active_bank_filters(),
                 )
+                .options(*self._with_creator_and_subject())
                 .order_by(QuestionBank.updated_at.desc(), QuestionBank.id.desc())
                 .offset(offset)
                 .limit(limit)
-            ).scalars().all()
+            ).scalars().unique().all()
         )
 
     def increment_usage_counts(self, bank_ids: set[int] | list[int] | None) -> None:

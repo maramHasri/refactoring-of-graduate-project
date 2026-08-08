@@ -78,6 +78,7 @@ class WorkspaceDashboardService:
                 "updated_at": format_local_datetime(item["bank"].updated_at),
                 "activity_source": "UPDATED",
                 "question_count": item["question_count"],
+                "questions_count": int(item["question_count"] or 0),
                 "usage_count": int(item["bank"].usage_count or 0),
             }
             for item in self.dashboard.list_recent_question_banks(

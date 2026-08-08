@@ -43,6 +43,24 @@ class QuestionRepository(BaseRepository):
             .one_or_none()
         )
 
+    def count_active_by_bank_ids(self, bank_ids: list[int]) -> dict[int, int]:
+        """ACTIVE questions per bank_id (missing keys mean 0)."""
+        if not bank_ids:
+            return {}
+        rows = db.session.execute(
+            db.select(Question.bank_id, db.func.count(Question.id))
+            .where(
+                Question.bank_id.in_(bank_ids),
+                Question.status == "ACTIVE",
+            )
+            .group_by(Question.bank_id)
+        ).all()
+        result = {int(bank_id): 0 for bank_id in bank_ids if bank_id is not None}
+        for bank_id, count in rows:
+            if bank_id is not None:
+                result[int(bank_id)] = int(count)
+        return result
+
     def count_active_by_bank_topic_difficulty(
         self,
         *,
